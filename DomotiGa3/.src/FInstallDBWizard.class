@@ -18,6 +18,7 @@ Public Sub Form_Open()
   lblVersion.Text = ("version ") & Main.sProgramVersion
   txtCopyright.Text = "Copyright (C) 2008-" & Year(Now) & " Ron Klinkien"
   txtHost.Text = Main.sSQLHost
+  vbPort.Value = Main.iSQLPort
   txtDatabase.Text = Main.sSQLDatabase
   txtPassword.SetFocus
 
@@ -28,26 +29,50 @@ Public Sub CreateDatabase()
   Dim sDumpFile As String = IIf(rbEmpty.Value, "domotiga-empty.sql", "domotiga.sql")
   Dim sLog As String
 
-  If Main.ProgramExist("mysql") Then
-    Shell "mysql --host=" & txtHost.Text & " --user=" & txtUser.Text & " --password=" & txtPassword.Text & " --execute='CREATE DATABASE " & txtDatabase.Text & ";' 2>&1" To sLog
+  If Not Util.ProgramExist("mysql") Then Error.Raise("Couldn't find the mysql command, did you install mysql-client?")
+
+  ' Test if we see expected output:
+  ' +------------+
+  ' | ctest_text |
+  ' +------------+
+  ' | Okay       |
+  ' +------------+
+  Shell "mysql --host=" & txtHost.Text & " --port=" & vbPort.Value & " --user=" & txtUser.Text & " --password=" & txtPassword.Text & " --execute='SELECT \"Okay\" AS ctest_text;' 2>&1" To sLog
+  If Not InStr(sLog, "\nOkay\n") Then
     WriteLog(sLog)
-    WriteLog("Created database called '" & txtDatabase.Text & "' ...")
-    Shell "mysql --host=" & txtHost.Text & " --user=" & txtUser.Text & " --password=" & txtPassword.Text & " --database=" & txtDatabase.Text & " --execute='SOURCE " & Main.sBaseDir &/ "install" &/ sDumpFile & "' 2>&1" To sLog
-    WriteLog(sLog)
-    WriteLog("Loaded database tables from '" & sDumpFile & "' ...")
-    Shell "mysql --host=" & txtHost.Text & " --user=" & txtUser.Text & " --password=" & txtPassword.Text & " --execute='FLUSH PRIVILEGES;' 2>&1" To sLog
-    WriteLog(sLog)
-    WriteLog("Flushed database privileges ...")
-  Else
-    WriteLog("Couldn't find the mysql command!")
+    Error.Raise("Not able to connect to database on '" & txtHost.Text & "' port " & vbPort.Value & " with username '" & txtUser.Text & "' and given password!")
   Endif
+
+  Shell "mysql --host=" & txtHost.Text & " --port=" & vbPort.Value & " --user=" & txtUser.Text & " --password=" & txtPassword.Text & " --execute='CREATE DATABASE " & txtDatabase.Text & ";' 2>&1" To sLog
+  WriteLog(sLog)
+  If sLog Like "ERROR" Then
+    Error.Raise("Not able to create '" & txtDatabase.Text & "' Database")
+  Else
+    WriteLog("Created database called '" & txtDatabase.Text & "' ...")
+  Endif
+
+  Shell "mysql --host=" & txtHost.Text & " --port=" & vbPort.Value & " --user=" & txtUser.Text & " --password=" & txtPassword.Text & " --database=" & txtDatabase.Text & " --execute='SOURCE " & Main.sBaseDir &/ "install" &/ sDumpFile & "' 2>&1" To sLog
+  WriteLog(sLog)
+  If sLog Like "ERROR" Then
+    Error.Raise("Problem loading database tables from '" & sDumpFile & "'")
+  Else
+    WriteLog("Loaded database tables from '" & sDumpFile & "' ...")
+  Endif
+
+  Shell "mysql --host=" & txtHost.Text & " --port=" & vbPort.Value & " --user=" & txtUser.Text & " --password=" & txtPassword.Text & " --execute='FLUSH PRIVILEGES;' 2>&1" To sLog
+  WriteLog(sLog)
+  WriteLog("Flushed database privileges ...")
 
   ' Overwrite possible pre-existing Host & Database information, else DomotiGa will not start properly
   Main.sSQLHost = txtHost.Text
+  Main.iSQLPort = vbPort.Value
   Main.sSQLDatabase = txtDatabase.Text
 
   ' Update the domotiga.conf
   Main.SetConfig()
+
+Catch
+  Message.Error("Error creating the database '" & Error.Text & "'!")
 
 End
 
@@ -69,7 +94,7 @@ Public Sub wInstall_Close()
   Me.Close
 
   ' Check again of the MySQL connection is available. If not, exit gracefully
-  If Not Main.ConnectDatabase() Then Message.Error("DomotiGa cannot connect to the MySQL Database\n\nPlease check if the MySQL Server is running and/or\nuserid/password are correct")
+  If Not Main.ConnectDatabase() Then Message.Error("DomotiGa cannot connect to the MySQL Database\nPlease check if the MySQL Server is running and/or\nuserid/password are correct")
 
 End
 
@@ -85,6 +110,11 @@ Public Sub wInstall_BeforeChange()
     Case 2
       If Len(txtHost.Text) = 0 Then
         Balloon("Please enter a hostname", txtHost)
+        Stop Event
+        Return
+      Endif
+      If vbPort.Value = 0 Then
+        Balloon("Please enter a valid port number", vbPort)
         Stop Event
         Return
       Endif

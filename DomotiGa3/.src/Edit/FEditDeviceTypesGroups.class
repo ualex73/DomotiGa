@@ -1,0 +1,92 @@
+' Gambas class file
+
+' Description:
+' FDeviceModules.class
+' Support for editing devicetypes/groups/locations and floorplans.
+
+' Development Status:
+' Finished and working.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+Public Sub Form_Open()
+
+  Me.Move(FMain.X + 50, FMain.Y + 70)
+
+  With DataBrowserDeviceTypes.View
+    .Columns[0].Text = ("Id")
+    .Columns[0].Width = 38
+    .Columns[1].Text = ("Name")
+    .Columns[1].Width = 240
+    .Columns[2].Text = ("Description")
+    .Columns[2].Width = 160
+    .Columns[3].Text = ("Type")
+    .Columns[3].Width = 20
+  End With
+  With DataBrowserGroups.View
+    .Columns[0].Text = ("Id")
+    .Columns[0].Width = 38
+    .Columns[1].Text = ("Group")
+    .Columns[1].Width = 120
+  End With
+  With DataBrowserLocations.View
+    .Columns[0].Text = ("Id")
+    .Columns[0].Width = 38
+    .Columns[1].Text = ("Location")
+    .Columns[1].Width = 120
+  End With
+  With DataBrowserFloorplans.View
+    .Columns[0].Text = ("Id")
+    .Columns[0].Width = 38
+    .Columns[1].Text = ("Floor")
+    .Columns[1].Width = 120
+    .Columns[2].Text = ("Image")
+    .Columns[2].Width = 70
+  End With
+  With DataBrowserBlacklist.View
+    .Columns[0].Text = ("Id")
+    .Columns[0].Width = 38
+    .Columns[1].Text = ("Address")
+    .Columns[1].Width = 130
+    .Columns[2].Text = ("Interface")
+    .Columns[2].Width = 130
+    .Columns[3].Text = ("Comments")
+    .Columns[3].Width = 130
+  End With
+ With DataBrowserDeviceValueTypes.View
+    .Columns[0].Text = ("Id")
+    .Columns[0].Width = 38
+    .Columns[1].Text = ("Type")
+    .Columns[1].Width = 120
+    .Columns[2].Text = ("Units")
+    .Columns[2].Width = 50
+    .Columns[3].Text = ("Control")
+    .Columns[3].Width = 50
+    .Columns[4].Text = ("Description")
+    .Columns[4].Width = 160
+  End With
+End
+
+Public Sub btnClose_Click()
+
+  Me.Close
+
+End
+
+Public Sub btnImageFloor_Click()
+
+  DataControlF2.Value = FSelectFile.Run(Main.sBaseDir &/ "floorplans" &/ DataControlF1.Value, ["*.png;*.jpg;*.jpeg;*.xpm;*.gif", "Picture files"], Main.sBaseDir &/ "floorplans", True, "Select image for floorplan")
+
+End
+
+Public Sub TabPanelModules_Click()
+
+  DataControlM1.Update() ' name
+  DataControlM2.Update() ' description
+  DataControlM3.Update() ' protocol
+  DataControlM4.Update() ' address format
+
+End

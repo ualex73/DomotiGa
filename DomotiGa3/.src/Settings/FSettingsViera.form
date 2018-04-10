@@ -1,0 +1,65 @@
+# Gambas Form File 3.0
+
+{ Form Form
+  MoveScaled(0,0,42,37)
+  Background = Color.TextBackground
+  Resizable = False
+  { Frame1 Frame
+    MoveScaled(1,1,40,35)
+    Text = ("Panasonic Viera Settings")
+    { Label2 Label
+      MoveScaled(19,3,15,4)
+      Text = ("Module Enabled")
+    }
+    { ChkEnabled CheckBox
+      MoveScaled(34,3,3,4)
+      Text = ("CheckBox1")
+    }
+    { txtTCPHost TextBox
+      MoveScaled(13,8,15,4)
+    }
+    { Label3 Label
+      MoveScaled(2,8,10,4)
+      Text = ("IP Address")
+    }
+    { Label4 Label
+      MoveScaled(2,13,10,4)
+      Text = ("Port")
+    }
+    { txtTCPPort TextBox
+      MoveScaled(13,13,9,4)
+      Text = ("55000")
+    }
+    { txtRefresh TextBox
+      MoveScaled(13,18,7,4)
+      Text = ("30")
+    }
+    { Label6 Label
+      MoveScaled(2,23,10,4)
+      Text = ("Debug")
+    }
+    { Label5 Label
+      MoveScaled(2,18,10,4)
+      Text = ("Refresh")
+    }
+    { ChkDebug CheckBox
+      MoveScaled(13,23,3,4)
+    }
+    { Label7 Label
+      MoveScaled(21,18,14,4)
+      Text = ("Secs")
+    }
+    { BtnDefaults Button
+      MoveScaled(1,29,12,4)
+      Text = ("Defaults")
+    }
+    { BtnSave Button
+      MoveScaled(14,29,12,4)
+      Text = ("Save")
+    }
+    { BtnCancel Button
+      MoveScaled(27,29,12,4)
+      Text = ("Cancel")
+    }
+  }
+}

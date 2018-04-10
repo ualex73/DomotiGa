@@ -5,7 +5,7 @@
 ' Contains code for sending NMA messages
 
 ' Development Status:
-' Works.
+' Finished
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -16,9 +16,8 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "NMA"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "NMA"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "1.01"
 Public PluginAuthor As String = "Alexander Kuiper"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -29,6 +28,11 @@ Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
 Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Priority and Sound definitions
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Priority_List As String[] = [("Normal (0)"), ("Very Low (-2)"), ("Low (-1)"), ("High (1)"), ("Emergency(2)")]
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Variables
@@ -43,7 +47,7 @@ Public hNMAMessage As HttpClient
 Public cNMAData As New Collection
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -67,7 +71,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -245,7 +249,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Post the NMA message
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub PostNMA(sApplication As String, sEvent As String, sDescription As String) As Boolean
+Public Sub PostNMA(sApplication As String, sEvent As String, sDescription As String, sPriority As String) As Boolean
 
   Dim sUrl As String = "https://www.notifymyandroid.com/publicapi/notify?"
   Dim Bucle As Byte
@@ -257,8 +261,6 @@ Public Sub PostNMA(sApplication As String, sEvent As String, sDescription As Str
 
   ' Find free tag, between 1 and 99. Normally we should never go over 1 thread
   For Bucle = 1 To 100
-    If Bucle = 100 Then Break
-
     If Not cNMAData.Exist(Bucle) Then Break
   Next
 
@@ -269,7 +271,7 @@ Public Sub PostNMA(sApplication As String, sEvent As String, sDescription As Str
 
   If sApplication = "" Then sApplication = $sApplication
   If sEvent = "" Then sEvent = $sEvent
-  sUrl &= "apikey=" & URL.Encode($sApiKey) & "&" & "application=" & URL.Encode(sApplication) & "&" & "event=" & URL.Encode(sEvent) & "&" & "description=" & URL.Encode(sDescription)
+  sUrl &= "apikey=" & URL.Encode($sApiKey) & "&application=" & URL.Encode(sApplication) & "&event=" & URL.Encode(sEvent) & "&description=" & URL.Encode(sDescription) & IIf(sPriority, "&priority=" & URL.Encode(sPriority), "")
 
   hNMAMessage = New HttpClient As "hNMAMessage"
   hNMAMessage.URL = sUrl

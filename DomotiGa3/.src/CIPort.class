@@ -19,12 +19,11 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "IPort"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "iPort Dock"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
-Public PluginMaxInstances As Byte = 1
+Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[IPort] "
@@ -39,7 +38,7 @@ Public ErrorWhere As String
 Private $bEnabled As Boolean
 Private $sTCPHost As String
 Private $iTCPPort As Integer
-Private $bIPortDebug As Boolean
+Private $bDebug As Boolean
 Private $sInterface As String
 Private $sSerPort As String
 Private $sBaud As String
@@ -120,7 +119,7 @@ Private Const LED_BRIGHTNESS_UNDOCKED As Byte = &H04
 Private Const LED_IPOD_DOCKED As Byte = &H06
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -138,7 +137,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sinterface = cPl.Settings["type"]
   $sSerPort = cPl.Settings["serialport"]
   $sBaud = cPl.Settings["baudrate"]
-  $bIPortDebug = cPl.Settings["debug"]
+  $bDebug = cPl.Settings["debug"]
  
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
@@ -150,7 +149,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -171,7 +170,7 @@ Public Function ConnectTCP() As Boolean
   hIPort.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
 
@@ -179,7 +178,7 @@ Public Function ConnectTCP() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -211,20 +210,29 @@ Public Function ConnectSerial() As Boolean
   End With
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
 
   Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub IPort_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 
@@ -243,7 +251,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub IPort_Closed()
 
-  Main.WriteLog(LogLabel & "TCP socket closed.")
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
 
 End
 
@@ -257,7 +265,7 @@ Public Function Disconnect() As Boolean
   Try hIPortSer.Close
 
   If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
   Else
     Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
   Endif
@@ -292,12 +300,13 @@ Public Sub IPort_Error()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' to control from xmlrpc or music page buttons
+' to control from json-rpc or music page buttons
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
 
   ' commands here are for IW-21/IW-22
   ' ignore sAddress, only fixed unit 1
+  sAddress = sAddress
   Select Case LCase(sCmd)
     Case "requestipodname"
       RequestiPodName()
@@ -323,7 +332,7 @@ Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
     Case "requestplayingsongindex"
       RequestCurrentPlayingSongIndex()
     Case Else
-      If $bIPortDebug Then Main.WriteDebugLog(LogLabel & "Unsupported set command received: " & sCmd & " " & sValue)
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported set command received: " & sCmd & " " & sValue)
   End Select
 
 End
@@ -331,9 +340,10 @@ End
 Public Sub GetCommand(sCmd As String, sAddress As String)
 
   ' ignore sAddress, only fixed unit 1
+  sAddress = sAddress
   Select Case LCase(sCmd)
     Case Else
-      If $bIPortDebug Then Main.WriteDebugLog(LogLabel & "Unsupported get value received: " & sCmd)
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported get value received: " & sCmd)
   End Select
 
 End

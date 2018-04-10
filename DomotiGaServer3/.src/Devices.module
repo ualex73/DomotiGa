@@ -34,304 +34,117 @@ Public Const ValueType_Tamper As Integer = 15
 Public Const ValueType_Blinds As Integer = 16
 Public Const ValueType_Energy_kWh As Integer = 17
 Public Const ValueType_Power_Watt As Integer = 18
+Public Const ValueType_Chime As Integer = 19
+Public Const ValueType_Barometric As Integer = 20
+Public Const ValueType_Energy_Watt As Integer = 21
+Public Const ValueType_Voltage As Integer = 22
+Public Const ValueType_Current As Integer = 23
+Public Const ValueType_Water As Integer = 24
+Public Const ValueType_Ppm As Integer = 25 ' parts-per-million
 
 'Public Const ValueType_ As Integer = X
-' barometric, datetime, current, gas, water, volt, camera
-
+' datetime, gas, camera
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' control device via linked interface
+' control device via linked plugin interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SetDevice(vDeviceName As Variant, sValue As String) As Boolean
+Public Sub SetDevice(iDeviceId As Integer, sValue As String, Optional iValueNum As Integer = 1) As Boolean
 
-  Dim iInterface, iDeviceId As Integer
   Dim iInstance As Integer
-  Dim sText, sAddress, sCurValue As String
-  Dim sDeviceName As String
+  Dim sPluginName, sPluginType, sAddress, sSpeakText, sDeviceName As String
+  Dim rDevice, rPlugin As Result
 
-  ' TODO: fix for server code
-  ' If Not Main.bServer Then
-  '   Client.DeviceSetDevice(sDeviceName, sValue)
-  '   Return True
-  ' Endif
+  If Not CheckIfDeviceExists(iDeviceId) Then Return False
 
+  ' find plugin info for device
+  rPlugin = FindPluginInfoForDevice(iDeviceId)
+  If Not rPlugin Then Return False
+  sPluginName = rPlugin!name
+  sPluginType = rPlugin!type
 
-  iDeviceId = FindDeviceId(vDeviceName, "set device") 
-  If Not iDeviceId Then Return False
+  ' find device name
+  sDeviceName = FindNameForDevice(iDeviceId)
+  If Not sDeviceName Then Return False
 
-' TODO set devicename
-  Try sDeviceName = FindNameForDevice(iDeviceId)
-
-  iInterface = FindInterfaceForDevice(iDeviceId)
-  If Not iInterface Then Return False
-
+  ' find address of device
   sAddress = FindAddressForDevice(iDeviceId)
   If Not sAddress Then Return False
 
+  ' find instance of device
   iInstance = FindInstanceForDevice(iDeviceId)
-  
-  If LCase(sValue) = "toggle" Then
-    sCurValue = GetCurrentValueForDevice(iDeviceId, 1)
-    sValue = Toggle(LCase(sCurValue))
-  Endif
+  If Not iInstance Then Return False
 
-  ' Convert "Dim 100" to "On" and "Dim 0" to "Off - some devices don't support "Dim 100"
+  ' We can and should optimize it, but we get deviceinfo record now
+  rDevice = FindDeviceInfoForDevice(iDeviceId)
+
+  ' toggle if needed
+  If LCase(sValue) = "toggle" Then sValue = Toggle(GetCurrentValueForDevice(iDeviceId, 1))
+
+  ' convert "Dim 100" to "On" and "Dim 0" to "Off - some devices don't support "Dim 100"
   If LCase(sValue) = "dim 100" Then sValue = "On"
   If LCase(sValue) = "dim 0" Then sValue = "Off"
 
-  Select Case iInterface
-    Case 1 ' RFXCom Receiver
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] ERROR: RFXCom Receiver can't control anything!")
-    Case 2 ' Xanura CTX35
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Xanura CTX35: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("CTX35", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 3, 4, 5, 6, 8
-      Main.WriteDebugLog("[Devices] ERROR: Read-only interface used for switching!")
-    Case 7 ' X10Cmd
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] X10Cmd: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("X10Cmd", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 9 ' Weeder WTSSR
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Weeder WTSSR: " & sAddress & " " & sValue)
-      If InStr(FindTypeNameForDevice(iDeviceId), "ITHO ECO Fan") Then
-        If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] ITHO ECO Fan")
-        If Plugin.SendCommand("Weeder", iInstance, sAddress, sValue) Then
-          Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-          sText = ("Switched ") & sDeviceName & " " & sValue
-        Endif
-      Endif
-    Case 10 ' Plugwise
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Plugwise Stick: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("Plugwise", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 11 ' DSC
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] DSC Alarm: " & sAddress & " " & sValue)
-      If Main.hDSC Then
-        Main.hDSC.SendCommand(sAddress, sValue, iDeviceId)
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Partition ") & sDeviceName & " set to " & sValue
-      Else
-        Main.WriteDebugLog(("[Devices] Can't control device '") & sDeviceName & ("' because DSC is disabled!"))
-      Endif
-    Case 12 ' RFXCom Transmitter
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] RFXCom Transmitter: " & sAddress & " " & sValue)
-      If sValue <> "STOP" Then
-        If Plugin.SendCommand("RFXComTX", iInstance, sAddress, sValue) Then
-          Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-          sText = ("Switched ") & sDeviceName & " " & sValue
-        Endif
-      Endif
-    Case 13 ' KNX/EIB Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] KNX/EIB Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("EIB", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 15 ' OpenZWave Controller
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] OpenZWave Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("OpenZWave", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Else
-        Main.WriteDebugLog(("[Devices] Can't control device '") & sDeviceName & ("' because OpenZWave interface is disabled!"))
-      Endif
-    Case 16 ' PLCBUS Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] PLCBUS Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("PLCBUS", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 17 ' Virtual Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Virtual Interface: " & sAddress & " " & sValue)
-      Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-      sText = ("Set ") & sDeviceName & " to " & sValue
-    Case 20 ' EZcontrol Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] EZcontrol Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("EZcontrol", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 22 ' PwrCtrl Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] PwrCtrl Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("PwrCtrl", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 23 ' Denon Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Denon Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("Denon", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 24 ' Onkyo Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Onkyo Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("Onkyo", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 25 ' SharpTV Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] SharpTV Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("SharpTV", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 26 ' LGTV Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] LGTV Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("LGTV", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Else
-        Main.WriteDebugLog(("[Devices] Can't control device '") & sDeviceName & ("' because LGTV interface is disabled!"))
-      Endif
-    Case 29 ' JeeLabs Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Jeelabs Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("JeeLabs", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 30 ' Velleman Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Velleman K8055 : " & sAddress & " " & sValue)
-      If Plugin.SendCommand("K8055", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 31 ' OWFS Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] OWFS Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("OWFS", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 32 ' CUL Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] CUL Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("CUL", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 33 ' RFXCom xPL
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] RFXCom xPL Interface: " & sAddress & " " & sValue)
-      If Main.hRFXComxPL Then
+  ' if virtual device
+  If sPluginType == "virtual" Then
+    Devices.ValueUpdate(iDeviceId, iValueNum, sValue)
+  ' don't support instances (yet)
+  Else If sPluginType == "module" Then
+    ' TODO: check/fix these
+    Select sPluginName
+      Case "RFXComxPL"
         Main.hRFXComxPL.SendCommand(sAddress, sValue)
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Else
-        Main.WriteDebugLog(("[Devices] Can't control device '") & sDeviceName & ("' because RFXCom xPL interface is disabled!"))
-      Endif
-    Case 34 ' Shell
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Shell Interface: " & sAddress & " " & sValue)
-      If Main.bShellEnabled Then
-        Shell.RunShellCommand(iDeviceId, sAddress, sValue)
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Else
-        Main.WriteDebugLog(("[Devices] Can't control device '") & sDeviceName & ("' because Shell interface is disabled!"))
-      Endif
-    Case 35 ' RFXCom TRX
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] RFXCom Transceiver Interface: " & sAddress & " " & sValue)
-      ' TODO: more instances
-      If Plugin.SendCommand("RFXComTRX", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 36 ' HomeMatic LAN
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] HomeMatic Interface: " & iDeviceId & ", Temperature " & sValue)
-      If Plugin.SendCommand("HomeMatic", iInstance, iDeviceId, "Temperature " & sValue) Then
-        ' Main.hHM.SendCommand(sAddress, sValue, iDeviceId)
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 37 ' OpenTherm gateway
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] OpenTherm gateway interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("OpenTherm", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Changed ") & sDeviceName & " temperature setpoint to " & sValue
-      Endif
-    Case 39 ' Pioneer interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Pioneer Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("Pioneer", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 40 ' XBMC xPL interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] XBMC xPL Interface: " & sAddress & " " & sValue)
-      If Main.hXBMCxPL Then
+      Case "XBMCxPL"
         Main.hXBMCxPL.SendCommand(sAddress, sValue)
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Else
-        Main.WriteDebugLog(("[Devices] Can't control device '") & sDeviceName & ("' because XBMC xPL interface is disabled!"))
-      Endif
-    Case 42 ' ELV MAX! Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] ELV MAX! Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("ELVMAX", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 44 ' Mochad
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Mochad: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("Mochad", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 47 ' KMTronicUDP Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] KMTronicUDP Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("KMTronicUDP", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 48 ' DMXPlayer
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] DMXPlayer Interface: " & sAddress & " " & sValue)
-      If Plugin.SendCommand("DMXPlayer", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 49 ' GenericIO Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] GenericIO Interface: Calling SendCommand with Address='" & sAddress & "' and command='" & sValue & "'")
-      If Plugin.SendCommand("GenericIO", iInstance, sAddress, sValue) Then
-        ' Note: Unlike many of the above interface commands, this does not update the value.
-        '       Value needs to be updated by the device we have sent the command to.
-        '       ie. we send a command to turn on a relay. Device then responds that the relay is on (which updates Value).
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case 51 ' RaZberry Interface
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] RaZberry Interface: " & sAddress & " " & sValue)
-      ' TODO: more instances
-      If Plugin.SendCommand("RaZberry", iInstance, sAddress, sValue) Then
-        Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-        sText = ("Switched ") & sDeviceName & " " & sValue
-      Endif
-    Case -1
-      Main.WriteDebugLog(("[Devices] Interface for device '") & sDeviceName & ("' does not support Write!"))
-      Return False
-  Case Else
-    Main.WriteDebugLog(("[Devices] Unknown Interface ") & Str(iInterface) & (" for device '") & sDeviceName & "'!")
-    Return False
-  End Select
-
-  If sText And If iInterface Then
-    If iDeviceId And If FindLogSpeakForDevice(iDeviceId, 1) Then VoiceText.Speak(sText)
-  Endif
-
-  If sText Then
-    Return True
+    End Select
   Else
-    Return False
+    ' Only do the SendCommand if it valueid and the device is switchable/dimmable
+    If iValueNum = 1 And (rDevice!switchable Or rDevice!dimable) Then
+      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Device '" & sDeviceName & "' is set as switchable or dimable, so call SendCommand() of plugin.")
+      ' call plugin's sendcommand routine (if any)
+      If Plugin.SendCommand(sPluginName, iInstance, sAddress, sValue, sDeviceName) Then
+        ' TODO: remove if value control/feedback params are implemented
+        ' until then this workaround is needed for some plugins
+        Select sPluginName
+          Case "GenericIO", "OpenZWave"
+            ' don't do valueupdate, these come back from devices
+          Case "RFXComTRX"
+            ' TODO: remove this if value control/feedback/valuenum params are implemented
+            ' don't do valueupdate if commands belong to RGB dimmer, done in plugin
+            ' store color values
+            Select UCase(Left(sValue, 6))
+              Case "COLOR+", "COLOR-"
+                Devices.ValueUpdate(iDeviceId, 3, sValue)
+              Case "COLOR "
+                Devices.ValueUpdate(iDeviceId, 2, sValue)
+              Case Else
+                Devices.ValueUpdate(iDeviceId, 1, sValue)
+            End Select
+          Case Else
+            Devices.ValueUpdate(iDeviceId, iValueNum, sValue)
+        End Select
+        sSpeakText = ("Set ") & sDeviceName & (" to ") & sValue
+      Else
+        Return False
+      Endif
+    Else
+      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Device '" & sDeviceName & "' is not set as switchable or dimable, so only do a value update.")
+      Devices.ValueUpdate(iDeviceId, iValueNum, sValue)
+    Endif
   Endif
+  If Len(sSpeakText) And If FindLogSpeakForDevice(iDeviceId, 1) Then VoiceText.Speak(sSpeakText)
+  Return True
 
 End
 
-Public Sub SetDeviceIfDifferent(iId As Integer, sValue As String) As Boolean
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' used in events
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SetDeviceIfDifferent(iDeviceId As Integer, sValue As String) As Boolean
 
-  If sValue == GetCurrentValueForDevice(iId, 1) Then
+  If sValue == GetCurrentValueForDevice(iDeviceId, 1) Then
     Return False
   Else
-    SetDevice(iId, sValue)
+    SetDevice(iDeviceId, sValue)
   Endif
 
 End
@@ -340,12 +153,36 @@ Private Sub AddDeviceToContext(cContext As Collection, iDeviceId As Integer)
 
   Dim rResultDev As Result
 
-  rResultDev = Main.hDB.Exec("SELECT deviceid,value,valuenum FROM device_values LEFT JOIN devices ON devices.id = device_values.deviceid WHERE devices.enabled IS TRUE ORDER BY name")
+  Try rResultDev = Main.hDB.Exec("SELECT device_id, value, valuenum FROM device_values LEFT JOIN devices ON devices.id = device_values.device_id WHERE devices.enabled IS TRUE ORDER BY name")
+  If Not Error Then
+    For Each rResultDev
+      If rResultDev!device_id == iDeviceId Then cContext["Value" & rResultDev!valuenum] = rResultDev!value
+      cContext["Dev_" & rResultDev!device_id & "_Value" & rResultDev!valuenum] = rResultDev!value
+    Next
+  Endif
 
-  For Each rResultDev
-    If rResultDev!deviceid == iDeviceId Then cContext["Value" & rResultDev!valuenum] = rResultDev!value
-   cContext["Dev_" & rResultDev!deviceid & "_Value" & rResultDev!valuenum] = rResultDev!value
-  Next
+End
+
+Public Sub CreateValue(iDeviceId As Integer, sValueNum As String, sUnits As String) As Boolean
+
+  Dim rValue, rResult As Result
+
+  ' check for valid valuenum
+  rValue = Devices.GetDevicesAndValues(["device_id": iDeviceId, "value_valuenum": sValueNum])
+  If rValue.Count >= 1 Then
+    Return False
+  Endif
+
+  ' create new device value
+  Main.hDB.Begin()
+  rResult = Main.hDB.Create("device_values")
+  rResult!device_id = iDeviceId
+  rResult!valuenum = sValueNum
+  rResult!value = ""
+  If Len(sUnits) Then rResult!units = sUnits
+  rResult.Update()
+  Main.hDB.Commit()
+  Return True
 
 End
 
@@ -376,7 +213,7 @@ Catch
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' toggle value
+' toggle a value
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Toggle(sValue As String) As String
 
@@ -388,72 +225,72 @@ Private Sub Toggle(sValue As String) As String
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find interface with name sInterfaceName, return it's id.
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find interface with name sInterfaceName and return it's id
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindInterface(sInterfaceName As String) As Integer
 
   Dim rInterface As Result
 
-  Try rInterface = Main.hDB.Exec("SELECT * FROM interfaces WHERE name = &1", sInterfaceName)
+  Try rInterface = Main.hDB.Exec("SELECT id FROM plugins WHERE interface = &1", sInterfaceName)
   If Not Error Then
-  If rInterface.Available Then
-    If rInterface.Count = 1 Then
-      If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Interface with name '") & sInterfaceName & ("' has id '") & rInterface!id & "'")
-      Return rInterface!id
+    If rInterface.Available Then
+      If rInterface.Count = 1 Then
+        If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Interface with name '" & sInterfaceName & "' has id '" & rInterface!id & "'")
+        Return rInterface!id
+      Else
+        Main.WriteDebugLog("[Devices] More then one interface with name '" & sInterfaceName & "' found!")
+        Return 0
+      Endif
     Else
-      Main.WriteDebugLog(("[Devices] More then one interface with name '") & sInterfaceName & ("' found!"))
+      Main.WriteDebugLog("[Devices] Interface with name '" & sInterfaceName & "' not found!")
       Return 0
     Endif
-  Else
-    Main.WriteDebugLog(("[Devices] Interface with name '") & sInterfaceName & ("' not found!"))
-    Return 0
-  Endif
   Else
     Return 0
   Endif
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find devicetype with type, return it's id.
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devicetype with protocol, return it's id, 0 if not found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindDeviceType(sDeviceType As String) As Integer
 
   Dim rDeviceType As Result
 
-  Try rDeviceType = Main.hDB.Exec("SELECT * FROM devicetypes WHERE type LIKE &1", sDeviceType)
+  Try rDeviceType = Main.hDB.Exec("SELECT * FROM devicetypes WHERE protocol LIKE &1", sDeviceType)
   If Not Error Then
     If rDeviceType.Available Then
       If rDeviceType.Count = 1 Then
-        If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] DeviceType with type '") & sDeviceType & ("' has id '") & rDeviceType!id & "'")
+        If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] DeviceType with protocol '" & sDeviceType & "' has id '" & rDeviceType!id & "'")
         Return rDeviceType!id
       Else
-        If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] DeviceType with type '") & sDeviceType & ("' not found!"))
+        If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] DeviceType with protocol '" & sDeviceType & "' not found!")
         Return 0
       Endif
     Else
-      If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Cannot get DeviceType records!"))
+      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Cannot get DeviceType records!")
       Return 0
     Endif
   Else
-    If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Cannot get DeviceType records!"))
+    If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Cannot get DeviceType records!")
     Return 0
   Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return module/devicetype for device with id
+' returndevicetype for device with iDeviceId
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub FindModuleForDevice(iDeviceId As Integer) As Integer
+Public Sub FindDeviceTypeForDevice(iDeviceId As Integer) As Integer
 
   Dim rDevice As Result
 
-  Try rDevice = Main.hDB.Exec("SELECT module FROM devices WHERE id = &1", iDeviceId)
+  Try rDevice = Main.hDB.Exec("SELECT devicetype_id FROM devices WHERE id = &1", iDeviceId)
   If Not Error Then
     If rDevice.Available Then
-      Return rDevice!module
+      Return rDevice!devicetype_id
     Else
       Return 0
     Endif
@@ -464,43 +301,29 @@ Public Sub FindModuleForDevice(iDeviceId As Integer) As Integer
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return type for device with id
+' return protocol for device with iDeviceId
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindTypeForDevice(iDeviceId As Integer) As String
 
   Dim rDevice As Result
   Dim iDeviceType As Integer
 
-  iDeviceType = FindModuleForDevice(iDeviceId)
-  Try rDevice = Main.hDB.Exec("SELECT type FROM devicetypes WHERE id = &1", iDeviceType)
-  Return rDevice!type
+  iDeviceType = FindDeviceTypeForDevice(iDeviceId)
+  Try rDevice = Main.hDB.Exec("SELECT protocol FROM devicetypes WHERE id = &1", iDeviceType)
+  Return rDevice!protocol
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return typename for device with id
+' return typename for device with iDeviceId
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub FindTypeNameForDevice(iDeviceId As Integer) As String
+Public Sub FindDeviceTypeNameForDeviceId(iDeviceId As Integer) As String
 
-  Dim rDevice As Result
-  Dim iDeviceType As Integer
+  Dim rDeviceType As Result
 
-  iDeviceType = FindModuleForDevice(iDeviceId)
-  Try rDevice = Main.hDB.Exec("SELECT name FROM devicetypes WHERE id = &1", iDeviceType)
-  Return rDevice!name
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return description for devicetype with iId
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub FindDescrForDeviceType(iId As Integer) As String
-
-  Dim rDevice As Result
-
-  Try rDevice = Main.hDB.Exec("SELECT description FROM devicetypes WHERE id = &1", iId)
-  If rDevice.Available Then
-    Return rDevice!description
+  Try rDeviceType = Main.hDB.Exec("SELECT devicetypes.name FROM devicetypes, devices WHERE devicetypes.id = devices.devicetype_id AND devices.id = &1", iDeviceId)
+  If rDeviceType.Available Then
+    Return rDeviceType!name
   Else
     Return 0
   Endif
@@ -508,7 +331,40 @@ Public Sub FindDescrForDeviceType(iId As Integer) As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return name for device with id
+' return devicetype description of device with iDeviceId
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub FindDeviceTypeDescriptionForDeviceId(iDeviceId As Integer) As String
+
+  Dim rDeviceType As Result
+
+  Try rDeviceType = Main.hDB.Exec("SELECT description FROM devicetypes, devices WHERE devicetypes.id = devices.devicetype_id AND devices.id = &1", iDeviceId)
+  If rDeviceType.Available Then
+    Return rDeviceType!description
+  Else
+    Return 0
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return DeviceInfo for device as result
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub FindDeviceInfoForDevice(iDeviceId As Integer) As Result
+
+  Dim rDevice As Result
+
+  Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE id = &1", iDeviceId)
+  If Not Error And If rDevice.Available Then
+    Return rDevice
+  Else
+    Main.WriteDebugLog("[Devices] Cannot find deviceinfo for device with id " & iDeviceId)
+    Return Null
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return name for device with iDeviceId
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindNameForDevice(iDeviceId As Integer) As String
 
@@ -518,14 +374,14 @@ Public Sub FindNameForDevice(iDeviceId As Integer) As String
   If Not Error And If rDevice.Available Then
     Return rDevice!name
   Else
-    Main.WriteDebugLog(("[Devices] Cannot find name for device with id ") & iDeviceId)
-    Return ""
+    Main.WriteDebugLog("[Devices] Cannot find name for device with id " & iDeviceId)
+    Return Null
   Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return if device with id exists
+' return true if device with id exists
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub CheckIfDeviceExists(iDeviceId As Integer) As Boolean
 
@@ -535,45 +391,8 @@ Public Sub CheckIfDeviceExists(iDeviceId As Integer) As Boolean
   If Not Error And If rDevice.Available Then
     Return True
   Else
-    Main.WriteDebugLog(("[Devices] Cannot find device with id ") & iDeviceId)
-    Return False
-  Endif
-
-End
-
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return device id for device with name(deprecated) or address, and also check if device exsits
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub FindDeviceId(vDeviceId As Variant, Optional sComment As String) As Integer
-  Dim iDeviceId As Integer
-  Dim rDevice As Result
-  
-   ' If we get a byte/integer or a string that can be parsed to integer
-  Try iDeviceId = CInt(vDeviceId)
-  If Error Then
-     'TODO deprecated 
-    If sComment Then 
-      Main.WriteDebugLog("[Warning] You are using a device name '" & vDeviceId & "' instead of device id, this option is be deprecated and will be removed! We have also a comment where to look: '" & sComment & "'.")
-    Else
-      Main.WriteDebugLog("[Warning] You are using a device name '" & vDeviceId & "' instead of device id, this option is be deprecated and will be removed!")
-    Endif
-    Try iDeviceId = FindIdForDevice(vDeviceId)
-    If Error Or If Not iDeviceId Then
-      Main.WriteDebugLog("[Devices] ERROR: Cannot convert device with name '" & iDeviceId & "' to id!")
-      Return
-    Endif
-  Endif
-  
-  If Not iDeviceId Then
     Main.WriteDebugLog("[Devices] Cannot find device with id " & iDeviceId)
-    Return
-  Endif 
-  
-  If CheckIfDeviceExists(iDeviceId) Then
-    Return iDeviceId
-  Else
-    Return
+    Return False
   Endif
 
 End
@@ -583,27 +402,31 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindVirtualDeviceID(sAddress As String) As Integer
 
-  Dim iId As Integer
+  Dim iDeviceId As Integer
 
-  iId = Find(sAddress, FindInterface("Virtual Interface"), "Virtual Device")
-  Return iId
+  iDeviceId = Find(sAddress, FindInterface("Virtual Interface"), "Virtual Device")
+  Return iDeviceId
+
+Catch
+  Main.WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  Return 0
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return name for interface with id
+' return name for interface with iInterfaceId
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindNameForInterface(iInterfaceId As Integer) As String
 
   Dim rInterface As Result
 
-  Try rInterface = Main.hDB.Exec("SELECT name FROM interfaces WHERE id = &1", iInterfaceId)
-  If Not Error And If rInterface.Available Then Return rInterface!name
+  Try rInterface = Main.hDB.Exec("SELECT interface FROM plugins WHERE id = &1", iInterfaceId)
+  If Not Error And If rInterface.Available Then Return rInterface!interface
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return name for devicetype with id
+' return name for devicetype with iDeviceTypeId
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindNameForDeviceType(iDeviceTypeId As Integer) As String
 
@@ -615,7 +438,7 @@ Public Sub FindNameForDeviceType(iDeviceTypeId As Integer) As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return log boolean for device with id
+' return log boolean for device with iDeviceId
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindLogForDevice(iDeviceId As Integer) As String
 
@@ -627,7 +450,7 @@ Public Sub FindLogForDevice(iDeviceId As Integer) As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return address string for device with id
+' return address string for device with iDeviceId
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindAddressForDevice(iDeviceId As Integer) As String
 
@@ -638,14 +461,14 @@ Public Sub FindAddressForDevice(iDeviceId As Integer) As String
 
 End
 
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return speak boolean for device with id
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return speak boolean for device with iDeviceId and iValueNum
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindLogSpeakForDevice(iDeviceId As Integer, iValueNum As Integer) As String
+
   Dim rDevice As Result
 
-  Try rDevice = Main.hDB.Exec("SELECT logspeak FROM device_values WHERE deviceid = &1", iDeviceId, iValueNum)
+  Try rDevice = Main.hDB.Exec("SELECT logspeak FROM device_values WHERE device_id = &1", iDeviceId, iValueNum)
   If Not Error And If rDevice.Available Then Return rDevice!logspeak
 
 End
@@ -664,80 +487,118 @@ End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' find all enabled devices, return all fields from database
-' sorted by sOrder if specified.
+' sorted by sOrder if specified
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindAllEnabledDevices(Optional sSortOrder As String) As Result
 
   Dim rDevice As Result
-  
- If sSortOrder Then
+
+  If sSortOrder Then
     Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE enabled IS TRUE ORDER BY &1", sSortOrder)
   Else
     Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE enabled IS TRUE")
   Endif
+
   Return rDevice
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find device with interface iInterface, return complete device details.
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub FindDevicesForInterface(iInterface As Integer, Optional sSortOrder As String) As Result
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find device with interface iInterface, return complete device details
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub FindDevicesForInterface(iInterface As Integer, iInstance As Integer, Optional sSortOrder As String) As Result
 
   Dim rDevice As Result
 
-  If iInterface Then
-   If sSortOrder Then
-      Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE interface = &1 AND enabled is TRUE ORDER BY &2", iInterface, sSortOrder)
-    Else
-      Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE interface = &1 AND enabled is TRUE", iInterface)
-    Endif
-    Return rDevice
+  If sSortOrder Then
+    Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE interface_id = &1 AND instance_id = &2 AND enabled is TRUE ORDER BY &3", iInterface, iInstance, sSortOrder)
   Else
-    Main.WriteDebugLog(("[Devices] FindDeviceForInterface: No interface Id given!"))
-    Return Null
+    Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE interface_id = &1 AND instance_id = &2 AND enabled is TRUE", iInterface, iInstance)
   Endif
+
+  Return rDevice
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find device with group sGroup, return complete device details.
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find device with group sGroup, return complete device details
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindDevicesForGroup(sGroup As String, Optional sSortOrder As String) As Result
 
   Dim rDevice As Result
 
   If sGroup Then
-   If sSortOrder Then
+    If sSortOrder Then
       Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE groups LIKE &1 AND enabled is TRUE ORDER BY &2", sGroup, sSortOrder)
     Else
       Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE groups LIKE &1 AND enabled is TRUE", sGroup)
     Endif
     Return rDevice
   Else
-    Main.WriteDebugLog(("[Devices] FindDeviceForGroup: No group specified!"))
+    Main.WriteDebugLog("[Devices] FindDeviceForGroup: No group specified!")
     Return Null
   Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find interface for device with iDeviceId.
+' find plugin info for device with iDeviceId
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub FindPluginInfoForDevice(iDeviceId As Integer) As Result
+
+  Dim rDevice, rPlugin As Result
+
+  Try rDevice = Main.hDB.Exec("SELECT interface_id FROM devices WHERE id = &1", iDeviceId)
+  If rDevice Then
+    If rDevice.Available Then
+      Try rPlugin = Main.hDB.Exec("SELECT name, type, protocols FROM plugins WHERE id = &1", rDevice!interface_id)
+      If rPlugin.Available Then
+        If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Plugin name for device with id '" & iDeviceId & "' is '" & rPlugin!name & "'")
+        Return rPlugin
+      Else
+        ' plugin not found
+        Return Null
+      Endif
+    Else
+      ' device not found
+      Main.WriteDebugLog("[Devices] Cannot find device with id " & iDeviceId)
+      Return Null
+    Endif
+  Else
+    ' device not found
+    Main.WriteDebugLog("[Devices] Cannot find device with id " & iDeviceId)
+    Return Null
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find plugins in database
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub FindPlugins() As Result
+
+  Dim rInterface As Result
+
+  Try rInterface = Main.hDB.Exec("SELECT * FROM plugins ORDER BY name")
+  If rInterface.Available Then
+    Return rInterface
+  Else
+    ' plugins not found
+    Return Null
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find interface for device with iDeviceId
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindInterfaceForDevice(iDeviceId As Integer) As Integer
 
-  Dim rDevice, rResult As Result
+  Dim rDevice As Result
 
-  Try rDevice = Main.hDB.Exec("SELECT address, name, interface FROM devices WHERE id = &1", iDeviceId)
+  Try rDevice = Main.hDB.Exec("SELECT interface_id FROM devices WHERE id = &1", iDeviceId)
   If rDevice.Available Then
-    Try rResult = Main.hDB.Exec("SELECT mode FROM interfaces WHERE id = &1", rDevice!interface)
-    If InStr(rResult!mode, "Write") Then
-      If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Interface for device with id '") & iDeviceId & "' is '" & rDevice!interface & "'")
-      Return rDevice!interface
-    Else
-      ' read-only
-      Return -1
-    Endif
+    Return rDevice!interface_id
   ' no interface found, something is wrong
   Else
     Main.WriteDebugLog(("[Devices] Device with id '") & iDeviceId & ("' not found!"))
@@ -747,11 +608,14 @@ Public Sub FindInterfaceForDevice(iDeviceId As Integer) As Integer
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find address for device with sDeviceName.
+' find instance for device with iDeviceId
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindInstanceForDevice(iDeviceId As Integer) As Integer
 
-  Return 1
+  Dim rDevice As Result
+
+  Try rDevice = Main.hDB.Exec("SELECT instance_id FROM devices WHERE id = &1", iDeviceId)
+  If Not Error And If rDevice.Available Then Return rDevice!instance_id
 
 End
 
@@ -759,12 +623,12 @@ End
 ' find device with iDeviceId, return it's current value
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetValueForDevice(iDeviceId As Integer, Optional sValue As String) As String
+
   Dim iValueNum As Integer = 1
 
   If Not CheckIfDeviceExists(iDeviceId) Then Return 0
-  
   sValue = LCase(Trim(sValue))
-  
+
   If Len(sValue) > 0 Then
     Try iValueNum = CInt(Replace(sValue, "value", ""))
     If Error Then
@@ -780,18 +644,18 @@ Public Sub GetValueForDevice(iDeviceId As Integer, Optional sValue As String) As
       End Select
     Endif
   Endif
-   
   Return GetCurrentValueForDevice(iDeviceId, iValueNum)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find device with iId, return it's lastchanged value
+' find device with iDeviceId, return it's lastchanged value
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetLastChangedForDevice(iId As Integer) As String
+Public Sub GetLastChangedForDevice(iDeviceId As Integer) As String
+
   Dim rDevice As Result
 
-  Try rDevice = Main.hDB.Exec("SELECT lastchanged FROM devices WHERE id = &1", iId)
+  Try rDevice = Main.hDB.Exec("SELECT lastchanged FROM devices WHERE id = &1", iDeviceId)
   If rDevice.Count Then
     Return rDevice!lastchanged
   Endif
@@ -799,12 +663,13 @@ Public Sub GetLastChangedForDevice(iId As Integer) As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find device with iId, return it's lastseen value
+' find device with iDeviceId, return it's lastseen value
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetLastSeenForDevice(iId As Integer) As String
+Public Sub GetLastSeenForDevice(iDeviceId As Integer) As String
+
   Dim rDevice As Result
 
-  Try rDevice = Main.hDB.Exec("SELECT lastseen FROM devices WHERE id = &1", iId)
+  Try rDevice = Main.hDB.Exec("SELECT lastseen FROM devices WHERE id = &1", iDeviceId)
   If rDevice.Count Then
     Return rDevice!lastseen
   Endif
@@ -812,142 +677,161 @@ Public Sub GetLastSeenForDevice(iId As Integer) As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find device with iId, return it's batterystatus value
+' Update device lastseen
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetBatteryStatusForDevice(iId As Integer) As String
+Public Sub UpdateLastSeenForDevice(iDeviceId As Integer)
+
+  Try Main.hDB.Exec("UPDATE devices SET lastseen = &1 WHERE id = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), iDeviceId)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find device with iDeviceId, return it's batterystatus value
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetBatteryStatusForDevice(iDeviceId As Integer) As String
+
   Dim rDevice As Result
 
-  Try rDevice = Main.hDB.Exec("SELECT batterystatus FROM devices WHERE id = &1", iId)
+  Try rDevice = Main.hDB.Exec("SELECT batterystatus FROM devices WHERE id = &1", iDeviceId)
   If rDevice.Count Then
     Return rDevice!batterystatus
   Endif
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find device with iId, return it's current calibrated iValue value
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetCurrentValueForDevice(iId As Integer, iValue As Integer) As String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find device with iDeviceId, return it's current calibrated iValue value
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetCurrentValueForDevice(iDeviceId As Integer, iValue As Integer) As String
 
   Dim rDevice As Result
-  
-  Try rDevice = Main.hDB.Exec("SELECT * FROM device_values WHERE deviceid = &1 AND valuenum = &2", iId, iValue)
+
+  Try rDevice = Main.hDB.Exec("SELECT value, correction FROM device_values WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValue)
   If rDevice.Count Then
-    Return Devices.CorrectValue(rDevice!value, rDevice!correction, iId)
+    Return Devices.CorrectValue(rDevice!value, rDevice!correction, iDeviceId)
   Endif
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find device with iId, return it's current uncorrected iValue value
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetCurrentUnCorrectedValueForDevice(iId As Integer, iValue As Integer) As String
- 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find device with iDeviceId, return it's current uncorrected iValue value
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetCurrentUnCorrectedValueForDevice(iDeviceId As Integer, iValue As Integer) As String
+
   Dim rDevice As Result
-  
-  Try rDevice = Main.hDB.Exec("SELECT * FROM device_values WHERE deviceid = &1 AND valuenum = &2", iId, iValue)
+
+  Try rDevice = Main.hDB.Exec("SELECT value FROM device_values WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValue)
   If rDevice.Count Then
     Return rDevice!value
   Endif
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find device with iId, return it's current units field
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetCurrentUnitsForDevice(iId As Integer, iValue As Integer) As String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find device with iDeviceId, return it's current units field
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetCurrentUnitsForDevice(iDeviceId As Integer, iValue As Integer) As String
   Dim rDevice As Result
 
-  Try rDevice = Main.hDB.Exec("SELECT units FROM device_values WHERE deviceid = &1 AND valuenum = &2", iId, iValue)
+  Try rDevice = Main.hDB.Exec("SELECT units FROM device_values WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValue)
   If rDevice.Count Then
-        Return rDevice!units
+    Return rDevice!units
   Endif
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find device with sAddress and iInterface, return id if found.
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find device with iInstance, sAddress and iInterface, return it's id if found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Find(iInstance As Integer, sAddress As String, iInterface As Integer, Optional sDevice As String, sPrefName As String) As Integer
 
   Dim rDeviceFind As Result
 
   If iInterface Then
-    Try rDeviceFind = Main.hDB.Exec("SELECT * FROM devices WHERE address LIKE &1 AND interface = &2 AND enabled is TRUE", sAddress, iInterface)
-    If Not Error Then Return FindDevice(rDeviceFind, sAddress, iInterface, sDevice, sPrefName)
+    Try rDeviceFind = Main.hDB.Exec("SELECT * FROM devices WHERE address LIKE &1 AND interface_id = &2 AND instance_id = &3", sAddress, iInterface, iInstance)
+    If Not Error Then Return FindDevice(rDeviceFind, sAddress, iInterface, iInstance, sDevice, sPrefName)
   Else
-    Main.WriteDebugLog(("[Devices] Interface for device '") & sDevice & ("' with address '") & sAddress & ("' not found!"))
+    Main.WriteDebugLog("[Devices] Interface for device '" & sDevice & "' with address '" & sAddress & "' and instance '" & iInstance & "' not found!")
     Return 0
   Endif
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find device with sAddress in it's address and iInterface, return id if found.
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub FindRegExp(sAddress As String, iInterface As Integer, Optional sDevice As String, sRegex1 As String = "[[:<:]]", sRegex2 As String = "[[:>:]]") As Integer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find device with sAddress in it's address and iInterface, return id if found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub FindRegExp(sAddress As String, iInterface As Integer, iInstance As Integer, Optional sDevice As String, sRegex1 As String = "[[:<:]]", sRegex2 As String = "[[:>:]]") As Integer
 
   Dim rDeviceFind As Result
 
   If iInterface Then
-    Try rDeviceFind = Main.hDB.Exec("SELECT * FROM devices WHERE address REGEXP '" & sRegex1 & sAddress & sRegex2 & "' AND interface = &1 AND enabled is TRUE", iInterface)
-    If Not Error Then Return FindDevice(rDeviceFind, sAddress, iInterface, sDevice)
+    Try rDeviceFind = Main.hDB.Exec("SELECT * FROM devices WHERE address REGEXP '" & sRegex1 & sAddress & sRegex2 & "' AND interface_id = &1 AND instance_id = &2", iInterface, iInstance)
+    If Not Error Then Return FindDevice(rDeviceFind, sAddress, iInterface, iInstance, sDevice)
   Else
-    Main.WriteDebugLog(("[Devices] Interface for device '") & sDevice & ("' with address '") & sAddress & ("' not found!"))
+    Main.WriteDebugLog("[Devices] Interface for device '" & sDevice & "' with address '" & sAddress & "' not found!")
     Return 0
   Endif
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find device with sAddress for all Interfaces, return id if found.
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub FindAll(sAddress As String, iInterface As Integer, Optional sDevice As String) As Integer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find device with sAddress for all plugins, return id if found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub FindAll(iInstance As Integer, sAddress As String, iInterface As Integer, Optional sDevice As String) As Integer
 
   Dim rDeviceFind As Result
 
-  Try rDeviceFind = Main.hDB.Exec("SELECT devices.* FROM devices, interfaces WHERE devices.interface = interfaces.id AND interfaces.type REGEXP '[[:<:]]" & sDevice & "[[:>:]]' AND devices.address LIKE &1 AND devices.enabled is TRUE LIMIT 1", sAddress)
-  If Not Error Then Return FindDevice(rDeviceFind, sAddress, iInterface, sDevice)
+  Try rDeviceFind = Main.hDB.Exec("SELECT devices.* FROM devices, plugins WHERE devices.interface_id = plugins.id AND plugins.protocols REGEXP '[[:<:]]" & sDevice & "[[:>:]]' AND devices.address LIKE &1 AND devices.enabled is TRUE LIMIT 1", sAddress)
+  If Not Error Then Return FindDevice(rDeviceFind, sAddress, iInterface, iInstance, sDevice)
 
 End
 
-Public Sub FindDevice(rDevice As Result, sAddress As String, iInterface As Integer, Optional sDevice As String, sPrefName As String) As Integer
+Public Sub FindDevice(rDevice As Result, sAddress As String, iInterface As Integer, iInstance As Integer, Optional sDeviceType As String, sPrefName As String) As Integer
 
   Dim rResult As Result
 
-  If Not sDevice Then sDevice = "Unknown"
+  If Not sDeviceType Then sDeviceType = "Unknown"
 
   If rDevice.Count > 1 Then
-    Main.WriteDebugLog(("[Devices] The following devices have the same address:"))
+    Main.WriteDebugLog("[Devices] The following devices have the same address:")
     For Each rDevice
-      Main.WriteDebugLog(("[Devices] Device with address '") & sAddress & ("' is '") & rDevice!name & "'")
+      Main.WriteDebugLog("[Devices] Device with address '" & sAddress & "' is '" & rDevice!name & "'")
     Next
     Return 0
   Else If rDevice.Count = 1 Then
-    If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Device with address '") & sAddress & ("' is '") & rDevice!name & "'")
-    If rDevice!firstseen = "00:00:00" Or If rDevice!firstseen = "" Then
-      If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Device with address '") & sAddress & ("' and '") & rDevice!name & ("' is a new device"))
-      rResult = Main.hDB.Exec("UPDATE devices SET firstseen = &1 WHERE id = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), rDevice!id)
-    Endif
-    Return rDevice!id
-  Else
-    If Not IsBlacklisted(sAddress, iInterface) Then
-      If sDevice Then
-        Main.WriteDebugLog(("[Devices] Device of type '" & sDevice & "' with address '") & sAddress & ("' and interface '") & FindNameForInterface(iInterface) & ("' not found!"))
-      Else
-        Main.WriteDebugLog(("[Devices] Device with address '") & sAddress & ("' and interface '") & FindNameForInterface(iInterface) & ("' not found!"))
+    If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Device with address '" & sAddress & "' is '" & rDevice!name & "'")
+    If rDevice!enabled = True Then
+      If rDevice!firstseen = "00:00:00" Or If rDevice!firstseen = "" Then
+        If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Device with address '" & sAddress & "' and '" & rDevice!name & "' is a new device")
+        rResult = Main.hDB.Exec("UPDATE devices SET firstseen = &1 WHERE id = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), rDevice!id)
       Endif
+      Return rDevice!id
+    Else
+      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Device with type '" & sDeviceType & "', address '" & sAddress & "' and interface '" & FindNameForInterface(iInterface) & "' is disabled!")
+      Return 0
+    Endif
+  Else
+    ' If we force disable autocreating, we don't want to get any other 'debug' noise
+    If sDeviceType = "DISABLEAUTOCREATE" Then Return 0
+
+    If Not IsBlacklisted(sAddress, iInterface) Then
+      If sDeviceType Then
+        Main.WriteDebugLog("[Devices] Device with type '" & sDeviceType & "', address '" & sAddress & "', instance '" & iInstance & "' and interface '" & FindNameForInterface(iInterface) & "' not found!")
+      Else
+        Main.WriteDebugLog("[Devices] Device with address '" & sAddress & "' and interface '" & FindNameForInterface(iInterface) & "' not found!")
+      Endif
+
       If Main.bAutoDeviceCreate Then
-        Return AutoCreateDevice(sAddress, iInterface, sDevice, sPrefName)
+        Return AutoCreateDevice(sAddress, iInterface, iInstance, sDeviceType, sPrefName)
       Else
         Return 0
       Endif
     Else
       If Main.bDevicesDebug Then
-        If sDevice Then
-          Main.WriteDebugLog(("[Devices] Device " & IIf(Len(sDevice), "of type '" & sDevice & "' ", "") & "with address '") & sAddress & ("' and interface '") & FindNameForInterface(iInterface) & ("' is blacklisted!"))
+        If sDeviceType Then
+          Main.WriteDebugLog("[Devices] Device " & IIf(Len(sDeviceType), " with type '" & sDeviceType & "' ", "") & ", address '" & sAddress & "' and interface '" & FindNameForInterface(iInterface) & "' is blacklisted!")
         Else
-          Main.WriteDebugLog(("[Devices] Device with address '") & sAddress & ("' and interface '") & FindNameForInterface(iInterface) & ("' is blacklisted!"))
+          Main.WriteDebugLog("[Devices] Device with address '" & sAddress & "' and interface '" & FindNameForInterface(iInterface) & "' is blacklisted!")
         Endif
       Endif
     Endif
@@ -955,19 +839,19 @@ Public Sub FindDevice(rDevice As Result, sAddress As String, iInterface As Integ
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find out if an device has firstseen filled
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub CheckFirstSeen(iId As Integer)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find out if device with iDeviceId has firstseen filled
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CheckFirstSeen(iDeviceId As Integer)
 
   Dim rResult, rDevice As Result
 
-  Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE id = &1", iId)
+  Try rDevice = Main.hDB.Exec("SELECT firstseen, address, name FROM devices WHERE id = &1", iDeviceId)
   If rDevice.Available Then
     If rDevice.Count Then
       If rDevice!firstseen = "00:00:00" Or If rDevice!firstseen = "" Then
-        If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Device with address '") & rDevice!address & ("' and '") & rDevice!name & ("' is a new device!"))
-        rResult = Main.hDB.Exec("UPDATE devices SET firstseen = &1 WHERE id = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), rDevice!id)
+        If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Device with address '" & rDevice!address & "' and '" & rDevice!name & "' is a new device!")
+        rResult = Main.hDB.Exec("UPDATE devices SET firstseen = &1 WHERE id = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), iDeviceId)
       Endif
     Endif
   Endif
@@ -985,74 +869,83 @@ Public Sub IsBlacklisted(sAddress As String, iInterface As Integer) As Boolean
   If rDevice.Count Then
     If rDevice!id Then
       If iInterface = rDevice!id Then
-        If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Address '") & sAddress & ("' with Interface '") & FindNameForInterface(iInterface) & ("' is blacklisted, so I ignore it."))
+        If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Address '" & sAddress & "' with Interface '" & FindNameForInterface(iInterface) & "' is blacklisted, so I ignore it.")
         Return True
       Else
         Return False
       Endif
     Endif
-    If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Address '") & sAddress & ("' is blacklisted, so I ignore it."))
+    If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Address '" & sAddress & "' is blacklisted, so I ignore it.")
     Return True
   Endif
   Return False
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' update device with iDeviceId at iValuenum with vValue, optional with valuetype
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Variant, Optional iValueType As Integer = ValueType_Undefined) As Boolean
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' TEMPORARY wrapper for the new ValueUpdate functionality, this can be removed if ValueUpdateExt is renamed to ValueUpdate.
-' It is backwards compatible with the old syntax
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ValueUpdate(iId As Integer, iValueNum As Variant, vValue As Variant, Optional iValueType As Variant, Optional vValue4 As Variant = "<EMPTY>") As Boolean
-
-  If vValue4 = "<EMPTY>" Then ' it is the new syntax
-    ValueUpdateExt(iId, iValueNum, vValue)
-  Else
-    Main.WriteDebugLog("Using old syntax of device valueupdate. Please convert it to  Devices.ValueUpdate(<DeviceId>,<ValueNum>,<Value>). The old syntax Devices.ValueUpdate(<DeviceId>,<Value>,<Value2>,<Value3>,<Value4>) will be removed soon!!")
-    ValueUpdateExt(iId, 1, iValueNum)
-    ValueUpdateExt(iId, 2, vValue)
-    ValueUpdateExt(iId, 3, iValueType)
-    ValueUpdateExt(iId, 4, vValue4)
-  Endif
-
-End
-
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' update device with iId at iValuenum with vValue, optional with valuetype
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ValueUpdateExt(iId As Integer, iValueNum As Integer, vValue As Variant, Optional iValueType As Integer = ValueType_Undefined) As Boolean
-
-  Dim rResult, rDevice As Result
-  Dim bUpdated As Boolean
-  Dim rDeviceLog As Result
-  Dim sLabel, sValue, sName, sType As String
-  Dim iInstance As Integer
+  Dim rResult, rResultInsert, rResultUpdate, rDevice, rDeviceLog As Result
+  Dim bUpdated, bHidden As Boolean
+  Dim sLabel, sValue, sName, sType, sCorrection, sUnits As String
   Dim sTimeNow As String = Format(Now(), "yyyy-mm-dd hh:nn:ss")
-  Dim vValueName As String
-  
-  ' First check if device exists
-  If Not CheckIfDeviceExists(iId) Then
-     If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] ValueUpdate called for device with id '" & iId & "' that doesn't exists")
-    Return False
-  Endif
-
-  sName = FindNameForDevice(iID)
-  vValueName = "value" & iValueNum
 
   If vValue = "Dim 100" Then vValue = "On"
   If vValue = "Dim 99" Then vValue = "On"
   If vValue = "Dim 0" Then vValue = "Off"
 
-  rDevice = Main.hDB.Exec("SELECT device_values.units, device_values.value, device_values.log, device_values.logdisplay, devices.dimable, devices.switchable FROM device_values JOIN devices ON device_values.deviceid = devices.id WHERE deviceid = &1 AND valuenum = &2", iId, iValueNum)
+  Try rDevice = Main.hDB.Exec("SELECT device_values.value, device_values.log, device_values.correction, device_values.logdisplay, devices.name, devices.dimable, devices.switchable, devices.instance_id, devices.hide FROM device_values JOIN devices ON device_values.device_id = devices.id WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
+  ' data for device cannot be retrieved the device probably doesn't exist
+  If Not rDevice Then
+    If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] ValueUpdate called for device with id '" & iDeviceId & "' that doesn't exists")
+    Return False
+  Endif
+  ' devicevalue doesn't exist we need to do an insert instead of an update
   If rDevice.Count = 0 Then
-    ' New devicevalue, we need an insert instead of an update!
-    ' We leave sValue empty so update code will be executed
-    rResult = Main.hDB.Exec("INSERT INTO device_values (deviceid, value, valuenum, lastchanged) values (&1, &2, &3, &4)", iId, vValue, iValueNum, sTimeNow)
-    rDevice = Main.hDB.Exec("SELECT device_values.units, device_values.value, device_values.log, device_values.logdisplay, devices.dimable, devices.switchable FROM device_values JOIN devices ON device_values.deviceid = devices.id WHERE deviceid = &1 AND valuenum = &2", iId, iValueNum)
+
+    Select iValueType
+      Case ValueType_Switch
+      Case ValueType_Temperature
+        sUnits = IIf(Main.sTemperature = "°C", "°C", "°F")
+      Case ValueType_Humidity
+        sUnits = "%"
+      Case ValueType_Luminance
+      Case ValueType_WindSpeed
+      Case ValueType_WindDirection
+      Case ValueType_WindDescription
+      Case ValueType_WindAvgSpeed
+      Case ValueType_Weight
+      Case ValueType_UV
+      Case ValueType_RainRate
+      Case ValueType_RainTotal
+      Case ValueType_Remote
+      Case ValueType_Security
+      Case ValueType_Tamper
+      Case ValueType_Blinds
+      Case ValueType_Energy_kWh
+      Case ValueType_Power_Watt
+      Case ValueType_Chime
+      Case ValueType_Barometric
+      Case ValueType_Energy_Watt
+      Case ValueType_Voltage
+      Case ValueType_Current
+      Case ValueType_Water
+      Default ' Do nothing, we can't assign a proper unit
+        sUnits = ""
+    End Select
+
+    rResultInsert = Main.hDB.Exec("INSERT INTO device_values (device_id, value, valuenum, lastchanged, units) values (&1, &2, &3, &4, &5)", iDeviceId, vValue, iValueNum, sTimeNow, sUnits)
+    rDevice = Main.hDB.Exec("SELECT device_values.value, device_values.log, device_values.correction, device_values.logdisplay, devices.name, devices.dimable, devices.switchable, devices.instance_id, devices.hide FROM device_values JOIN devices ON device_values.device_id = devices.id WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
   Else
     sValue = rDevice!value
   Endif
+
+  ' store device name
+  sName = rDevice!name
+  bHidden = rDevice!hide
+  sCorrection = rDevice!correction
 
   If rDevice!switchable Then
     sType = "switch"
@@ -1060,56 +953,54 @@ Public Sub ValueUpdateExt(iId As Integer, iValueNum As Integer, vValue As Varian
     sType = "dimmer"
   Endif
 
-  ' Now hardcoded, should come from the devices table
-  iInstance = 1
-
-  If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] ValueUpdate called for device with id '" & iId & "' valuenum '" & iValueNum & "' and value '" & vValue & "'")
+  If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] ValueUpdate called for device with id '" & iDeviceId & "' valuenum '" & iValueNum & "' and value '" & vValue & "'")
   If vValue <> Null Then
     If Comp(vValue, sValue, gb.IgnoreCase) <> 0 Then
-      rResult = Main.hDB.Exec("UPDATE devices SET lastseen = &1, lastchanged = &1 WHERE id = &2", sTimeNow, iId)
-      rResult = Main.hDB.Exec("UPDATE device_values SET lastseen = &1, lastchanged = &1, value = &2 WHERE deviceid = &3 AND valuenum = &4", sTimeNow, vValue, iId, iValueNum)
-      If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Device change triggered for device with id '") & iId & ("' and ") & vValueName & " '" & vValue & "'")
-      If rDevice!logdisplay Then Main.WriteLog(sName & " status changed to " & vValue & IIf(sLabel, " " & sLabel, "") & ".")
-      If rDevice!dimable = True Or If rDevice!switchable = True Then Main.RefreshControlPage()
 
-      Events.CheckDeviceChangeEvents(iId, iValueNum, vValue)
+      rResult = Main.hDB.Exec("UPDATE devices, device_values SET devices.lastseen = &1, device_values.lastseen = &1, devices.lastchanged = &1, device_values.lastchanged = &1, device_values.value = &4 WHERE devices.id = &2 AND device_values.device_id = &2 AND device_values.valuenum = &3", sTimeNow, iDeviceId, iValueNum, vValue)
+      If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Device change triggered for device '") & sName & ("' with 'value") & iValueNum & "' = '" & vValue & "'")
+      If rDevice!dimable = True Or If rDevice!switchable = True Then Main.RefreshControlPage()
+      If rDevice!logdisplay Then Main.WriteLog("[Devices] " & sName & " status changed to " & vValue & IIf(sLabel, " " & sLabel, "") & ".")
+
+      Events.CheckDeviceChangeEvents(iDeviceId, iValueNum, vValue)
       bUpdated = True
 
-      If Plugin.IsPluginEnabled("IViewer", 0) Then
-        Try Plugin.GetPluginObject("IViewer", iInstance).Interface.SendUpdateForDevice(iId, vValue, vValueName, IIf(sType, sType, vValueName))
-      Endif
+      If Not bHidden Then
+        ' FIXME: instance of these plugins do not map to device instances, now set to 1 by default, maybe we should call/loop through all enabled instances?
+        If Plugin.IsPluginEnabled("IViewer", 0) Then
+          Try Plugin.GetPluginObject("IViewer", 1).Interface.SendUpdateForDevice(iDeviceId, CorrectValue(vValue, sCorrection, iDeviceId), "value" & iValueNum, IIf(sType, sType, "value" & iValueNum))
+        Endif
 
-      If Plugin.IsPluginEnabled("MQTT", 0) Then
-        Try Plugin.GetPluginObject("MQTT", iInstance).Interface.PublishMsg(sName & "/" & vValueName, vValue)
-      Endif
+        If Plugin.IsPluginEnabled("MQTT", 0) Then
+          Try Plugin.GetPluginObject("MQTT", 1).Interface.PublishMsg(sName & "/" & "value" & iValueNum, CorrectValue(vValue, sCorrection, iDeviceId))
+        Endif
 
-      If Plugin.IsPluginEnabled("SmartVisuServer", 0) Then
-        Try Plugin.GetPluginObject("SmartVisuServer", iInstance).Interface.SendUpdateDevice(sName, vValue, IIf(sType, sType, vValueName))
+        If Plugin.IsPluginEnabled("SmartVisuServer", 0) Then
+          Try Plugin.GetPluginObject("SmartVisuServer", 1).Interface.SendUpdateForDevice(sName, CorrectValue(vValue, sCorrection, iDeviceId), IIf(sType, sType, "value" & iValueNum))
+        Endif
       Endif
     Endif
   Endif
 
   If Not bUpdated Then
-    Try rResult = Main.hDB.Exec("UPDATE devices SET lastseen = &1 WHERE id = &2", sTimeNow, iId)
-    If Error Then rResult = Main.hDB.Exec("UPDATE devices SET lastseen = &1 WHERE id = &2", sTimeNow, iId)
-    Try rResult = Main.hDB.Exec("UPDATE device_values SET lastseen = &1 WHERE deviceid = &2 AND valuenum = &3", sTimeNow, iId, iValueNum)
-    If Error Then rResult = Main.hDB.Exec("UPDATE device_values SET lastseen = &1 WHERE deviceid = &2 AND valuenum = &3", sTimeNow, iId, iValueNum)
-  Else
+    rResultUpdate = Main.hDB.Exec("UPDATE devices, device_values SET devices.lastseen = &1, device_values.lastseen = &1 WHERE devices.id = &2 AND device_values.device_id = &2 AND device_values.valuenum = &3", sTimeNow, iDeviceId, iValueNum)
+  Endif
+  If bUpdated Or If Main.bLogAllValueUpdates Then
     If rDevice!log Then
       Main.hDB.Begin()
       rDeviceLog = Main.hDB.Create("device_values_log")
-      rDeviceLog!device_id = iId
-      rDeviceLog!value = vValue
+      rDeviceLog!device_id = iDeviceId
+      rDeviceLog!value = CStr(vValue)
       rDeviceLog!valuenum = iValueNum
       rDeviceLog!lastchanged = Now()
-      
-      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Creating log record for device with id '" & iId & "' and valuenum '" & iValueNum & "' = '" & vValue & "'")
+
+      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Creating log record for device with id '" & iDeviceId & "' and valuenum '" & iValueNum & "' = '" & vValue & "'")
       rDeviceLog.Update()
       Main.hDB.Commit()
     Endif
   Endif
 
-  Events.CheckDeviceLastseenChangeEvents(iId, sTimeNow)
+  Events.CheckDeviceLastseenChangeEvents(iDeviceId, sTimeNow)
   Main.RefreshDeviceList()
 
   If rResult Then
@@ -1119,22 +1010,49 @@ Public Sub ValueUpdateExt(iId As Integer, iValueNum As Integer, vValue As Varian
   Endif
 
 Catch
-  Main.WriteLog("[Devices] ERROR: " & Error.Text & " at '" & Error.Where & "'")
+  Main.WriteLog("[Devices] ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  Main.WriteLog("[Devices] ERROR: DeviceId = '" & iDeviceId & "' ValueNum =  '" & iValueNum & "'")
   Return False
 
 End
 
-
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' update battery status for device with iId
+' update battery status for device with iDeviceId
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Battery(iId As Integer, vValue As Variant) As Boolean
+Public Sub Battery(iDeviceId As Integer, vValue As Variant) As Boolean
 
-  Dim rResult As Result
+  Dim rDevice, rResult As Result
+  Dim sName, sBatteryStatus As String
 
-  rResult = Main.hDB.Exec("UPDATE devices SET batterystatus = &1, lastseen = &2 WHERE id = &3", vValue, Format(Now(), "yyyy-mm-dd hh:nn:ss"), iId)
+  Try rDevice = Main.hDB.Exec("SELECT name, batterystatus FROM devices WHERE id = &1", iDeviceId)
+  ' data for device cannot be retrieved the device probably doesn't exist
+  If Not rDevice Then
+    If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Battery Update called for device with id '" & iDeviceId & "' that doesn't exists")
+    Return False
+  Endif
 
-  If rResult.Count Then
+  ' store device name and current battery level
+  sName = rDevice!name
+  sBatteryStatus = rDevice!batterystatus
+
+  ' update value
+  rResult = Main.hDB.Exec("UPDATE devices SET batterystatus = &1, lastseen = &2 WHERE id = &3", vValue, Format(Now(), "yyyy-mm-dd hh:nn:ss"), iDeviceId)
+  If rResult Then
+    If sBatteryStatus <> vValue Then
+      ' notify plugins
+      ' FIXME: instance of these plugins do not map to device instances, now set to 1 by default, maybe we should call/loop through all enabled instances?
+      If Plugin.IsPluginEnabled("IViewer", 0) Then
+        Try Plugin.GetPluginObject("IViewer", 1).Interface.SendUpdateForDevice(iDeviceId, vValue, "battery", "battery")
+      Endif
+
+      If Plugin.IsPluginEnabled("MQTT", 0) Then
+        Try Plugin.GetPluginObject("MQTT", 1).Interface.PublishMsg(sName & "/" & "battery", vValue)
+      Endif
+
+      If Plugin.IsPluginEnabled("SmartVisuServer", 0) Then
+        Try Plugin.GetPluginObject("SmartVisuServer", 1).Interface.SendUpdateForDevice(sName, vValue, "battery")
+      Endif
+    Endif
     Return True
   Else
     Return False
@@ -1142,9 +1060,9 @@ Public Sub Battery(iId As Integer, vValue As Variant) As Boolean
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' mail battery status for device with battery status set (sType can be '', all or empty)
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function MailBatteryStatus(Optional sType As String) As Boolean
 
   Dim rDevice As Result
@@ -1173,17 +1091,20 @@ Public Function MailBatteryStatus(Optional sType As String) As Boolean
       Endif
     Endif
   Endif
-
   Return True
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' erase all logged data for device with iId
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub EraseLog(iId As Integer)
-  
-  Try Main.hDB.Exec("DELETE FROM device_values_log WHERE device_id = &1", iId)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' erase all logged data for device with iDeviceId, or just one value if iValue is specified
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub EraseLog(iDeviceId As Integer, Optional iValue As Integer)
+
+  If iValue Then
+    Try Main.hDB.Exec("DELETE FROM device_values_log WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValue)
+  Else
+    Try Main.hDB.Exec("DELETE FROM device_values_log WHERE device_id = &1", iDeviceId)
+  Endif
 
 End
 
@@ -1203,276 +1124,491 @@ Private Sub FindUniqueName(sName As String) As String
 
 End
 
-Public Sub AutoCreateDevice(sAddress As String, iInterface As Integer, sType As String, Optional sPrefName As String) As Integer
+Public Sub AutoCreateDevice(sAddress As String, iInterface As Integer, iInstance As Integer, sShortName As String, Optional sPrefName As String) As Integer
 
   Dim rResult As Result
   Dim sName As String
-  Dim iType As Integer
+  Dim iTypeId As Integer
 
   If sPrefName Then
     sName = FindUniqueName(Trim(sPrefName) & " #")
   Else
-    sName = FindUniqueName(sType & " device #")
+    sName = FindUniqueName(sShortName & " device #")
   Endif
 
-  ' try to select correct device type
-  Select UCase(sType)
+  ' try to select correct devicetype
+  Select UCase(sShortName)
     Case "DS18S20"
-      iType = 15
+      iTypeId = 15
     Case "DS2423"
-      iType = 58
+      iTypeId = 58
     Case "DS2438"
-      iType = 65
+      iTypeId = 65
     Case "DS18B20"
-      iType = 213
+      iTypeId = 213
     Case "X10"
-      iType = 36
-    Case "X10SECURITY", "VISONICSENSOR", "VISONICMOTION", "VISONICCODE", "VISONICPWRCODE"
-      iType = 1
+      iTypeId = 36
+    Case "X10SECURITY", "POWERCODEDW", "POWERCODEMOTION", "POWERCODEAUX", "CODESECURE"
+      iTypeId = 1
     Case "AC"
-      iType = 60
+      iTypeId = 60
     Case "FS20"
-      iType = 210
+      iTypeId = 210
     Case "FHTTFK"
-      iType = 156
+      iTypeId = 156
     Case "FHT80"
-      iType = 157
+      iTypeId = 157
     Case "EM1000", "EM1000-S", "EM1000-EM"
-      iType = 166
+      iTypeId = 166
     Case "EM1000-GZ"
-      iType = 167
+      iTypeId = 167
     Case "HDDTEMP"
-      iType = 11
+      iTypeId = 11
     Case "DSC DWS"
-      iType = 41
+      iTypeId = 41
     Case "DSC PIR"
-      iType = 40
+      iTypeId = 40
     Case "DSC SMOKE"
-      iType = 42
+      iTypeId = 42
     Case "PLCBUS"
-      iType = 117
+      iTypeId = 117
     Case "JEELABS NODE"
-      iType = 142
+      iTypeId = 142
     Case "PWRCTRL"
-      iType = 135
+      iTypeId = 135
     Case "RFXSENSOR TEMP"
-      iType = 100
+      iTypeId = 100
     Case "RFXSENSOR BARO"
-      iType = 139
+      iTypeId = 139
     Case "RFXSENSOR SUPPLY"
-      iType = 102
+      iTypeId = 102
     Case "ARC"
-      iType = 59
+      iTypeId = 59
     Case "ATI REMOTE WONDER", "ATI"
-      iType = 113
+      iTypeId = 113
     Case "ATI WONDER PLUS", "ATI2"
-      iType = 114
+      iTypeId = 114
     Case "HE", "HEUK"
-      iType = 43
+      iTypeId = 43
     Case "HEEU"
-      iType = 154
+      iTypeId = 154
     Case "RFXMETER"
-      iType = 9
+      iTypeId = 9
     Case "TEMP1"
-      iType = 214
+      iTypeId = 214
     Case "TEMP2"
-      iType = 81
+      iTypeId = 81
     Case "TEMP3"
-      iType = 84
+      iTypeId = 84
     Case "TEMP4"
-      iType = 85
+      iTypeId = 85
     Case "TEMP5"
-      iType = 223
+      iTypeId = 223
     Case "HUM1"
-      iType = 223
+      iTypeId = 223
     Case "TH1"
-      iType = 7
+      iTypeId = 7
     Case "TH2"
-      iType = 26
+      iTypeId = 26
     Case "TH3"
-      iType = 39
+      iTypeId = 39
     Case "TH4"
-      iType = 215
+      iTypeId = 215
     Case "TH5"
-      iType = 74
+      iTypeId = 74
     Case "TH6"
-      iType = 93
+      iTypeId = 93
     Case "TH7"
-      iType = 226
+      iTypeId = 226
     Case "TH8"
-      iType = 235
+      iTypeId = 235
     Case "THB1"
-      iType = 32
+      iTypeId = 32
     Case "THB2"
-      iType = 33
+      iTypeId = 33
     Case "RAIN1"
-      iType = 95
+      iTypeId = 95
     Case "RAIN2"
-      iType = 38
+      iTypeId = 38
     Case "RAIN3"
-      iType = 231
+      iTypeId = 231
     Case "WIND1"
-      iType = 74
+      iTypeId = 74
     Case "WIND2"
-      iType = 97
+      iTypeId = 97
     Case "WIND3"
-      iType = 37
+      iTypeId = 37
     Case "WIND4"
-      iType = 233
+      iTypeId = 233
     Case "UV1"
-      iType = 8
+      iTypeId = 8
     Case "UV2"
-      iType = 99
+      iTypeId = 99
     Case "UV3"
-      iType = 232
+      iTypeId = 232
     Case "DT1"
-      iType = 39
+      iTypeId = 39
     Case "WEIGHT1"
-      iType = 22
+      iTypeId = 22
     Case "WEIGHT2"
-      iType = 23
+      iTypeId = 23
+    Case "KD101"
+      iTypeId = 17
     Case "ELEC1", "ELEC1_1", "ELEC1_2", "ELEC1_3"
-      iType = 66
+      iTypeId = 66
     Case "ELEC2"
-      iType = 78
-    Case "DWS"
-      iType = 1
-    Case "MOTION"
-      iType = 69
-    Case "REMOTE"
-      iType = 71
+      iTypeId = 78
+    Case "X10SECDWS", "X10SECDW"
+      iTypeId = 1
+    Case "X10SECMOTION"
+      iTypeId = 69
+    Case "X10SECREMOTE"
+      iTypeId = 71
     Case "ANSLUT"
-      iType = 228
+      iTypeId = 228
     Case "DM10"
-      iType = 179
+      iTypeId = 179
     Case "DIGIMAX"
-      iType = 180
+      iTypeId = 180
+    Case "MERTIK"
+      iTypeId = 193
     Case "NINJA"
-      iType = 194
+      iTypeId = 194
     Case "SMOKE"
-      iType = 174
+      iTypeId = 174
     Case "IO0", "IO1", "IO2", "IO3", "IO4", "IO5", "IO6", "IO7"
-      iType = 192
+      iTypeId = 192
     Case "UPS"
-      iType = 14
-    Case "ZWAVE"
-      iType = 61
+      iTypeId = 14
     Case "BLUETOOTH"
-      iType = 18
+      iTypeId = 18
     Case "S300TH"
-      iType = 173
+      iTypeId = 173
     Case "SQUEEZEPLAYER"
-      iType = 112
+      iTypeId = 112
     Case "HM_CC_TC"
-      iType = 234
+      iTypeId = 234
     Case "P1-POWERUSAGE"
-      iType = 246
+      iTypeId = 246
     Case "P1-POWERDELIVER"
-      iType = 255
+      iTypeId = 255
     Case "P1-GASUSAGE"
-      iType = 256
+      iTypeId = 256
     Case "CCOST"
-      iType = 131
+      iTypeId = 131
     Case "TEMP6"
-      iType = 248
+      iTypeId = 248
     Case "TEMP7"
-      iType = 251
+      iTypeId = 251
     Case "TEMP8"
-      iType = 247
+      iTypeId = 247
     Case "TEMP9"
-      iType = 252
+      iTypeId = 252
+    Case "TEMP10"
+      iTypeId = 380
+    Case "TEMP11"
+      iTypeId = 387
     Case "HUM2"
-      iType = 247
+      iTypeId = 247
     Case "TH9"
-      iType = 250
+      iTypeId = 250
     Case "RAIN4"
-      iType = 253
+      iTypeId = 253
     Case "RAIN5"
-      iType = 247
+      iTypeId = 247
     Case "WIND5"
-      iType = 254
+      iTypeId = 254
     Case "WIND6"
-      iType = 247
+      iTypeId = 247
     Case "PIONEER"
-      iType = 258
+      iTypeId = 258
     Case "MEDIA.BASIC"
-      iType = 259
+      iTypeId = 259
     Case "MEDIA.MPTRNSPT"
-      iType = 260
+      iTypeId = 260
     Case "MEDIA.MPMEDIA"
-      iType = 261
+      iTypeId = 261
     Case "OSD.BASIC"
-      iType = 262
+      iTypeId = 262
     Case "T"
-      iType = 263
+      iTypeId = 263
     Case "TH"
-      iType = 264
+      iTypeId = 264
     Case "THB"
-      iType = 265
+      iTypeId = 265
     Case "WIND"
-      iType = 266
+      iTypeId = 266
     Case "RAIN"
-      iType = 267
+      iTypeId = 267
     Case "SOL"
-      iType = 268
+      iTypeId = 268
     Case "UV"
-      iType = 269
+      iTypeId = 269
     Case "ELVCUBE"
-      iType = 270
+      iTypeId = 270
     Case "ELVDOOR"
-      iType = 271
+      iTypeId = 271
     Case "ELVWALLTHERMO"
-      iType = 272
+      iTypeId = 272
     Case "ELVRADTHERMO"
-      iType = 273
+      iTypeId = 273
+    Case "ELVBUTTON"
+      iTypeId = 670
     Case "ELEC3"
-      iType = 274
+      iTypeId = 274
     Case "YOULESS"
-      iType = 281
+      iTypeId = 281
     Case "OPENTHERM THERMOSTAT"
-      iType = 237
+      iTypeId = 237
     Case "OPENTHERM BURNER"
-      iType = 238
+      iTypeId = 238
     Case "OPENTHERM BOILER"
-      iType = 239
+      iTypeId = 239
     Case "OPENTHERM CENTRAL HEATING"
-      iType = 240
+      iTypeId = 240
     Case "OPENTHERM OUTSIDE SENSOR"
-      iType = 241
+      iTypeId = 241
+    Case "THERMOSTAT"
+      iTypeId = 243
     Case "LIGHTWAVERF"
-      iType = 230
+      iTypeId = 230
+    Case "BLYSS" ' switch
+      iTypeId = 282
     Case "MEIANTECH"
-      iType = 285
+      iTypeId = 285
     Case "PLUGWISE SWITCH"
-      iType = 297
+      iTypeId = 297
     Case "KMTRONIC INPUT"
-      iType = 298
+      iTypeId = 298
     Case "KMTRONIC OUTPUT"
-      iType = 299
+      iTypeId = 299
     Case "GENERICIO"
-      iType = 301
+      iTypeId = 301
     Case "BINARY POWER SWITCH"
-      iType = 61
+      iTypeId = 61
     Case "ROUTING MULTILEVEL SWITCH", "MULTILEVEL SWITCH"
-      iType = 62
+      iTypeId = 62
     Case "ROUTING BINARY SENSOR", "BINARY SENSOR"
-      iType = 63
-    Case "DOOR LOCK"
-      iType = 333
+      iTypeId = 63
+    Case "ROUTING ALARM SENSOR"
+      iTypeId = 313
+    Case "DOOR LOCK", "Z-WAVE DOOR LOCK"
+      iTypeId = 333
+    Case "VIERA"
+      iTypeId = 339
+    Case "SA30"
+      iTypeId = 340
+    Case "BYRONSX"
+      iTypeId = 341
+    Case "TH10"
+      iTypeId = 353
+    Case "TH11"
+      iTypeId = 354
+    Case "TH12"
+      iTypeId = 381
+    Case "OMNIKSOL MAIN"
+      iTypeId = 286
+    Case "OMNIKSOL STRING"
+      iTypeId = 660
+    Case "OMNIKSOL OUTPUT"
+      iTypeId = 661
+    Case "CONRADRELAYBOARD"
+      iTypeId = 662
+    Case "SELECTPLUS"
+      iTypeId = 307
+    Case "BYRONMP"
+      iTypeId = 386
+
+    ' ~~~ Velbus ~~~
+    Case "VMB4RY"
+      iTypeId = 334
+    Case "VMB4DC"
+      iTypeId = 335
+    Case "VMB7IN"
+      iTypeId = 336
+    Case "VMBGPO"
+      iTypeId = 337
+    Case "VMBDME"
+      iTypeId = 338
+    Case "VMB4RYNO"
+      iTypeId = 663
+    Case "VMB2BLE"
+      iTypeId = 664
+    Case "VMB4RYLD"
+      iTypeId = 671
+    Case "VMB8PB"
+      iTypeId = 674
+    Case "VMBDMI"
+      iTypeId = 711
+    Case "VMBPIRC"
+      iTypeId = 712
+    Case "VMBPIRO"
+      iTypeId = 713
+    Case "VMB8PBU"
+      iTypeId = 714
+    Case "VMB6PBN"
+      iTypeId = 715
+    Case "VMBGP2"
+      iTypeId = 716
+    Case "VMBGP4"
+      iTypeId = 717
+    Case "VMBGPOD"
+      iTypeId = 718
+    Case "VMBGP1"
+      iTypeId = 719
+
+    ' ~~~ Eneco Toon ~~~
+    Case "TOON THERMOSTAT"
+      iTypeId = 356
+    Case "TOON POWER USAGE"
+      iTypeId = 357
+    Case "TOON POWER PRODUCED"
+      iTypeId = 358
+    Case "TOON GAS USAGE"
+      iTypeId = 359
+    Case "TOON SCHEDULE"
+      iTypeId = 360
+    Case "TOON STEKKER"
+      iTypeId = 384
+    Case "TOON ALL ON/OFF"
+      iTypeId = 385
+
+    ' ~~~~ Jerome KernelChip ~~~
+    Case "JEROME IO INPUT"
+      iTypeId = 361
+    Case "JEROME IO OUTPUT"
+      iTypeId = 362
+    Case "JEROME PULSE COUNTER"
+      iTypeId = 363
+
+    ' ~~~~ Philips Hue ~~~
+    Case "LCT001"
+      iTypeId = 373
+    Case "LCT007"
+      iTypeId = 373
+    Case "LWB004"
+      iTypeId = 308
+    Case "LWB006"
+      iTypeId = 308
+    Case "LST002"
+      iTypeId = 314
+    Case "PLUG 01"
+      iTypeId = 720
+
+    ' ~~~~ Wirelesstags ~~~
+    Case "ZGW05"
+      iTypeId = 368
+    Case "ZGW06"
+      iTypeId = 369
+    Case "ZGW07"
+      iTypeId = 370
+    Case "ZGW08"
+      iTypeId = 371
+    Case "ZGW09"
+      iTypeId = 372
+
+    ' ~~~~ Z-Wave, OpenZWave and RaZberry ~~~
+    Case "Z-WAVE THERMOSTAT"
+      iTypeId = 243
+    Case "Z-WAVE SWITCH"
+      iTypeId = 61
+    Case "Z-WAVE MOTOR CONTROL", "MULTIPOSITION MOTOR SWITCH"
+      iTypeId = 305
+    Case "Z-WAVE DIMMER"
+      iTypeId = 62
+    Case "Z-WAVE SENSOR"
+      iTypeId = 64
+    Case "Z-WAVE DOOR LOCK"
+      iTypeId = 242
+    Case "Z-WAVE ENTRY CONTROL"
+      iTypeId = 309
+    Case "Z-WAVE CONTROLLER"
+      iTypeId = 63
+    Case "Z-WAVE", "Z-WAVE GENERIC"
+      iTypeId = 304
+    Case "Z-WAVE REMOTE SWITCH"
+      iTypeId = 306
+    Case "SECURE KEYPAD"
+      iTypeId = 242
+
+    ' ~~~ Visonic PowerMax/Master ~~~
+    Case "VISONIC PIR"
+      iTypeId = 289
+    Case "VISONIC DOOR/WINDOW CONTACT"
+      iTypeId = 291
+    Case "VISONIC GAS DETECTOR"
+      iTypeId = 294
+    Case "VISONIC SMOKE DETECTOR"
+      iTypeId = 293
+    Case "VISONIC POWERMAX"
+      iTypeId = 672
+    Case "VISONIC POWERMASTER"
+      iTypeId = 673
+    'Case "VISONIC TEMPERATURE"
+    'Case "VISONIC WIRED"
+    'Case "VISONIC CAMERA"
+    'Case "VISONIC UNKNOWN"
+
+    ' ~~~ Virtual Devices ~~~
+    Case "WEATHER"
+      iTypeId = 141
+
+    ' ~~~ MySensors ~~~
+    Case "MYSENSORS"
+      iTypeId = 315
+
+    Case "OWW-TEXT"
+      iTypeId = 320
+
+    ' ~~~ MQTT ~~~
+    Case "MQTT-GENERIC"
+      iTypeId = 303
+    Case "MQTT-JSON"
+      iTypeId = 669
+
+    ' ~~~ RFLink ~~
+    Case "ALECTRO"
+       iTypeId = 700
+    Case "AURIOL"
+       iTypeId = 701
+    Case "CRESTA"
+       iTypeId = 702
+    Case "LACROSSE"
+       iTypeId = 703
+    Case "KAKU"
+       iTypeId = 222
+    Case "NEWKAKU"
+       iTypeId = 704
+    Case "UPM"
+       iTypeId = 705
+    Case "RFLINK GENERIC"
+       iTypeId = 707
+
+    ' ~~~ UniPi ~~~
+    Case "UNIPI"
+       iTypeId = 706
+
+    ' ~~~ Unknown devicetype ~~~
     Case Else
-      Main.WriteDebugLog(("[Devices] Auto create device '" & sName & "' failed, because of unknown type!"))
-      Main.WriteDebugLog(("[Devices] Please report device type '" & sType & "' with address '" & sAddress & "' and interface '" & FindNameForInterface(iInterface) & "' (" & iInterface & ") to support@domotiga.nl"))
+      Main.WriteDebugLog("[Devices] Auto device create for '" & sName & "' failed because it's unknown!")
+      Main.WriteDebugLog("[Devices] Device type: " & sShortName)
+      Main.WriteDebugLog("[Devices] Address: " & sAddress)
+      Main.WriteDebugLog("[Devices] Interface: '" & FindNameForInterface(iInterface) & "' (" & iInterface & ")")
+      Main.WriteDebugLog("[Devices] Instance: " & iInstance)
+      Main.WriteDebugLog("[Devices] Please report this to support@domotiga.nl")
+      Main.WriteDebugLog("[Devices] Also note that you can probably simply create this device manually, and selecting a devicetype similar to the one missing.")
       Return
   End Select
 
-  Main.WriteDebugLog(("[Devices] Auto created device '" & sName & "' with address '" & sAddress & "' of type '" & FindNameForDeviceType(iType) & "' with interface '" & FindNameForInterface(iInterface) & "'"))
+  Main.WriteDebugLog("[Devices] Auto created device '" & sName & "' with address '" & sAddress & "' of type '" & FindNameForDeviceType(iTypeId) & "' with interface '" & FindNameForInterface(iInterface) & "' and instance '" & iInstance & "'")
 
   ' create device
   Main.hDB.Begin()
   rResult = Main.hDB.Create("devices")
   rResult!name = sName
-  rResult!module = iType
-  rResult!interface = iInterface
+  rResult!devicetype_id = iTypeId
+  rResult!interface_id = iInterface
+  rResult!instance_id = iInstance
   rResult!address = sAddress
   rResult!enabled = True
   rResult!onicon = "new.png"
@@ -1483,7 +1619,7 @@ Public Sub AutoCreateDevice(sAddress As String, iInterface As Integer, sType As 
   rResult!switchable = False
   rResult!firstseen = Now()
   rResult!lastseen = Now()
-  rResult!location = 1
+  rResult!location_id = 1
   rResult.Update()
   Main.hDB.Commit()
 
@@ -1528,7 +1664,7 @@ Public Sub CheckResetDevice()
       If rResult!switchable Then
         Devices.SetDevice(rResult!id, rResult!resetvalue)
       Else
-        Devices.ValueUpdateExt(rResult!id, 1, rResult!resetvalue)
+        Devices.ValueUpdate(rResult!id, 1, rResult!resetvalue)
       Endif
     Endif
   Next
@@ -1542,7 +1678,7 @@ Public Sub CheckControlDevice(sAddress As String, iInterface As Integer) As Stri
 
   Dim rDeviceFind As Result
 
-  Try rDeviceFind = Main.hDB.Exec("SELECT switchable, dimable FROM devices WHERE address LIKE &1 AND interface = &2 AND enabled is TRUE", sAddress, iInterface)
+  Try rDeviceFind = Main.hDB.Exec("SELECT switchable, dimable FROM devices WHERE address LIKE &1 AND interface_id = &2 AND enabled is TRUE", sAddress, iInterface)
   If rDeviceFind.Available Then
     If rDeviceFind!switchable Then
       Return "Switch"
@@ -1558,7 +1694,7 @@ Public Sub CheckControlDevice(sAddress As String, iInterface As Integer) As Stri
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' get the ID of the device with sDeviceName.
+' get the id of the device with sDeviceName
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindIdForDevice(sDeviceName As String) As Integer
   Dim rDevice As Result
@@ -1581,21 +1717,52 @@ Public Sub FindIdForDevice(sDeviceName As String) As Integer
   Endif
 
 Catch
-  Main.WriteDebugLog(("[Devices] Error while trying to find id: ") & Error.Text & (" at ") & Error.Where)
+  Main.WriteDebugLog("[Devices] Error while trying to find id: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' delete device with iId.
+' return on/off/dim icon name related to value
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub DeleteDevice(iId As Integer) As Boolean
+Public Sub GetStatusIcon(sValue As String, sOnIcon As String, sOffIcon As String, sDimIcon As String) As String
+
+  Dim aValue As String[]
+
+  ' split command
+  aValue = Split(UCase(sValue), " ")
+
+  If Not IsNull(sOnIcon) Or Not IsNull(sOffIcon) Then
+    If aValue.Count = 1 Then
+      Select Case UCase(aValue[0])
+        Case "ON", "OPEN", "MOTION", "AWAKE", "ONLINE", "LIGHT", "UP", "ALARM"
+          Return sOnIcon
+        Case Else
+          Return sOffIcon
+      End Select
+    Else If aValue.Count > 1 Then
+      If aValue[0] = "DIM" Then
+        If Len(sDimIcon) Then Return sDimIcon
+      Else
+        If Len(sOffIcon) Then Return sOffIcon
+      Endif
+    Endif
+  Else
+    Return ""
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' delete device with iDeviceId
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DeleteDevice(iDeviceId As Integer) As Boolean
+
   ' TODO: handle in database
-  
-  Main.hDB.Exec("DELETE FROM devices WHERE id = &1", iId)
-  Main.hDB.Exec("DELETE FROM device_values WHERE deviceid = &1", iId)
-  Devices.EraseLog(iId)
-  Main.hDB.Exec("DELETE FROM devices_pachube WHERE deviceid = &1", iId)
-  Main.hDB.Exec("DELETE FROM devices_bwired WHERE deviceid = &1", iId)
+  Main.hDB.Exec("DELETE FROM devices WHERE id = &1", iDeviceId)
+  Main.hDB.Exec("DELETE FROM device_values WHERE device_id = &1", iDeviceId)
+  Devices.EraseLog(iDeviceId)
+  Main.hDB.Exec("DELETE FROM devices_xively WHERE deviceid = &1", iDeviceId)
+  Main.hDB.Exec("DELETE FROM devices_bwired WHERE deviceid = &1", iDeviceId)
   Return True
 
 Catch
@@ -1604,12 +1771,13 @@ Catch
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' delete device value with device id and valuenum
+' delete device value with device iDeviceId and valuenum
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub DeleteDeviceValue(iDeviceId As Integer, iValueNum As Integer) As Boolean
+
   ' TODO: handle in database
   Main.hDB.Exec("DELETE FROM device_values_log WHERE device_id = &1 AND valuenum  = &2", iDeviceId, iValueNum)
-  Main.hDB.Exec("DELETE FROM device_values WHERE deviceid = &1 AND valuenum  = &2", iDeviceId, iValueNum)
+  Main.hDB.Exec("DELETE FROM device_values WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
   Return True
 
 Catch
@@ -1618,13 +1786,13 @@ Catch
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' make device with iId hidden.
+' make device with iDeviceId hidden
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub HideDevice(iId As Integer) As Boolean
+Public Sub HideDevice(iDeviceId As Integer) As Boolean
 
   Dim rResult As Result
 
-  rResult = Main.hDB.Exec("UPDATE devices SET hide = TRUE WHERE id = &1", iId)
+  rResult = Main.hDB.Exec("UPDATE devices SET hide = TRUE WHERE id = &1", iDeviceId)
   Return True
 
 Catch
@@ -1633,38 +1801,51 @@ Catch
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Toggle device state
+' make device with iDeviceId visible
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ToggleDeviceValue(iId As Integer) As String
- 
-  If CheckIfDeviceExists(iId)
-    Return Toggle(GetCurrentValueForDevice(iId, 1))
-  Else 
+Public Sub UnHideDevice(iDeviceId As Integer) As Boolean
+
+  Dim rResult As Result
+
+  rResult = Main.hDB.Exec("UPDATE devices SET hide = FALSE WHERE id = &1", iDeviceId)
+  Return True
+
+Catch
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' toggle device state of device with iDeviceId
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToggleDeviceValue(iDeviceId As Integer) As String
+
+  If CheckIfDeviceExists(iDeviceId)
+    Return Toggle(GetCurrentValueForDevice(iDeviceId, 1))
+  Else
     Return ""
-  Endif 
+  Endif
 
 Catch
   Return ""
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Find devices and return fields from the database, depending which devices are required.
-' Optionally the output van be sorted, by specifying the sOrder.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices and return fields from the database, depending which devices are required
+' optionally the output van be sorted, by specifying the sOrder
 ' sWhich can have (or a combination, delimited by a +):
 ' all, enabled, disabled, visible, hidden, switch, dim, sensor, ext (default is: enabled+visible)
 ' ext - all device information, gathered from multiple tables
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetDeviceList(Optional sWhich As String, Optional sSortOrder As String) As Result
 
   Dim rDevice As Result
-  Dim sWhere As String
-  Dim sAppend As String
-  Dim sSQL As String
+  Dim sWhere, sAppend, sSQL As String
 
   sWhich = LCase(sWhich)
 
-  ' If nobody specifies anything, we just it all
+  ' If nobody specifies anything, we just return it all
   If sWhich = "" Then
     sWhich = "all+ext"
   Endif
@@ -1713,81 +1894,73 @@ Public Sub GetDeviceList(Optional sWhich As String, Optional sSortOrder As Strin
           sWhere &= "WHERE (" & sAppend & ")"
         Endif
       Endif
-
     Endif
-
   Endif
- 
+
   If InStr(sWhich, "ext") Then
-    sSQL = "SELECT devices.*, locations.name as 'locationname', floors.name as 'floorplanname', floors.image as `floorplanimage`, devicetypes.name as 'devicetypename', interfaces.name as `interfacename` FROM devices LEFT OUTER JOIN locations ON devices.location = locations.id LEFT OUTER JOIN floors ON devices.floorplan = floors.floor LEFT JOIN devicetypes ON devices.module = devicetypes.id LEFT JOIN interfaces ON devices.interface = interfaces.id " & sWhere
+    sSQL = "SELECT devices.*, locations.name as 'locationname', floors.name as 'floorplanname', floors.image as 'floorplanimage', devicetypes.name as 'devicetypename', plugins.name as 'interfacename' FROM devices LEFT OUTER JOIN locations ON devices.location_id = locations.id LEFT OUTER JOIN floors ON devices.floorplan_id = floors.floor LEFT JOIN devicetypes ON devices.devicetype_id = devicetypes.id Left JOIN plugins On devices.interface_id = plugins.id " & sWhere
   Else
-    sSQL = "SELECT devices.*, locations.name as 'locationname' FROM devices LEFT OUTER JOIN locations on devices.location = locations.id " & sWhere
+    sSQL = "SELECT devices.*, locations.name as 'locationname' FROM devices LEFT OUTER JOIN locations on devices.location_id = locations.id " & sWhere
   Endif
 
   If sSortOrder Then
     sSQL &= " ORDER BY " & sSortOrder
   Endif
-
   Try rDevice = Main.hDB.Exec(sSQL)
   If Error Then
-    Main.WriteDebugLog("[Devices] ERROR: '" & Error.Text & "' at " & Error.Where)
+    Main.WriteDebugLog("[Devices] ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   Endif
-
   Return rDevice
 
 End
 
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Find devices and return fields from the database joined with device values, depending which devices are required.
-' 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices and return fields from the database joined with device values, depending which devices are required
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetValues(Optional cOptions As Collection) As Result
 
   Dim rDevice As Result
-  Dim sSQL As String = ""
-  Dim sWhere As String = ""
+  Dim sSQL, sWhere As String = ""
   Dim bFirst As Boolean
   Dim iElement As Integer
-  
+
   If Not cOptions Then cOptions = New Collection
-  
+
   If cOptions.Exist("device_id") Then
-    sWhere = " WHERE deviceid = " & cOptions["device_id"]
+    sWhere = " WHERE device_id = " & cOptions["device_id"]
   Endif
-  
+
   If cOptions.Exist("not_device_id") Then
-    If Not sWhere Then 
+    If Not sWhere Then
       sWhere = " WHERE "
     Else
       sWhere &= " AND "
     Endif
     sWhere &= "id <> " & cOptions["not_device_id"]
   Endif
-  
+
   If cOptions.Exist("log") Then
-    If Not sWhere Then 
+    If Not sWhere Then
       sWhere = " WHERE "
     Else
       sWhere &= " AND "
     Endif
     If cOptions["log"] Then
       sWhere &= "log is TRUE"
-    Else  
+    Else
       sWhere &= "log is FALSE"
     Endif
   Endif
 
-  
   If cOptions.Exist("valuenum") Then
-    If Not sWhere Then 
+    If Not sWhere Then
       sWhere = " WHERE ("
     Else
       sWhere &= " AND ("
     Endif
-    
+
     bFirst = True
-    For Each iElement In cOptions["valuenum"] 
+    For Each iElement In cOptions["valuenum"]
       If Not bFirst Then sWhere &= " OR " Else bFirst = False
       sWhere &= " valuenum = " & iElement
     Next
@@ -1802,191 +1975,228 @@ Public Sub GetValues(Optional cOptions As Collection) As Result
 
   Try rDevice = Main.hDB.Exec(sSQL)
   If Error Then
-    Main.WriteDebugLog("[Devices] ERROR: '" & Error.Text & "' at " & Error.Where)
+    Main.WriteDebugLog("[Devices] ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   Endif
 
   Return rDevice
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Find devices and return fields from the database joined with device values, depending which devices are required.
-' 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find device value log (history)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Get_Device_Values_Log(Optional cOptions As Collection) As Result
+
+  Dim rResult As Result
+  Dim sSQL, sWhere As String = ""
+
+  ' We require at least a device id and valuenum to execute this query
+  If Not cOptions Then Return rResult
+  If Not cOptions.Exist("device_id") Then Return rResult
+  If Not cOptions.Exist("valuenum") Then Return rResult
+
+  sWhere = " WHERE device_values_log.device_id = " & cOptions["device_id"] & " AND device_values_log.valuenum = " & cOptions["valuenum"]
+
+  If cOptions.Exist("timestamp") Then
+    sWhere &= " AND device_values_log.lastchanged > '" & cOptions["timestamp"] & "'"
+  Endif
+
+  If cOptions.Exist("count") Then
+    sWhere &= " ORDER BY device_values_log.id DESC LIMIT " & cOptions["count"]
+  Endif
+
+  sSQL = "SELECT device_values_log.id AS log_id, device_values_log.device_id, device_values_log.value, device_values_log.lastchanged, device_values.correction FROM device_values_log JOIN device_values ON device_values_log.device_id = device_values.device_id AND device_values_log.valuenum = device_values.valuenum " & sWhere
+
+  If cOptions.Exist("count") Then
+    sSQL = "SELECT * FROM (" & sSQL & ")sub ORDER BY log_id ASC"
+  Else
+    sSQL &= " ORDER BY device_values_log.id"
+  Endif
+
+  Try rResult = Main.hDB.Exec(sSQL)
+  If Error Then
+    Main.WriteDebugLog("[Devices] ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  Endif
+
+  Return rResult
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices and return fields from the database joined with device values, depending which devices are required
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetDevicesAndValues(Optional cOptions As Collection) As Result
 
   Dim rDevice As Result
-  Dim sSQL As String = ""
-  Dim sWhere As String = ""
+  Dim sSQL, sWhere, sElement As String = ""
   Dim bFirst As Boolean
   Dim iElement As Integer
-  Dim sElement As String
-  
+
   If Not cOptions Then cOptions = New Collection
-   
+
   If cOptions.Exist("device_id") Then
     sWhere = " WHERE devices.id = " & cOptions["device_id"]
   Else If cOptions.Exist("not_device_id") Then
     sWhere = " WHERE devices.id <> " & cOptions["not_device_id"]
   Endif
-  
+
   If cOptions.Exist("value_valuenum") Then
-    If Not sWhere Then 
+    If Not sWhere Then
       sWhere = " WHERE "
     Else
       sWhere &= " AND "
     Endif
     sWhere &= "device_values.valuenum = " & cOptions["value_valuenum"]
   Endif
-  
+
   If cOptions.Exist("enabled") Then
-    If Not sWhere Then 
+    If Not sWhere Then
       sWhere = " WHERE "
     Else
       sWhere &= " AND "
     Endif
     If cOptions["enabled"] Then
       sWhere &= "enabled is TRUE"
-    Else  
+    Else
       sWhere &= "enabled is FALSE"
     Endif
   Endif
-  
+
   If cOptions.Exist("hide") Then
-    If Not sWhere Then 
+    If Not sWhere Then
       sWhere = " WHERE "
     Else
       sWhere &= " AND "
     Endif
     If cOptions["hide"] Then
       sWhere &= "hide is TRUE"
-    Else  
+    Else
       sWhere &= "hide is FALSE"
     Endif
   Endif
-  
+
   If cOptions.Exist("log") Then
-    If Not sWhere Then 
+    If Not sWhere Then
       sWhere = " WHERE "
     Else
       sWhere &= " AND "
     Endif
     If cOptions["log"] Then
       sWhere &= "device_values.log is TRUE"
-    Else  
+    Else
       sWhere &= "device_values.log is FALSE"
     Endif
   Endif
-  
+
   If cOptions.Exist("rrd") Then
-    If Not sWhere Then 
+    If Not sWhere Then
       sWhere = " WHERE "
     Else
       sWhere &= " AND "
     Endif
     If cOptions["rrd"] Then
       sWhere &= "rrd is TRUE"
-    Else  
+    Else
       sWhere &= "rrd is FALSE"
     Endif
   Endif
-  
+
   If cOptions.Exist("graph") Then
-    If Not sWhere Then 
+    If Not sWhere Then
       sWhere = " WHERE "
     Else
       sWhere &= " AND "
     Endif
     If cOptions["graph"] Then
       sWhere &= "graph is TRUE"
-    Else  
+    Else
       sWhere &= "graph is FALSE"
     Endif
   Endif
-  
+
   If cOptions.Exist("location_id") Then
-    If Not sWhere Then 
+    If Not sWhere Then
       sWhere = " WHERE "
     Else
       sWhere &= " AND "
     Endif
-    sWhere &= "location = " & cOptions["location_id"]
+    sWhere &= "location_id = " & cOptions["location_id"]
   Endif
-  
+
   If cOptions.Exist("switchable") Or cOptions.Exist("dimable") Then
-    If Not sWhere Then 
+    If Not sWhere Then
       sWhere = " WHERE ("
     Else
       sWhere &= " AND ("
     Endif
-    
+
     If cOptions.Exist("switchable") Then
       If cOptions["switchable"] Then
         sWhere &= "switchable is TRUE"
-      Else  
+      Else
         sWhere &= "switchable is FALSE"
       Endif
     Endif
-    
+
     If cOptions.Exist("switchable") And cOptions.Exist("dimable") Then
       If cOptions.Exist("able") Then
         sWhere &= " " & cOptions["able"] & " "
       Else
         sWhere &= " OR "
       Endif
-    Else  
+    Else
       sWhere &= " "
     Endif
-    
+
     If cOptions.Exist("dimable") Then
       If cOptions["dimable"] Then
         sWhere &= "dimable is TRUE"
-      Else  
+      Else
         sWhere &= "dimable is FALSE"
       Endif
     Endif
 
-    sWhere &= " )"   
+    sWhere &= " )"
   Endif
-  
+
   If cOptions.Exist("valuenum") Then
-    If Not sWhere Then 
+    If Not sWhere Then
       sWhere = " WHERE ("
     Else
       sWhere &= " AND ("
     Endif
-    
+
     bFirst = True
-    For Each iElement In cOptions["valuenum"] 
+    For Each iElement In cOptions["valuenum"]
       If Not bFirst Then sWhere &= " OR " Else bFirst = False
       sWhere &= " device_values.valuenum = " & iElement
     Next
     sWhere &= ")"
   Endif
-  
+
   If cOptions.Exist("groups") Then
-    If Not sWhere Then 
+    If Not sWhere Then
       sWhere = " WHERE ("
     Else
       sWhere &= " AND ("
     Endif
-    
+
     bFirst = True
-    For Each sElement In cOptions["groups"] 
+    For Each sElement In cOptions["groups"]
       If Not bFirst Then sWhere &= " AND " Else bFirst = False
       sWhere &= " groups LIKE '" & sElement & "'"
     Next
     sWhere &= ")"
   Endif
 
-  sSQL = "SELECT devices.id AS device_id, devices.name AS device_name, devices.module AS device_module_id, devices.enabled AS device_enabled, " &
-    "devices.location AS device_location_id, devices.hide AS device_hide, devices.interface AS device_interface_id, devices.address AS device_address,  " &
+  sSQL = "SELECT devices.id AS device_id, devices.name AS device_name, devices.devicetype_id AS device_devicetype_id, devices.enabled AS device_enabled, " &
+    "devices.location_id AS device_location_id, devices.hide AS device_hide, devices.interface_id AS device_interface_id, devices.address AS device_address,  " &
     "devices.dimable AS device_dimable, devices.switchable AS device_switchable, devices.extcode AS device_extcode, devices.onicon AS device_onicon, " &
     "devices.repeatstate AS device_repeatstate, devices.repeatperiod AS device_repeatperiod, devices.reset AS device_reset, " &
     "devices.resetperiod AS device_resetperiod, devices.resetvalue AS device_resetvalue, devices.comments AS device_comments, devices.batterystatus AS device_batterystatus, " & ""
     "devices.officon AS device_officon, devices.dimicon AS device_dimicon, devices.lastchanged AS device_lastchanged, devices.groups AS device_groups, " &
-    "devices.floorplan AS device_floorplan, devices.x AS device_x, devices.y AS device_y, " &
-    "devices.lastseen AS device_lastseen, devices.firstseen AS device_firstseen, devices.batterystatus AS device_batterystatus "
+    "devices.floorplan_id AS device_floorplan_id, devices.instance_id AS device_instance_id, devices.x AS device_x, devices.y AS device_y, " &
+    "devices.lastseen AS device_lastseen, devices.firstseen AS device_firstseen, devices.batterystatus AS device_batterystatus, devices.poll AS device_poll "
 
   If Not cOptions.Exist("inc_device_values") Then
     cOptions["inc_device_values"] = True
@@ -1996,27 +2206,27 @@ Public Sub GetDevicesAndValues(Optional cOptions As Collection) As Result
       "device_values.value AS device_value_value, device_values.correction AS device_value_correction, device_values.units AS device_value_units, " &
       "device_values.lastseen AS device_value_lastseen, device_values.lastchanged AS device_value_lastchanged, " &
       "device_values.log AS device_value_log, device_values.logdisplay AS device_value_logdisplay, device_values.logspeak AS device_value_logspeak, " &
-      "device_values.rrd AS device_value_rrd, device_values.graph AS device_value_graph, device_values.valuerrddsname AS device_value_valuerrddsname,  " &
-      "device_values.valuerrdtype AS device_values_valuerrdtype, device_values.valuerrdtype AS device_value_valuerrdtype, device_values.valuerrddsname AS device_value_valuerrddsname "
+      "device_values.rrd AS device_value_rrd, device_values.graph AS device_value_graph, device_values.valuerrddsname AS device_value_valuerrddsname, " &
+      "device_values.valuerrdtype AS device_values_valuerrdtype, device_values.valuerrdtype AS device_value_valuerrdtype, device_values.valuerrddsname AS device_value_valuerrddsname, " &
+      "device_values.control AS device_value_control, device_values.feedback AS device_value_feedback, device_values.description AS device_value_description "
   Endif
-  
+
   If cOptions["inc_device_values"] Then
-    sSQL &= "From devices INNER JOIN device_values On devices.id = device_values.deviceid "
+    sSQL &= "FROM devices INNER JOIN device_values ON devices.id = device_values.device_id "
   Else
-    sSQL &= "From devices "
+    sSQL &= "FROM devices "
   Endif
-  
+
   sSQL &= sWhere
-  
+
   If cOptions.Exist("sortOrder") Then
     sSQL &= " ORDER BY " & cOptions["sortOrder"]
   Endif
 
   Try rDevice = Main.hDB.Exec(sSQL)
   If Error Then
-    Main.WriteDebugLog("[Devices] ERROR: '" & Error.Text & "' at " & Error.Where)
+    Main.WriteDebugLog("[Devices] ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   Endif
-
   Return rDevice
 
 End
@@ -2036,42 +2246,85 @@ Private Sub GetDeviceList_BuildSQL(sTemp As String, sAppend As String) As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Retrieve all locations possible for the devices
+' retrieve all locations possible for the devices
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 Public Sub GetLocationList() As Result
 
   Dim rLocation As Result
 
   Try rLocation = Main.hDB.Exec("SELECT * FROM locations")
   If Error Then
-    Main.WriteDebugLog("[Devices] ERROR: '" & Error.Text & "' at " & Error.Where)
+    Main.WriteDebugLog("[Devices] ERROR: '" & Error.Text & "' at'" & Error.Where & "'")
   Endif
-
   Return rLocation
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' return disable openzwavepoll boolean for device with address
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindOpenZWavePollForDevice(iInstance As Integer, sAddress As String) As Boolean
 
   Dim rDevice As Result
 
-  Try rDevice = Main.hDB.Exec("SELECT log FROM devices WHERE address = &1 AND interface = 15", sAddress)
-  If Not Error Then
-    If rDevice.Available Then
-      If rDevice.Count = 1 Then
-        Return rDevice!poll
-      Else
-        Return False
-      Endif
+  Try rDevice = Main.hDB.Exec("SELECT poll FROM devices WHERE address = &1 AND instance_id = &2 AND interface_id = 15", sAddress, iInstance)
+  If Not Error And If rDevice.Available Then
+    If rDevice.Count = 1 Then
+      Return rDevice!poll
     Else
       Return False
     Endif
   Else
     Return False
   Endif
+
+End
+
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return if dimable
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CheckIfDimable(iDeviceId As Integer) As Boolean
+
+  Dim rDeviceFind As Result
+
+  Try rDeviceFind = Main.hDB.Exec("SELECT dimable FROM devices WHERE id = &1 AND enabled is TRUE", iDeviceId)
+  If rDeviceFind.Available Then
+    Return rDeviceFind!dimable
+  Endif
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Rename device address
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Rename(iDeviceId As Integer, sNewAddress As String) As Boolean
+
+  Dim rDevice As Result
+
+  '  Find device information, to check for duplicates
+  rDevice = FindDeviceInfoForDevice(iDeviceId)
+
+  If rDevice And If rDevice.Available Then
+
+    ' Check for the new address, if we find one, don't continue
+    If Find(rDevice!instance_id, sNewAddress, rDevice!interface_id, "DISABLEAUTOCREATE") Then
+      Main.WriteLog("[Devices] ERROR: Can't rename device with id '" & iDeviceId & "', new address already exists. Old address '" & rDevice!address & "', new address '" & sNewAddress & "'.")
+      Return False
+    Endif
+
+    Try Main.hDB.Exec("UPDATE devices SET address = &1 WHERE id = &2", sNewAddress, iDeviceId)
+    If Error Then
+      Main.WriteLog("[Devices] ERROR: Failed to rename device with id '" & iDeviceId & "'. Old address '" & rDevice!address & "', new address '" & sNewAddress & "'.")
+      Return False
+    Endif
+
+    If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Renamed device id '" & iDeviceId & "' from old address '" & rDevice!address & ", to new address '" & sNewAddress & "'")
+
+    Return True
+  Else
+    Return False
+  Endif 
 
 End

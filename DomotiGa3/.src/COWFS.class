@@ -1,11 +1,11 @@
 ' Gambas class file
 
 ' Description:
-' OWFS.module
+' COWFS.class
 ' Support for OWFS devices.
 
 ' Development Status:
-' Just started.
+' Working
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -16,7 +16,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "OWFS"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "OWFS"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -25,6 +24,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[OWFS] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -37,139 +37,147 @@ Private $bEnabled As Boolean
 Private $iPollTime As Integer
 Private $bCached As Boolean
 Private $sBaseDir As String
-Private $bOWFSDebug As Boolean
+Private $bDebug As Boolean
 
 Public tOWFS As Timer
 Private hOWFS As Process
 Private cOutput As New Collection
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StartPlugin(cPl As CPluginEntry)
-  
+
   KeyName = cPl.KeyName
   Instance = cPl.Instance
   If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
-  
+
   ' Copy configuration items locally
   $bEnabled = cPl.Settings["enabled"]
   $sBaseDir = cPl.Settings["basedir"]
   $bCached = cPl.Settings["cached"]
   $iPollTime = cPl.Settings["polltime"]
-  $bOWFSDebug = cPl.Settings["debug"]
-  
+  $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("OWFS Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
   ' Connect/Initialize connection
   Run()
-  
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
-  
+
   Try tOWFS.Stop
   IsRunning = False
-  
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' start timer
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Run()
-  
+
   ' start poll timer for OWFS
   tOWFS = New Timer As "tOWFS"
   tOWFS.Delay = $iPollTime * 1000 ' multiply for seconds
   tOWFS.Start
-  
+
   IsRunning = True
-  
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' gets called at each timer event
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tOWFS_Timer()
-  
+
   CheckOWFS()
-  
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' find all devices with type OWFS and get their values
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub CheckOWFS()
-  
+
   Dim rResult As Result
   Dim sAddress As String
-  
+
   ' get all devices with this devicetype
-  rResult = Devices.FindDevicesForInterface(Devices.FindInterface("OWFS Interface"))
-  If rResult.Available Then
-    If rResult.Count >= 1 Then
-      For Each rResult
-        If $bOWFSDebug Then Main.WriteDebugLog(LogLabel & "Checking device '" & rResult!name & "' with address '" & rResult!address & "'.")
-        sAddress = rResult!address
-        ' if address contains no "." add it.
-        If InStr(sAddress, ".") = 0 Then sAddress = Left(sAddress, 2) & "." & Right(sAddress, Len(sAddress) - 2)
-        ' choose cached/uncached
-        sAddress = $sBaseDir &/ IIf($bCached, "/", "/uncached") &/ sAddress
-        ' if address contains a "/" already don't add anything
-        If InStr(rResult!address, "/") = 0 Then
-          Select Case Left(rResult!address, 2)
-            Case "05" ' DS2405 - addressable switch
-              sAddress &= "/PIO"
-            Case "10", "28" ' DS18S20 and DS18B20 - temperature sensors
-              sAddress &= "/temperature"
-            Case "1D" ' DS2423 - dual counter
-              sAddress &= "/counters.ALL"
-            Case "26" ' DS2438 - humidity
-              sAddress &= "/humidity"
-            Case "12", "3A" ' DS2406 and DS2413 - dual I/O
-              sAddress &= "/sensed.B"
-            Case "20" ' DS2450 - quad A/D
-              sAddress &= "/volt.A"
-            Case Else
-              If $bOWFSDebug Then Main.WriteDebugLog(LogLabel & "Unsupported 1-Wire family '" & Left(rResult!address, 2) & "'")
-          End Select
-        Endif
-        GetOWFS(rResult!id, sAddress)
-      Next
-    Else
-      Main.WriteLog(LogLabel & "No 1-Wire devices found in device table!")
-    Endif
+  rResult = Devices.FindDevicesForInterface(InterfaceId, Instance)
+  If rResult And If rResult.Available Then
+    For Each rResult
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking device '" & rResult!name & "' with address '" & rResult!address & "'.")
+      sAddress = rResult!address
+      ' if address contains no "." add it.
+      If InStr(sAddress, ".") = 0 Then sAddress = Left(sAddress, 2) & "." & Right(sAddress, Len(sAddress) - 2)
+      ' choose cached/uncached
+      sAddress = $sBaseDir &/ IIf($bCached, "/", "/uncached") &/ sAddress
+      ' if address contains a "/" already don't add anything
+      If InStr(rResult!address, "/") = 0 Then
+        Select Left(rResult!address, 2)
+          Case "05" ' DS2405 - addressable switch
+            sAddress &= "/PIO"
+          Case "10", "28" ' DS18S20 and DS18B20 - temperature sensors
+            sAddress &= "/temperature"
+          Case "1D" ' DS2423 - dual counter
+            sAddress &= "/counters.ALL"
+          Case "26" ' DS2438 - humidity
+            sAddress &= "/humidity"
+          Case "12", "3A" ' DS2406 and DS2413 - dual I/O
+            sAddress &= "/sensed.B"
+          Case "20" ' DS2450 - quad A/D
+            sAddress &= "/volt.A"
+          Case Else
+            If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported 1-Wire family '" & Left(rResult!address, 2) & "'")
+        End Select
+      Endif
+
+      GetOWFS(rResult!id, sAddress)
+
+    Next
+  Else
+    Main.WriteLog(LogLabel & "No 1-Wire devices found in device table!")
   Endif
-  
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' to switch unit with device control
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCommand(sAddress As String, sValue As String)
-  
+
   Select Case UCase(sValue)
     Case "ON"
       SetOWFS(sAddress, "1")
     Case "OFF"
       SetOWFS(sAddress, "0")
     Case Else
-      If $bOWFSDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sValue)
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sValue)
   End Select
-  
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' try to set value of Device
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub SetOWFS(sAddress As String, sValue As String)
-  
+
   Dim sDevice As String
-  
+
   If InStr(sAddress, ".") = 0 Then sAddress = Left(sAddress, 2) & "." & Right(sAddress, Len(sAddress) - 2)
   sDevice = $sBaseDir &/ sAddress
   ' if address contains a "/" already don't add anything
@@ -182,82 +190,84 @@ Private Sub SetOWFS(sAddress As String, sValue As String)
       Case "20" ' DS2450- Quad A/D
         sDevice &= "/PIO.A"
       Case Else
-        If $bOWFSDebug Then Main.WriteDebugLog(LogLabel & "Unsupported 1-Wire family '" & Left(sAddress, 2) & "' for switching.")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported 1-Wire family '" & Left(sAddress, 2) & "' for switching.")
     End Select
   Endif
-  If $bOWFSDebug Then Main.WriteDebugLog(LogLabel & "Settings contents of '" & sDevice & "' to '" & sValue & "'")
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Settings contents of '" & sDevice & "' to '" & sValue & "'")
   Shell "echo \"" & sValue & "\" > " & sDevice
-  
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' try to get value of Device
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub GetOWFS(iId As Integer, sAddress As String)
-  
-  If $bOWFSDebug Then Main.WriteDebugLog(LogLabel & "Checking contents of '" & sAddress & "'")
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking contents of '" & sAddress & "'")
   hOWFS = Exec ["cat", sAddress] For Read As "OWFS"
   hOWFS.Tag = iId
   cOutput.Add("", iId)
-  
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' read OWFS output and store it in collection
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub OWFS_Read()
-  
+
   Dim sBuffer As String
   Dim iId As Integer
-  
+
   sBuffer = Read #Last, -256
   iId = Last.Tag
-  
+
   If cOutput.Exist(iId) Then cOutput[iId] &= sBuffer
-  
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' get id and return value, 0 means ok, anything else is not found
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub OWFS_Kill()
-  
+
   Dim iDeviceId, iRc As Integer
   Dim sOutput, sDeviceType As String
-  
-  iDeviceId = Last.Tag
+
+  Try iDeviceId = Last.Tag
+  If Error Then Return
+
   iRc = Last.Value
-  
+
   If iDeviceId Then
     ' save ping output
     sOutput = Replace(cOutput[iDeviceId], " ", "")
     cOutput.Remove(iDeviceId)
-    
+
     Select Case iRc
       Case 0
-        
-        sDeviceType = Devices.FindDescrForDeviceType(Devices.FindModuleForDevice(iDeviceId))
+        sDeviceType = Devices.FindDeviceTypeDescriptionForDeviceId(iDeviceId)
         Select sDeviceType
           Case "Addressable Switch", "Dual Addressable Switch", "Dual I/O"
             ' a switch device, convert values
             If sOutput = "0" Then sOutput = "Off"
             If sOutput = "1" Then sOutput = "On"
         End Select
-        
+
         ' debug output
-        If $bOWFSDebug Then Main.WriteDebugLog(LogLabel & "Device with id '" & iDeviceId & "' and type '" & sDeviceType & "' has value '" & sOutput & "'.")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Device with id '" & iDeviceId & "' and type '" & sDeviceType & "' has value '" & sOutput & "'.")
         ' find and update device
         Devices.CheckFirstSeen(iDeviceId)
-        Devices.ValueUpdateExt(iDeviceId, 1, sOutput)
+        Devices.ValueUpdate(iDeviceId, 1, sOutput)
       Case Else
         ' debug output
-        If $bOWFSDebug Then Main.WriteDebugLog(LogLabel & "Cannot open OWFS file for device with id '" & iDeviceId & "'.")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Cannot open OWFS file for device with id '" & iDeviceId & "'.")
     End Select
   Else
     Main.WriteDebugLog(LogLabel & "Returned invalid device id!")
   Endif
-  
+
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: Parsing Result: " & Error.Text & " at " & Error.Where)
-  
+  Main.WriteDebugLog(LogLabel & "ERROR: Parsing Result: '" & Error.Text & "' at '" & Error.Where & "'")
+
 End

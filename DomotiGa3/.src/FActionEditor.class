@@ -15,63 +15,108 @@
 Public bAddAction As Boolean
 Public bActionEdit As Boolean
 Private rResult As Result
-Private rResultDevices As Result
 Private iActionTab As Integer
 Private cActionTypeNames As New Collection
+Private $cDevices As New Collection
+Private vResponse As Variant
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Code which will be executed when the form opens
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Form_Open()
 
-  Dim vValue As Variant
+  Dim rDevices As Result
+  Dim cGV As CGlobalVarEntry
   Dim iCount As Integer
+  Dim hProwl As New CProwl
+  Dim hNMA As New CNMA
   Dim hPushover As New CPushover
+  Dim cCol As Collection
+  Dim cValue As Integer[]
 
+  cmbProwlPriority.List = hProwl.Priority_List
+  cmbNMAPriority.List = hNMA.Priority_List
   cmbPushoverPriority.List = hPushover.Priority_List
   cmbPushoverSound.List = hPushover.Sound_List
 
   If bAddAction Then
     Me.Text = ("Create Action")
     btnDeleteAction.Visible = False
+    btnNewAction.Visible = False
+  Endif
+
+  ' FIXME: make this function client/server aware
+  If Not Main.bServer Then
+    btnPushbulletFetchDevices.Enabled = False
   Endif
 
   Me.Move(FMain.X + 50, FMain.Y + 70)
 
   ' Fill combo with all action types & and keep track of the order
   cActionTypeNames.Clear()
-  For iCount = 1 To tabActionTypes.Count
-    cmbActionTypes.Add(tabActionTypes[iCount - 1].Text)
-    cActionTypeNames.Add(iCount, tabActionTypes[iCount - 1].Text)
+  For iCount = 1 To tabPanelActionTypes.Count
+    cmbActionTypes.Add(tabPanelActionTypes[iCount - 1].Text)
+    cActionTypeNames.Add(iCount, tabPanelActionTypes[iCount - 1].Text)
   Next
-  
+
   ' fill combo with available global vars
   cmbVariables.Add("")
-  For Each vValue In Main.GlobalVar
+  For Each cGV In Main.GlobalVar
     cmbVariables.Add(Main.GlobalVar.Key)
   Next
 
   ' fill combo with available devices
   cmbDevices.Add("")
   cmbDevicesJson.Add("")
+  cmbSoftDimmingDevice.Add("")
 
-  rResultDevices = Devices.FindAllEnabledDevices("name")
-  If rResultDevices Then
-    If rResultDevices.Count Then
-      For Each rResultDevices
-        cmbDevices.Add(rResultDevices!name)
-        cmbDevicesJson.Add(rResultDevices!name)
+  rDevices = Devices.GetDevicesAndValues(["sortOrder": "name", "enabled": True, "inc_device_values": True])
+  If rDevices Then
+    If rDevices.Count Then
+      For Each rDevices
+        If rDevices!device_name Then
+          If $cDevices.Exist(rDevices!device_name) Then
+            cCol = $cDevices[rDevices!device_name]
+          Else
+            ' Store a new device and its id
+            cCol = New Collection
+            cValue = New Integer[]
+            cCol["device_id"] = rDevices!device_id
+            cCol["valuenum"] = cValue
+            $cDevices[rDevices!device_name] = cCol
+          Endif
+
+          ' Store all valuenum of this device. We only show used valuenum (dynamic)
+          If Not cCol["valuenum"].Exist(rDevices!device_value_valuenum) Then
+            cCol["valuenum"].Add(rDevices!device_value_valuenum)
+            cCol["valuenum"].Sort()
+          Endif
+        Endif
       Next
     Endif
   Else
-    Message.Info(("Error: couldn't find devices table!"))
+    Message.Info(("ERROR: table 'devices' not found!"))
     Return
   Endif
-  
+
+  For Each $cDevices
+    cmbDevices.Add($cDevices.Key)
+    cmbDevicesJson.Add($cDevices.Key)
+    cmbSoftDimmingDevice.Add($cDevices.key)
+  Next
+
    ' fill combo with json post or get
   cmbJsonMethod.Add("")
   cmbJsonMethod.Add("Post")
   cmbJsonMethod.Add("Get")
 
-  If Not bAddAction Then
-    ' fetch action details
+  If bAddAction Then
+    If Not Main.bServer Then
+      ' Only saved actions can be executed from the Client
+      btnRun.Enabled = False
+    Endif
+  Else
+    ' Existing action - fetch action details
     If bActionEdit Then
       Try rResult = Main.hDB.Exec("SELECT * FROM actions WHERE id = &1", FEvents.txtCurEvent)
     Else
@@ -84,6 +129,7 @@ Public Sub Form_Open()
 
     If rResult.Count = 1 Then
       txtActionName.Text = rResult!name
+      txtActionId.Text = rResult!id
       txtDescription.Text = rResult!description
       iActionTab = rResult!type
 
@@ -91,7 +137,7 @@ Public Sub Form_Open()
       Select rResult!type
         Case 1 ' set device value
           If rResult!param1 Then cmbDevices.Text = Devices.FindNameForDevice(rResult!param1)
-          cmbValue.Index = rResult!param2
+          cmbValue.Text = "value" & rResult!param2
           txtDeviceValue.Text = rResult!param3
         Case 2 ' set global var
           cmbVariables.Text = rResult!param1
@@ -114,12 +160,12 @@ Public Sub Form_Open()
           txtIRCommand.Text = rResult!param1
         Case 9 ' play sound
           txtSound.Text = rResult!param1
-          spVolume.Value = rResult!param2
+          sbVolume.Value = rResult!param2
         Case 10 ' write log
           txtLog.Text = rResult!param1
         Case 11 ' display text on led matrix
           txtLEDMessage.Text = rResult!param1
-          vbID.Value = rResult!param2
+          sbID.Value = rResult!param2
           cmbColor.Text = rResult!param3
           cmbSpeed.Text = rResult!param4
         Case 12 ' av control command
@@ -128,10 +174,10 @@ Public Sub Form_Open()
           cmbAVValue.Text = rResult!param3
           txtAVAddress.Text = rResult!param4
         Case 13 ' delay timer
-          vbDelay.Value = rResult!param1
+          sbDelay.Value = rResult!param1
           If rResult!param3 = "random" Then
             chkRandom.Value = True
-            vbDelayMax.Value = rResult!param2
+            sbDelayMax.Value = rResult!param2
           Else
             chkRandom.Value = False
           Endif
@@ -144,22 +190,54 @@ Public Sub Form_Open()
         Case 16 ' json
            If rResult!param1 Then cmbDevicesJson.Text = Devices.FindNameForDevice(rResult!param1)
            If rResult!param2 Then cmbJsonMethod.Text = rResult!param2
-           If rResult!param3 Then TextBoxJsonUrl.Text = rResult!param3
+           If rResult!param3 Then txtJsonUrl.Text = rResult!param3
         Case 17 ' send prowl
           txtSendProwl.Text = rResult!param1
-        Case 18 ' send notify my android
-          txtSendNMA.Text = rResult!param1
-        Case 19 ' send pushover
-          txtSendPushover.Text = rResult!param1
-  
+
           ' Select priorities
           Select rResult!param2
+            Case "-2" ' very low/lowest
+              cmbProwlPriority.index = 1
             Case "-1" ' low
-              cmbPushoverPriority.index = 1
+              cmbProwlPriority.index = 2
             Case "1" ' high
-              cmbPushoverPriority.index = 2
+              cmbProwlPriority.index = 3
             Case "2" ' Emergency
+              cmbProwlPriority.index = 4
+            Case Else
+              cmbProwlPriority.index = 0
+          End Select
+
+        Case 18 ' send notify my android
+          txtSendNMA.Text = rResult!param1
+
+          ' Select priorities
+          Select rResult!param2
+            Case "-2" ' very low/lowest
+              cmbNMAPriority.index = 1
+            Case "-1" ' low
+              cmbNMAPriority.index = 2
+            Case "1" ' high
+              cmbNMAPriority.index = 3
+            Case "2" ' Emergency
+              cmbNMAPriority.index = 4
+            Default
+              cmbNMAPriority.index = 0
+          End Select
+
+        Case 19 ' send pushover
+          txtSendPushover.Text = rResult!param1
+
+          ' Select priorities
+          Select rResult!param2
+            Case "-2" ' lowest
+              cmbPushoverPriority.index = 1
+            Case "-1" ' low
+              cmbPushoverPriority.index = 2
+            Case "1" ' high
               cmbPushoverPriority.index = 3
+            Case "2" ' Emergency
+              cmbPushoverPriority.index = 4
             Default
               cmbPushoverPriority.index = 0
           End Select
@@ -169,29 +247,41 @@ Public Sub Form_Open()
           Else
             cmbPushoverSound.Text = rResult!param3
           Endif
+          ' Destination Devices
+          txtPushoverDevices.Text = rResult!param4
+        Case 20 ' send pushbullet
+          txtPushbulletMsg.Text = rResult!param1
+          txtPushbulletTitle.Text = rResult!param2
+          txtPushbulletDeviceId.Text = rResult!param3
+        Case 21 ' soft dimming
+          If rResult!param1 Then cmbSoftDimmingDevice.Text = Devices.FindNameForDevice(rResult!param1)
+          If rResult!param2 Then sbSoftDimmingSeconds.Value = rResult!param2
+          If rResult!param3 Then sbSoftDimmingResultValue.Value = rResult!param3
+        Case 22 ' send udp message
+          If rResult!param1 Then txtSendUDPAddress.Text = rResult!param1
+          If rResult!param2 Then sbSendUDPPort.Value = rResult!param2
+          If rResult!param3 Then txtSendUDPMessage.Text = rResult!param3
+        Case 23 ' publish mqtt message
+          If rResult!param1 Then txtPublishMQTTTopic.Text = rResult!param1
+          If rResult!param2 Then txtPublishMQTTMessage.Text = rResult!param2
+          If rResult!param3 Then chkPublishMQTTRawTopic.Value = rResult!param3
       End Select
 
-      tabActionTypes.SetFocus()
-      btnRun.Enabled = True
+      Try tabPanelActionTypes.Index = rResult!type - 1
+      tabPanelActionTypes.SetFocus()
+
     Else
       bAddAction = True
     Endif
   Endif
 
-  ' Hide all tabs
-  For iCount = 1 To tabActionTypes.Count
-    tabActionTypes[iCount - 1].Visible = False
-  Next
-  
-  ' If the number is out-of-range, set it to default
-  If iActionTab < 1 Or iActionTab > tabActionTypes.Count Then
+  ' If the number is out-of-range, set it to first one
+  If iActionTab < 1 Or iActionTab > tabPanelActionTypes.Count Then
     iActionTab = 1
   Endif
 
   ' Set current action type
-  cmbActionTypes.Index = cActionTypeNames[tabActionTypes[iActionTab - 1].Text] - 1
-  ' Make only 1 tab visible
-  tabActionTypes[iActionTab - 1].Visible = True
+  cmbActionTypes.Index = cActionTypeNames[tabPanelActionTypes[iActionTab - 1].Text] - 1
 
 End
 
@@ -201,7 +291,18 @@ Public Sub txtActionName_Change()
 
 End
 
-Public Sub tabActionTypes_Click()
+Public Sub tabPanelActionTypes_Click()
+
+  Dim iType As Integer
+
+  cmbActionTypes.Index = tabPanelActionTypes.Index
+  iType = cActionTypeNames[cmbActionTypes.Text]
+  Select iType
+    Case 13 ' delay timer
+      btnRun.Enabled = False
+      chkRandom_Click()
+    Case Else
+  End Select
 
   EnableButtons()
 
@@ -212,22 +313,347 @@ Private Sub EnableButtons()
   btnSave.Enabled = True
   btnDeleteAction.Enabled = True
   btnNewAction.Enabled = True
-  btnRun.Enabled = False
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Check if all mandatory fields are filled in, before we Save or Execute
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CheckTypeValues() As JSONCollection
+
+  Dim iType As Integer
+  Dim sParam1, sParam2, sParam3, sParam4, sParam5 As String
+  Dim cData As New JSONCollection
+
+  iType = cActionTypeNames[cmbActionTypes.Text]
+
+  Select iType
+    Case 1 ' set device
+      If Not cmbDevices.Text Then
+        Balloon(("Please select a device!"), cmbDevices)
+        Return Null
+      Endif
+      sParam1 = Devices.FindIdForDevice(cmbDevices.Text)
+      If Not cmbValue.Text Then
+        Balloon(("Please select a field to set!"), cmbValue)
+        Return Null
+      Endif
+
+      sParam2 = Replace$(cmbValue.Text, "value", "")
+      If Not txtDeviceValue.Text Then
+        Balloon(("Please enter a value to set!"), txtDeviceValue)
+        Return Null
+      Endif
+      sParam3 = txtDeviceValue.Text
+    Case 2 ' set globalvar
+      If Not cmbVariables.Text Then
+        Balloon(("Please select or enter a new variable!"), cmbVariables)
+        Return Null
+      Endif
+      sParam1 = cmbVariables.Text
+      If Not txtVariableValue.Text Then
+        Balloon(("Please enter a value to set!"), txtVariableValue)
+        Return Null
+      Endif
+      sParam2 = txtVariableValue.Text
+    Case 3 ' send e-mail message
+      If Not txtToAddress.Text Then
+        Balloon(("Please enter a e-mail address!"), txtToAddress)
+        Return Null
+      Endif
+       If Not txtSubject.Text Then
+        Balloon(("Please enter a subject!"), txtSubject)
+        Return Null
+      Endif
+       If Not txtMessage.Text Then
+        Balloon(("Please enter a msg to send!"), txtMessage)
+        Return Null
+      Endif
+      sParam1 = txtToAddress.Text
+      sParam2 = txtSubject.Text
+      sParam3 = txtMessage.Text
+    Case 4 ' speak text
+      If Not cmbSpeakVoice.Text Then
+        Balloon(("Please enter a voicename or select type!"), cmbSpeakVoice)
+        Return Null
+      Endif
+      If Not txtSpeakText.Text Then
+        Balloon(("Please enter a text to speak!"), txtSpeakText)
+        Return Null
+      Endif
+      sParam1 = cmbSpeakVoice.Text
+      sParam2 = txtSpeakText.Text
+    Case 5 ' run shell command
+      If Not txtExecuteCmd.Text Then
+        Balloon(("Please enter a command to execute!"), txtExecuteCmd)
+        Return Null
+      Endif
+      sParam1 = txtExecuteCmd.Text
+    Case 6 ' send tweet message
+      If Not txtSendTweet.Text Then
+        Balloon(("Please enter a message to tweet!"), txtSendTweet)
+        Return Null
+      Else If Len(txtSendTweet.Text) > 140
+        Balloon(("Entered message is too long! (max. 140 chars)"), txtSendTweet)
+        Return Null
+      Endif
+      sParam1 = txtSendTweet.Text
+    Case 7 ' send SMS message
+      If Not txtToSMS.Text Then
+        Balloon(("Please enter a number to SMS to!"), txtToSMS)
+        Return Null
+      Endif
+      If Not txtSMSMessage.Text Then
+        Balloon(("Please enter a message to send!"), txtSMSMessage)
+        Return Null
+      Endif
+      sParam1 = txtToSMS.Text
+      sParam2 = txtSMSMessage.Text
+    Case 8 ' send IRTrans command
+      If Not txtIRCommand.Text Then
+        Balloon(("Please enter a command string!"), txtIRCommand)
+        Return Null
+      Endif
+      sParam1 = txtIRCommand.Text
+    Case 9 ' play sound file
+      If Not txtSound.Text Then
+        Balloon(("Please enter a sound to play!"), txtSound)
+        Return Null
+      Endif
+      sParam1 = txtSound.Text
+      sParam2 = sbVolume.Value
+    Case 10 ' write log
+      If Not txtLog.Text Then
+        Balloon(("Please enter a text to log!"), txtLog)
+        Return Null
+      Endif
+      sParam1 = txtLog.Text
+    Case 11 ' display text on led matrix
+      If Not txtLEDMessage.Text Then
+        Balloon(("Please enter a text to display!"), txtLEDMessage)
+        Return Null
+      Endif
+      If Not sbID.Text Then
+        Balloon(("Please enter an display id!"), sbID)
+        Return Null
+      Endif
+      sParam1 = txtLEDMessage.Text
+      sParam2 = sbID.Value
+    Case 12 ' av control command
+      If Not cmbAVModel.Text Then
+        Balloon(("Please select the equipment model!"), cmbAVModel)
+        Return Null
+      Endif
+      If Not cmbAVCommand.Text Then
+        Balloon(("Please enter a command to send!"), cmbAVCommand)
+        Return Null
+      Endif
+      sParam1 = cmbAVModel.Text
+      sParam2 = cmbAVCommand.Text
+      sParam3 = cmbAVValue.Text
+      sParam4 = txtAVAddress.Text
+    Case 13 ' delay timer
+      If sbDelay.Text = 0 Then
+        Balloon(("Please enter a delay value!"), sbDelay)
+        Return Null
+      Endif
+      If chkRandom.Value Then
+        If sbDelayMax.Text = 0 Then
+          Balloon(("Please enter a max delay value!"), sbDelayMax)
+          Return Null
+        Endif
+        If sbDelayMax.Value < sbDelay.Value Then
+          Balloon(("Please enter a value higher than min delay value!"), sbDelayMax)
+          Return Null
+        Endif
+        sParam2 = sbDelayMax.Value
+        sParam3 = "random"
+      Else
+        sParam2 = ""
+        sParam3 = "fixed"
+      Endif
+      sParam1 = sbDelay.Value
+    Case 14 ' notify-send
+      If Not txtNotifyTitle.Text Then
+        Balloon(("Please enter a title to display!"), txtNotifyTitle)
+        Return Null
+      Endif
+      If Not txtNotifyText.Text Then
+        Balloon(("Please enter a text to display!"), txtNotifyText)
+        Return Null
+      Endif
+      sParam1 = txtNotifyTitle.Text
+      sParam2 = txtNotifyText.Text
+    Case 15 ' script
+      If Not txtScript.Text Then
+        Balloon(("Please enter a script to run!"), txtScript)
+        Return Null
+      Endif
+      sParam1 = txtScript.Text
+    Case 16 ' JSON
+      If Not cmbDevicesJson.Text Then
+        Balloon(("Please select a device!"), cmbDevicesJson)
+        Return Null
+      Endif
+      sParam1 = Devices.FindIdForDevice(cmbDevicesJson.Text)
+      If Not cmbJsonMethod.Text Then
+        Balloon(("Please select a method!"), cmbJsonMethod)
+        Return Null
+      Endif
+      sParam2 = cmbJsonMethod.Text
+      If Not txtJsonUrl.Text Then
+        Balloon(("Please enter a url!"), txtJsonUrl)
+        Return Null
+      Endif
+      sParam3 = txtJsonUrl.Text
+    Case 17 ' send prowl message
+      If Not txtSendProwl.Text Then
+        Balloon(("Please enter a Prowl message!"), txtSendProwl)
+        Return Null
+      Endif
+      sParam1 = txtSendProwl.Text
+
+      ' Select priorities
+      Select cmbProwlPriority.Index
+        Case 1 ' very low/lowest
+          sParam2 = "-2"
+        Case 2 ' low
+          sParam2 = "-1"
+        Case 3 ' high
+          sParam2 = "1"
+        Case 4 ' emergency
+          sParam2 = "2"
+        Default ' normal
+          sParam2 = ""
+      End Select
+
+    Case 18 ' send notify my android message
+      If Not txtSendNMA.Text Then
+        Balloon(("Please enter a Notify My Android message!"), txtSendNMA)
+        Return Null
+      Endif
+      sParam1 = txtSendNMA.Text
+
+      ' Select priorities
+      Select cmbNMAPriority.Index
+        Case 1 ' very low/lowest
+          sParam2 = "-2"
+        Case 2 ' low
+          sParam2 = "-1"
+        Case 3 ' high
+          sParam2 = "1"
+        Case 4 ' emergency
+          sParam2 = "2"
+        Default ' normal
+          sParam2 = ""
+      End Select
+
+    Case 19 ' send pushover message
+      If Not txtSendPushover.Text Then
+        Balloon(("Please enter a Pushover message!"), txtSendPushover)
+        Return Null
+      Endif
+      sParam1 = txtSendPushover.Text
+
+      ' Select priorities
+      Select cmbPushoverPriority.Index
+        Case 1 ' lowest
+          sParam2 = "-2"
+        Case 2 ' low
+          sParam2 = "-1"
+        Case 3 ' high
+          sParam2 = "1"
+        Case 4 ' emergency
+          sParam2 = "2"
+        Default ' normal
+          sParam2 = ""
+      End Select
+
+      ' Select sounds
+      sParam3 = cmbPushoverSound[cmbPushoverSound.Index].Text
+      If sParam3 = "pushover (default)" Then sParam3 = ""
+
+      ' Select destination devices
+      sParam4 = txtPushoverDevices.Text
+
+    Case 20 ' send pushbullet message
+      If Not txtPushbulletMsg.Text Then
+        Balloon(("Please enter a Pushbullet message!"), txtPushbulletMsg)
+        Return Null
+      Endif
+      sParam1 = txtPushbulletMsg.Text
+      sParam2 = txtPushbulletTitle.Text
+      sParam3 = txtPushbulletDeviceId.Text
+    Case 21 ' soft dimming
+      If Not cmbSoftDimmingDevice.Text Then
+        Balloon(("Please select a device!"), cmbSoftDimmingDevice)
+        Return Null
+      Endif
+      sParam1 = Devices.FindIdForDevice(cmbSoftDimmingDevice.Text)
+      If sbSoftDimmingSeconds.Text = 0 Then
+        Balloon("Please enter amount of seconds!", sbSoftDimmingSeconds)
+        Return Null
+      Endif
+      sParam2 = sbSoftDimmingSeconds.Text
+      sParam3 = sbSoftDimmingResultValue.Text
+    Case 22 ' send udp message
+      If Not txtSendUDPAddress.Text Then
+        Balloon(("Please enter a address to send to!"), txtSendUDPAddress)
+        Return Null
+      Endif
+      If Not txtSendUDPMessage.Text Then
+        Balloon(("Please enter a message to send!"), txtSendUDPMessage)
+        Return Null
+      Endif
+      sParam1 = txtSendUDPAddress.Text
+      sParam2 = sbSendUDPPort.Value
+      sParam3 = txtSendUDPMessage.Text
+    Case 23 ' publish mqtt message
+      If Not txtPublishMQTTTopic.Text Then
+        Balloon(("Please enter a topic to publish to!"), txtPublishMQTTTopic)
+        Return Null
+      Endif
+      If Not txtPublishMQTTMessage.Text Then
+        Balloon(("Please enter a message to publish!"), txtPublishMQTTMessage)
+        Return Null
+      Endif
+      sParam1 = txtPublishMQTTTopic.Text
+      sParam2 = txtPublishMQTTMessage.Text
+      sParam3 = chkPublishMQTTRawTopic.Value
+  End Select
+
+  ' Passed all check, return the values
+  cData.Add(iType, "type")
+  cData.Add(sParam1, "param1")
+  cData.Add(sParam2, "param2")
+  cData.Add(sParam3, "param3")
+  cData.Add(sParam4, "param4")
+  cData.Add(sParam5, "param5")
+  Return cData
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Save or update the Action
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub btnSave_Click()
 
   Dim rResultUpdate As Result
   Dim iType As Integer
   Dim sSql, sParam1, sParam2, sParam3, sParam4, sParam5 As String
+  Dim cData As Collection
 
   If Not txtActionName.Text Then
     Balloon(("Please enter a name for this action!"), txtActionName)
     Return
   Endif
 
-  If Not bAddAction Then
+  If bAddAction Then
+    If ActionNameExist(txtActionName.Text) Then
+      Balloon(("Please enter a unique name for this action!"), txtActionName)
+      Return
+    Endif
+  Else
     ' name has changed
     If rResult!name <> txtActionName.Text Then
       If ActionNameExist(txtActionName.Text) Then
@@ -237,227 +663,19 @@ Public Sub btnSave_Click()
     Endif
   Endif
 
-  iType = cActionTypeNames[cmbActionTypes.Text]
+  ' Validate the type and values
+  cData = CheckTypeValues()
+  If Not cData Then Return
 
-  Select iType
-    Case 1 ' set device
-      If Not cmbDevices.Text Then
-        Balloon(("Please select a device!"), cmbDevices)
-        Return
-      Endif
-      sParam1 = Devices.FindIdForDevice(cmbDevices.Text)
-      If Not cmbValue.Text Then
-        Balloon(("Please select a field to set!"), cmbValue)
-        Return
-      Endif
-      sParam2 = cmbValue.Index
-      If Not txtDeviceValue.Text Then
-        Balloon(("Please enter a value to set!"), txtDeviceValue)
-        Return
-      Endif
-      sParam3 = txtDeviceValue.Text
-    Case 2 ' set globalvar
-      If Not cmbVariables.Text Then
-        Balloon(("Please select or enter a new variable!"), cmbVariables)
-        Return
-      Endif
-      sParam1 = cmbVariables.Text
-      If Not txtVariableValue.Text Then
-        Balloon(("Please enter a value to set!"), txtVariableValue)
-        Return
-      Endif
-      sParam2 = txtVariableValue.Text
-    Case 3 ' send e-mail message
-      If Not txtToAddress.Text Then
-        Balloon(("Please enter a e-mail address!"), txtToAddress)
-        Return
-      Endif
-       If Not txtSubject.Text Then
-        Balloon(("Please enter a subject!"), txtSubject)
-        Return
-      Endif
-       If Not txtMessage.Text Then
-        Balloon(("Please enter a msg to send!"), txtMessage)
-        Return
-      Endif
-      sParam1 = txtToAddress.Text
-      sParam2 = txtSubject.Text
-      sParam3 = txtMessage.Text
-    Case 4 ' speak text
-      If Not cmbSpeakVoice.Text Then
-        Balloon(("Please enter a voicename or select type!"), cmbSpeakVoice)
-        Return
-      Endif
-      If Not txtSpeakText.Text Then
-        Balloon(("Please enter a text to speak!"), txtSpeakText)
-        Return
-      Endif
-      sParam1 = cmbSpeakVoice.Text
-      sParam2 = txtSpeakText.Text
-    Case 5 ' run shell command
-      If Not txtExecuteCmd.Text Then
-        Balloon(("Please enter a command to execute!"), txtExecuteCmd)
-        Return
-      Endif
-      sParam1 = txtExecuteCmd.Text
-    Case 6 ' send tweet message
-      If Not txtSendTweet.Text Then
-        Balloon(("Please enter a message to tweet!"), txtSendTweet)
-        Return
-      Endif
-      sParam1 = txtSendTweet.Text
-    Case 7 ' send SMS message
-      If Not txtToSMS.Text Then
-        Balloon(("Please enter a number to SMS to!"), txtToSMS)
-        Return
-      Endif
-      If Not txtSMSMessage.Text Then
-        Balloon(("Please enter a message to send!"), txtSMSMessage)
-        Return
-      Endif
-      sParam1 = txtToSMS.Text
-      sParam2 = txtSMSMessage.Text
-    Case 8 ' send IRTrans command
-      If Not txtIRCommand.Text Then
-        Balloon(("Please enter a command string!"), txtIRCommand)
-        Return
-      Endif
-      sParam1 = txtIRCommand.Text
-    Case 9 ' play sound file
-      If Not txtSound.Text Then
-        Balloon(("Please enter a sound to play!"), txtSound)
-        Return
-      Endif
-      sParam1 = txtSound.Text
-      sParam2 = spVolume.Value
-    Case 10 ' write log
-      If Not txtLog.Text Then
-        Balloon(("Please enter a text to log!"), txtLog)
-        Return
-      Endif
-      sParam1 = txtLog.Text
-    Case 11 ' display text on led matrix
-      If Not txtLEDMessage.Text Then
-        Balloon(("Please enter a text to display!"), txtLEDMessage)
-        Return
-      Endif
-      If Not vbID.Text Then
-        Balloon(("Please enter an display id!"), vbID)
-        Return
-      Endif
-      sParam1 = txtLEDMessage.Text
-      sParam2 = vbID.Value
-    Case 12 ' av control command
-      If Not cmbAVModel.Text Then
-        Balloon(("Please select the equipment model!"), cmbAVModel)
-        Return
-      Endif
-      If Not cmbAVCommand.Text Then
-        Balloon(("Please enter a command to send!"), cmbAVCommand)
-        Return
-      Endif
-      sParam1 = cmbAVModel.Text
-      sParam2 = cmbAVCommand.Text
-      sParam3 = cmbAVValue.Text
-      sParam4 = txtAVAddress.Text
-    Case 13 ' delay timer
-      If vbDelay.Text = 0 Then
-        Balloon(("Please enter a delay value!"), vbDelay)
-        Return
-      Endif
-      If chkRandom.Value Then
-        If vbDelayMax.Text = 0 Then
-          Balloon(("Please enter a max delay value!"), vbDelayMax)
-          Return
-        Endif
-        If vbDelayMax.Value < vbDelay.Value Then
-          Balloon(("Please enter a value higher than min delay value!"), vbDelayMax)
-          Return
-        Endif
-        sParam2 = vbDelayMax.Value
-        sParam3 = "random"
-      Else
-        sParam2 = ""
-        sParam3 = "fixed"
-      Endif
-      sParam1 = vbDelay.Value
-    Case 14 ' notify-send
-      If Not txtNotifyTitle.Text Then
-        Balloon(("Please enter a title to display!"), txtNotifyTitle)
-        Return
-      Endif
-      If Not txtNotifyText.Text Then
-        Balloon(("Please enter a text to display!"), txtNotifyText)
-        Return
-      Endif
-      sParam1 = txtNotifyTitle.Text
-      sParam2 = txtNotifyText.Text
-    Case 15 ' script
-      If Not txtScript.Text Then
-        Balloon(("Please enter a script to run!"), txtScript)
-        Return
-      Endif
-      sParam1 = txtScript.Text
-    Case 16 ' JSON
-      If Not cmbDevicesJson.Text Then
-        Balloon(("Please select a device!"), cmbDevicesJson)
-        Return
-      Endif
-      sParam1 = Devices.FindIdForDevice(cmbDevicesJson.Text)
-      
-      If Not cmbJsonMethod.Text Then
-        Balloon(("Please select a method!"), cmbJsonMethod)
-        Return
-      Endif
-      sParam2 = cmbJsonMethod.Text
-     
-      If Not TextBoxJsonUrl.Text Then
-        Balloon(("Please enter a url!"), TextBoxJsonUrl)
-        Return
-      Endif
-      sParam3 = TextBoxJsonUrl.Text
-    Case 17 ' send prowl message
-      If Not txtSendProwl.Text Then
-        Balloon(("Please enter a Prowl message!"), txtSendProwl)
-        Return
-      Endif
-      sParam1 = txtSendProwl.Text
-    Case 18 ' send notify my android message
-      If Not txtSendNMA.Text Then
-        Balloon(("Please enter a Notify My Android message!"), txtSendNMA)
-        Return
-      Endif
-      sParam1 = txtSendNMA.Text
-    Case 19 ' send pushover message
-      If Not txtSendPushover.Text Then
-        Balloon(("Please enter a Pushover message!"), txtSendPushover)
-        Return
-      Endif
-      sParam1 = txtSendPushover.Text
-
-      ' Select priorities
-      Select cmbPushoverPriority.Index
-        Case 1 ' low
-          sParam2 = "-1"
-        Case 2 ' high
-          sParam2 = "1"
-        Case 3 ' emergency
-          sParam2 = "2"
-        Default
-          sParam2 = ""
-      End Select
-
-      ' Select sounds
-      sParam3 = cmbPushoverSound[cmbPushoverSound.Index].Text
-      If sParam3 = "pushover (default)" Then sParam3 = ""
-
-  End Select
+  ' Validated succesfully, we can continue
+  iType = cData["type"]
+  sParam1 = cData["param1"]
+  sParam2 = cData["param2"]
+  sParam3 = cData["param3"]
+  sParam4 = cData["param4"]
+  sParam5 = cData["param5"]
 
   If bAddAction Then
-    If ActionNameExist(txtActionName.Text) Then
-      Balloon(("Please enter a unique name for this action!"), txtActionName)
-      Return
-    Endif
     Main.hDB.Begin()
     rResult = Main.hDB.Create("actions")
     rResult!name = txtActionName.Text
@@ -485,6 +703,7 @@ Public Sub btnSave_Click()
 
   bAddAction = False
   Me.Close
+
   FEvents.GetEventList()
 
 End
@@ -518,24 +737,40 @@ End
 
 Public Sub btnDeleteAction_Click()
 
-  Dim iId As Integer
+  Dim iActionId As Integer
+  Dim rEvents As Result
+  Dim sEventList As String
 
-  Select Message.Question(("Are you sure that you want to delete this action?"), ("Yes"), ("No"))
+  ' check if action is used in events
+  iActionId = GetActionId(txtActionName.Text)
+  If iActionId Then
+    rEvents = Main.hDB.Exec("SELECT name FROM events_actions LEFT JOIN events ON id = event WHERE action = &1 ", iActionId)
+    If rEvents
+      If rEvents.Available
+        sEventList = "This action is in use by " & IIf(rEvents.Count > 1, "these events", "this event") & ":\n"
+        For Each rEvents
+          sEventList &= "'" & rEvents!name & "'\n"
+        Next
+      Else
+        sEventList = ("This action is not used in any event.") & "\n"
+      Endif
+    Endif
+  Endif
+
+  Select Message.Question(sEventList & "\n" & ("Are you sure that you want to delete this action?"), ("Yes"), ("No"))
     Case 1
-      iId = GetActionId(txtActionName.Text)
-      If iId Then
-        Main.hDB.Exec("DELETE FROM actions WHERE id = &1", iId)
-        Main.hDB.Exec("DELETE FROM events_actions WHERE action = &1", iId)
+      If iActionId Then
+        Main.hDB.Exec("DELETE FROM actions WHERE id = &1", iActionId)
+        Main.hDB.Exec("DELETE FROM events_actions WHERE action = &1", iActionId)
       Endif
       If FEventEditor.Id Then
         If FEventEditor.iEditingAction = 1 Then
-          FEventEditor.GetActions
+          FEventEditor.GetActions()
         Endif
       Endif
       Me.Close
       FEvents.GetEventList()
   End Select
-
 
 End
 
@@ -720,24 +955,45 @@ Public Sub chkRandom_Click()
   If chkRandom.Value Then
     Label23.Text = "Min. Seconds"
     Label24.Enabled = True
-    vbDelayMax.Enabled = True
+    sbDelayMax.Enabled = True
   Else
     Label23.Text = "Seconds"
     Label24.Enabled = False
-    vbDelayMax.Enabled = False
+    sbDelayMax.Enabled = False
   Endif
   EnableButtons
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run this action, it doesn't have to be save in the DB
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub btnRun_Click()
 
+  Dim cData As New JSONCollection
+  Dim sMessage As String
+
   If Main.bServer Then
-    Events.RunAction(rResult!id, 0, 0)
+    cData = CheckTypeValues()
+    If Not cData Then Return
+    Try Events.RunAction(0, 0, 0, cData)
+    If Error Then
+      sMessage = "ERROR: '" & Error.Text & "' at '" & Error.Where & "' when running action!"
+    Else
+      sMessage = "Action executed"
+    Endif
   Else
-    Client.RunAction(rResult!id)
+    cData = CheckTypeValues()
+    If Not cData Then Return
+    Try Client.RunAction(cData)
+    If Error Then
+      sMessage = "Failed to execute action on the server"
+    Else
+      sMessage = "Action executed on the server"
+    Endif
   Endif
-  Balloon("Action executed", btnRun)
+
+  Balloon(sMessage, btnRun)
 
 End
 
@@ -753,13 +1009,13 @@ Public Sub txtNotifyText_KeyPress()
 
 End
 
-Public Sub vbDelay_KeyPress()
+Public Sub sbDelay_KeyPress()
 
   EnableButtons()
 
 End
 
-Public Sub vbDelayMax_KeyPress()
+Public Sub sbDelayMax_KeyPress()
 
   EnableButtons()
 
@@ -795,7 +1051,7 @@ Public Sub cmbSpeed_Click()
 
 End
 
-Public Sub vbID_KeyPress()
+Public Sub sbID_KeyPress()
 
   EnableButtons()
 
@@ -813,7 +1069,7 @@ Public Sub txtSound_KeyPress()
 
 End
 
-Public Sub spVolume_Change()
+Public Sub sbVolume_Change()
 
   EnableButtons()
 
@@ -893,7 +1149,18 @@ End
 
 Public Sub cmbDevices_Click()
 
+  Dim iValueNum As Integer
+
   EnableButtons()
+
+  cmbValue.Clear()
+  If cmbDevices.Text Then
+    If $cDevices.Exist(cmbDevices.Text) Then
+      For Each iValueNum In $cDevices[cmbDevices.Text]["valuenum"]
+        cmbValue.Add("value" & iValueNum)
+      Next
+    Endif
+  Endif
 
 End
 
@@ -921,37 +1188,103 @@ Public Sub cmbDevicesJson_Click()
 
 End
 
-Public Sub TextBoxJsonUrl_KeyPress()
+Public Sub txtJsonUrl_KeyPress()
 
-    EnableButtons()
+  EnableButtons()
 
 End
 
 Public Sub cmbJsonMethod_Click()
-  
+
   EnableButtons()
-  
+
 End
 
-
-
 Public Sub cmbActionTypes_Click()
-
-  Dim iCount As Integer
 
   ' Find the right tab, if our List is sorted
   iActionTab = cActionTypeNames[cmbActionTypes.Text]
 
-  ' Hide all tabs
-  For iCount = 1 To tabActionTypes.Count
-    tabActionTypes[iCount - 1].Visible = False
-  Next
-  
   ' If the number is out-of-range, set it to default
-  If iActionTab < 1 Or iActionTab > tabActionTypes.Count Then
+  If iActionTab < 1 Or iActionTab > tabPanelActionTypes.Count Then
     iActionTab = 1
   Endif
 
-  tabActionTypes[iActionTab - 1].Visible = True
-  
+  tabPanelActionTypes.Index = cmbActionTypes.Index
+
+End
+
+Public Sub btnPushbulletFetchDevices_Click()
+
+  Dim vDevices As Variant
+
+  If Not Plugin.IsPluginEnabled("Pushbullet", 0) Then 
+    Message.Error("Pushbullet Plugin is not enabled!")
+    Return
+  Endif
+
+  vResponse = Plugin.GetPluginObject("Pushbullet", 1).Interface.GetDevices("", False)
+  If TypeOf(vResponse) = gb.String Then
+    Message.Error("Error:\n" & vResponse)
+  Else
+    If vResponse.Count Then
+      cmbPushbulletDevice.Clear
+      cmbPushbulletDevice.Add("")
+      cmbPushbulletDevice.Add("All")
+      For Each vDevices In vResponse
+        If vDevices["extras"]["nickname"] Then
+          cmbPushbulletDevice.Add(vDevices["extras"]["nickname"])
+        Else
+          cmbPushbulletDevice.Add(vDevices["extras"]["manufacturer"] & " " & vDevices["extras"]["model"])
+        Endif
+      Next
+    Endif
+  Endif
+
+End
+
+Public Sub cmbPushbulletDevice_Change()
+
+  btnSave.Enabled = True
+
+  If cmbPushbulletDevice.Index = 1 Then
+    txtPushbulletDeviceId.Text = "All"
+  Else If cmbPushbulletDevice.Index > 1 Then ' skip empty first line
+    Try txtPushbulletDeviceId.Text = vResponse[cmbPushbulletDevice.Index - 2]["iden"]
+  Else
+    txtPushbulletDeviceId.Text = ""
+  Endif
+
+End
+
+Public Sub txtPushoverDevices_Change()
+
+  EnableButtons()
+
+End
+
+Public Sub cmbSoftDimmingDevice_Click()
+
+   EnableButtons()
+
+End
+
+Public Sub sbSoftDimmingSeconds_Change()
+
+   EnableButtons()
+
+End
+
+Public Sub sbSoftDimmingResultValue_Change()
+
+   EnableButtons()
+
+End
+
+Public Sub btnSelectSound_Click()
+
+  Dim sFile As String = FSelectFile.Run(txtSound.Text, ["*.wav;*.sox;*.snd;*.mp3;", "Sound files"], Main.sBaseDir &/ "sounds", True, "Select a sound file")
+
+  If Len(sFile) Then txtSound.Text = sFile
+
 End

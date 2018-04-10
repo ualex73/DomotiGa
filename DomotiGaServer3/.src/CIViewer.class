@@ -5,7 +5,7 @@
 ' Native support for CommandFusion's iViewer protocol.
 
 ' Development Status:
-' Not working yet.
+' Finished
 
 ' Links:
 ' http://www.commandfusion.com
@@ -20,7 +20,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "IViewer"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "CF iViewer"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -29,6 +28,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[IViewer] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -39,7 +39,7 @@ Public ErrorWhere As String
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private $bEnabled As Boolean
 Private $sPort As String
-Private $bIViewerDebug As Boolean
+Private $bDebug As Boolean
 Private $sPassword As String
 
 Public hIViewer As ServerSocket
@@ -48,7 +48,7 @@ Private oClients As New Object[]
 Private sBuffer As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -63,15 +63,23 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bEnabled = cPl.Settings["enabled"]
   $sPort = cPl.Settings["tcpport"]
   $sPassword = cPl.Settings["password"]
-  $bIViewerDebug = cPl.Settings["debug"]
- 
+  $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("IViewer")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
   ' Connect/Initialize connection
   Connect()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -89,7 +97,7 @@ Public Function Connect() As Boolean
   hIViewer.Listen(0)
 
   If hIViewer.Status = Net.Active Then
-  ' Write to main logfile we connected successfully
+    ' Write to main logfile we connected successfully
     Main.WriteLog(LogLabel & PluginFriendlyName & " Server listening on Port " & $sPort)
     IsRunning = True
     Return True
@@ -114,13 +122,9 @@ End
 ' shutdown our tcp server
 Public Sub Disconnect() As Boolean
 
-  ' DO WHILE hSocket.Count > 0
-  '   RemoveSocket(hSocket[0])
-  ' LOOP
-
   hIViewer.Close()
 
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
 
   ' all ok
   Return True
@@ -143,7 +147,7 @@ Public Sub IViewer_Connection(sRemoteHostIP As String)
   If hIViewer.Status <= Net.Active Then Return
   hSocket = hIViewer.Accept()
   oClients.Add(hSocket)
-  If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "Got connect from client with IP " & hSocket.RemoteHost)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Got connect from client with IP " & sRemoteHostIP)
 
 End
 
@@ -159,7 +163,7 @@ Public Sub Socket_Read()
 
   If Last.Status <> Net.Connected Then Return
   sData = Read #Last, 1
-  If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "Data from socket " & oClients.Find(Last) & " " & oClients[oClients.Find(Last)].RemoteHost & " :" & sData)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Data from socket " & oClients.Find(Last) & " " & oClients[oClients.Find(Last)].RemoteHost & " :" & sData)
   If sData = "\x03" Then ' buffer until \x03 then parse
     If Len(sBuffer) > 1 Then ParseLine(sBuffer)
     sBuffer = Null
@@ -172,8 +176,9 @@ End
 Public Sub ParseLine(sText As String)
 
   Dim aScan As String[]
+  Dim iDeviceId As Integer
 
-  If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & sText)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sText)
   aScan = Scan(sText, "*=*")
   If aScan.Count = 2 Then
     Select Case Left(aScan[0], 1)
@@ -183,26 +188,26 @@ Public Sub ParseLine(sText As String)
       Case "s"
         ' serial (eg. s4=this is text)
         If aScan[0] = "s10001" Then
-          If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "< iViewer: " & aScan[1])
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "< iViewer: " & aScan[1])
         Else If aScan[0] = "s10002" Then
-           If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "< Device: " & aScan[1])
+           If $bDebug Then Main.WriteDebugLog(LogLabel & "< Device: " & aScan[1])
         Else
           Events.CheckIViewerRemoteEvents("iviewer", aScan[0], aScan[1])
         Endif
       Case "h"
         ' heartbeat message
-        If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "< Heartbeat request.")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "< Heartbeat request.")
         Try Write #Last, "h=1\x03", 4
-        If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "> Heartbeat reply.")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "> Heartbeat reply.")
       Case "p"
-        If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "< Password request.")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "< Password request.")
         ' password
         If aScan[1] = $sPassword Then
           Try Write #Last, "p=ok\x03", 5
-          If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "> Password ok.")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "> Password ok.")
         Else
           Try Write #Last, "p=bad\x03", 6
-          If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "> Password bad.")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "> Password bad.")
         Endif
       Case "m"
         ' orientation, (eg. m=landscape)
@@ -211,19 +216,19 @@ Public Sub ParseLine(sText As String)
     End Select
   Endif
   If UCase(sText) = UCase("SendDeviceStatusAll") Then SendDeviceStatusAll()
-  ' SendDeviceStatus("Front Lamp") or SendDeviceStatus(65) 
+  ' SendDeviceStatus(65) 
   aScan = Scan(sText, "*(*")
   If aScan.Count = 2 Then
-     If UCase(aScan[0]) = UCase("SendDeviceStatus") Then SendDeviceStatus(Left(aScan[1], -1))
+    If UCase(aScan[0]) = UCase("SendDeviceStatus") Then 
+      Try iDeviceId = Left(aScan[1], -1)
+      If Not Error Then SendDeviceStatus(iDeviceId)
+    Endif
   Endif
 End
 
 Private Sub SendDeviceStatusAll()
 
   Dim rResult As Result
-  Dim sString As New Collection
-  Dim sList As New RpcStruct
-  Dim iCnt As Integer
   Dim sValue, sType As String
 
   rResult = Devices.GetDevicesAndValues()
@@ -253,22 +258,19 @@ Private Sub SendDeviceStatusAll()
   Next
 End
 
-Public Sub SendDeviceStatus(vDeviceName As Variant)
+Public Sub SendDeviceStatus(iDeviceId As Integer)
 
-  Dim iInterface, iDeviceId As Integer
-  Dim sText, sAddress As String
+  Dim iInterface As Integer
+  Dim sAddress As String
   Dim sValue, sType As String
   Dim rResult As Result
 
-  iDeviceId = Devices.FindDeviceId(vDeviceName, "CIViewer send device status")  
-  If Not iDeviceId Then Return
- 
   iInterface = Devices.FindInterfaceForDevice(iDeviceId)
   If Not iInterface Then Return
 
   sAddress = Devices.FindAddressForDevice(iDeviceId)
   If Not sAddress Then Return
-  
+
   sType = LCase(Devices.CheckControlDevice(sAddress, iInterface))
 
   rResult = Devices.GetDevicesAndValues(["device_id": iDeviceId])
@@ -282,8 +284,6 @@ Public Sub SendDeviceStatus(vDeviceName As Variant)
 
 End
 
-
-
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' publish data to iViewer
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -292,47 +292,49 @@ Public Sub SendUpdateForDevice(iDeviceId As Integer, sValue As String, sValueFie
   Dim sDeviceTypePair As String = Replace(iDeviceId & "_" & sValueField, " ", "_")
 
   If oClients.Count = 0 Then
-    If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "No clients connected, so aborting item updates.")
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "No clients connected, so aborting item updates.")
     Return ' no clients connected
   Endif
 
   Select LCase(sType)
-     Case "value", "value1", "setpoint"
+    Case "value", "value1", "setpoint"
+      UpdateIviewerClients(sDeviceTypePair, sValue)
+    Case "value2"
+      UpdateIviewerClients(sDeviceTypePair, sValue)
+    Case "value3"
+      UpdateIviewerClients(sDeviceTypePair, sValue)
+    Case "value4"
+      UpdateIviewerClients(sDeviceTypePair, sValue)
+    Case "motion"
+      UpdateIviewerClients(sDeviceTypePair, IIf(sValue == "Motion", 1, 0))
+    Case "switch"
+      If LCase(sValue) = "off" Then
+        UpdateIviewerClients(sDeviceTypePair, "0")
+      Else If LCase(sValue) = "on" Or If InStr(LCase(sValue), "dim") Then
+          UpdateIviewerClients(sDeviceTypePair, "1")
+          ' Add extra logic to cater for additional value fields for switches (value2, value3 etc) which may hold power readings etc.
+        Else
+          UpdateIviewerClients(sDeviceTypePair, sValue)
+        Endif
+    Case "battery"
+      UpdateIviewerClients(sDeviceTypePair, sValue)
+    Case "dimmer", "dim"
+      Select LCase(sValue)
+        Case "on"
+          Return ' With my AeonLabs dimmer, openzwave DOES send setvalue notifcations as it ramps UP - so we do not want to send initial on command
+                 ' as "on" command sets the dimmer to the last set value, not necessarily 100.
+                 ' To change this so it sends the On, you would comment out the Return line above and uncomment the next line.
+          'UpdateIviewerClients(sDeviceTypePair, "100")
+        Case "off"
+          'Return ' With my AeonLabs dimmer, openzwave DOES NOT send notifcations as it ramps DOWN - so we do want to send "0" as off command 
+          UpdateIviewerClients(sDeviceTypePair, "0")
+        Case Else
+          UpdateIviewerClients(sDeviceTypePair, Replace(sValue, "dim ", "", gb.IgnoreCase))
+      End Select
+      ' Add CatchAll for anything that might not match above device types.
+    Case Else
+       If $bDebug Then Main.WriteDebugLog(LogLabel & "A device fell into the catch all...you should probably let the plugin author know so he can fix it.")
        UpdateIviewerClients(sDeviceTypePair, sValue)
-     Case "value2"
-       UpdateIviewerClients(sDeviceTypePair, sValue)
-     Case "value3"
-       UpdateIviewerClients(sDeviceTypePair, sValue)
-     Case "value4"
-       UpdateIviewerClients(sDeviceTypePair, sValue)
-     Case "motion"
-       UpdateIviewerClients(sDeviceTypePair, IIf(sValue == "Motion", 1, 0))
-     Case "switch"
-       If LCase(sValue) = "off" Then
-         UpdateIviewerClients(sDeviceTypePair, "0")
-       Else If LCase(sValue) = "on" Or If InStr(LCase(sValue), "dim") Then
-               UpdateIviewerClients(sDeviceTypePair, "1")
-            ' Add extra logic to cater for additional value fields for switches (value2, value3 etc) which may hold power readings etc.
-            Else 
-                UpdateIviewerClients(sDeviceTypePair, sValue)
-       Endif
-     Case "dimmer", "dim"
-       Select LCase(sValue)
-         Case "on"
-           Return ' With my AeonLabs dimmer, openzwave DOES send setvalue notifcations as it ramps UP - so we do not want to send initial on command
-                  ' as "on" command sets the dimmer to the last set value, not necessarily 100.
-                  ' To change this so it sends the On, you would comment out the Return line above and uncomment the next line.
-           'UpdateIviewerClients(sDeviceTypePair, "100")
-         Case "off"
-           'Return ' With my AeonLabs dimmer, openzwave DOES NOT send notifcations as it ramps DOWN - so we do want to send "0" as off command 
-           UpdateIviewerClients(sDeviceTypePair, "0")
-         Case Else
-           UpdateIviewerClients(sDeviceTypePair, Replace(sValue, "dim ", "", gb.IgnoreCase))
-       End Select
-       ' Add CatchAll for anything that might not match above device types.
-     Case Else
-        If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "A device fell into the catch all...you should probably let the plugin author know so he can fix it.")
-        UpdateIviewerClients(sDeviceTypePair, sValue)
    End Select
 
 End
@@ -342,24 +344,24 @@ Public Sub UpdateIviewerClients(sDeviceTypePair As String, sValue As String)
   Dim sDataToSend As String
   Dim sIViewerTerminator As String = "\x03"  ' used by iViewer app when parsing to detect the end of a response
   Dim i As Integer
-  
+
   sDataToSend = sDeviceTypePair & "=" & sValue & sIViewerTerminator
-  
+
   i = 0
   While i < oClients.Count
     Try Write #oClients[i], sDataToSend, Len(sDataToSend)
-    If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "Client" & i & ": " & oClients[i].RemoteHost & " :" & sDataToSend)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Client" & i & ": " & oClients[i].RemoteHost & " :" & sDataToSend)
     Inc i
   Wend
-  Catch
-    If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+
+Catch
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
 Public Sub Socket_Closed()
 
-  If $bIViewerDebug Then Main.WriteDebugLog(LogLabel & "Connection closed by client " & oClients.Find(Last))
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Connection closed by client " & oClients.Find(Last))
   oClients.Remove(oClients.Find(Last))
 
 End
-

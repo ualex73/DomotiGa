@@ -12,7 +12,7 @@
 
 ' Read file called COPYING for license details.
 
-Private iFloor As Integer = 2
+Private $iFloor As Integer = 2
 Private tRefresh As Timer
 Private bAutoRefresh As Boolean
 
@@ -60,7 +60,7 @@ End
 
 Public Sub FloorButton_Click()
 
-  iFloor = Last.Tag
+  $iFloor = Last.Tag
   RefreshPage()
 
 End
@@ -83,7 +83,7 @@ Public Sub DisplayFloorplan(iFloor As Integer, oParent As Object, idNotShow As S
 
   ' try loading floorplan image if available
   Try rFloor = Main.hDB.Exec("SELECT * FROM floors WHERE floor = &1", iFloor)
-  If rFloor.Available Then
+  If rFloor And If rFloor.Available Then
     If rFloor!image Then
       Try imgFloorplan = Image.Load(Main.sBaseDir &/ "floorplans" &/ rFloor!image)
       If imgFloorplan Then
@@ -110,11 +110,11 @@ Public Sub DisplayFloorplan(iFloor As Integer, oParent As Object, idNotShow As S
         Try x = rDevice!device_x
         Try y = rDevice!device_y
         Try iFloordev = rDevice!device_floorplan
-        If rDevice!device_floorplan = iFloor Then
+        If rDevice!device_floorplan_id = iFloor Then
           If x And y Then
           ' draw icon on x/y location
           If Not IsNull(rDevice!device_onicon) Or Not IsNull(rDevice!device_officon) Then
-            If sValue = "ON" Or sValue = "OPEN" Or sValue = "MOTION" Or sValue = "UP" Or sValue = "AWAKE" Then
+            If sValue = "ON" Or sValue = "OPEN" Or sValue = "MOTION" Or sValue = "UP" Or sValue = "AWAKE" Or sValue = "ONLINE" Or sValue = "LIGHT" Or sValue = "ALARM" Then
               sIcon = Main.sBaseDir &/ "icons" &/ rDevice!device_onicon
               If rDevice!device_switchable Then
                 hMovieBox = New MovieBox(oParent) As "DeviceIconSwitch_Off"
@@ -123,6 +123,7 @@ Public Sub DisplayFloorplan(iFloor As Integer, oParent As Object, idNotShow As S
               Endif
             Else If InStr(sValue, "DIM") Then
               sIcon = Main.sBaseDir &/ "icons" &/ rDevice!device_dimicon
+              hMovieBox = New MovieBox(oParent) As "DeviceIconDim"
             Else
               sIcon = Main.sBaseDir &/ "icons" &/ rDevice!device_officon
               If rDevice!device_switchable Then
@@ -131,6 +132,7 @@ Public Sub DisplayFloorplan(iFloor As Integer, oParent As Object, idNotShow As S
                 hMovieBox = New MovieBox(oParent) As "DeviceIcon"
               Endif
             Endif
+
             With hMovieBox
               Try .Path = sIcon
               .Height = 20
@@ -138,7 +140,7 @@ Public Sub DisplayFloorplan(iFloor As Integer, oParent As Object, idNotShow As S
               .X = X
               .Y = Y
               .ToolTip = rDevice!device_name & "\r\n" & Devices.GetCurrentValueForDevice(rDevice!device_id, 1) & rDevice!device_value_units
-              .Tag = rDevice!device_name
+              .Tag = rDevice!device_id
               .Playing = True
             End With
           Endif
@@ -210,10 +212,10 @@ Public Sub RefreshPage()
   ' enable all buttons first, then disable selected one
   For Each oObject In hbFloors.Children
     oObject.Enabled = True
-    If oObject.Tag = iFloor Then oObject.Enabled = False
+    If oObject.Tag = $iFloor Then oObject.Enabled = False
   Next
 
-  DisplayFloorplan(iFloor, svFloorplan, "0")
+  DisplayFloorplan($iFloor, svFloorplan, "0")
 
 End
 

@@ -1,10 +1,10 @@
 //-----------------------------------------------------------------------------
 //
 // DomoZWave a C++/C-wrapper to add open-zwave support to DomotiGa.
-// Special thanks to Jaren for creating the wrapper.
+// Special thanks to Jaren for creating the wrapper and Alexie for updating it.
 //
 // DomotiGa - an open source home automation program
-// Copyright(C) 2008-2012 Ron Klinkien
+// Copyright (C) Ron Klinkien, The Netherlands.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -21,116 +21,125 @@
 //
 //-----------------------------------------------------------------------------
 
-#define COMMAND_CLASS_NO_OPERATION 0x00
-#define COMMAND_CLASS_BASIC 0x20
-#define COMMAND_CLASS_CONTROLLER_REPLICATION 0x21
-#define COMMAND_CLASS_APPLICATION_STATUS 0x22
-#define COMMAND_CLASS_ZIP_SERVICES 0x23
-#define COMMAND_CLASS_ZIP_SERVER 0x24
-#define COMMAND_CLASS_SWITCH_BINARY 0x25
-#define COMMAND_CLASS_SWITCH_MULTILEVEL 0x26
-#define COMMAND_CLASS_SWITCH_ALL 0x27
-#define COMMAND_CLASS_SWITCH_TOGGLE_BINARY 0x28
-#define COMMAND_CLASS_SWITCH_TOGGLE_MULTILEVEL 0x29
-#define COMMAND_CLASS_CHIMNEY_FAN 0x2A
-#define COMMAND_CLASS_SCENE_ACTIVATION 0x2B
-#define COMMAND_CLASS_SCENE_ACTUATOR CONF 0x2C
-#define COMMAND_CLASS_SCENE_CONTROLLER CONF 0x2D
-#define COMMAND_CLASS_ZIP_CLIENT 0x2E
-#define COMMAND_CLASS_ZIP_ADV_SERVICES 0x2F
-#define COMMAND_CLASS_SENSOR_BINARY 0x30
-#define COMMAND_CLASS_SENSOR_MULTILEVEL 0x31
-#define COMMAND_CLASS_METER 0x32
-#define COMMAND_CLASS_ZIP_ADV_SERVER 0x33
-#define COMMAND_CLASS_ZIP_ADV_CLIENT 0x34
-#define COMMAND_CLASS_METER_PULSE 0x35
-#define COMMAND_CLASS_THERMOSTAT_HEATING 0x38
-#define COMMAND_CLASS_THERMOSTAT_MODE 0x40
-#define COMMAND_CLASS_THERMOSTAT_OPERATING_STATE 0x42
-#define COMMAND_CLASS_THERMOSTAT_SETPOINT 0x43
-#define COMMAND_CLASS_THERMOSTAT_FAN_MODE 0x44
-#define COMMAND_CLASS_THERMOSTAT_FAN_STATE 0x45
-#define COMMAND_CLASS_CLIMATE_CONTROL_SCHEDULE 0x46
-#define COMMAND_CLASS_THERMOSTAT_SETBACK 0x47
-#define COMMAND_CLASS_DOOR_LOCK_LOGGING 0x4C
-#define COMMAND_CLASS_SCHEDULE_ENTRY_LOCK 0x4E
-#define COMMAND_CLASS_BASIC_WINDOW_COVERING 0x50
-#define COMMAND_CLASS_MTP_WINDOW_COVERING 0x51
-#define COMMAND_CLASS_MULTI_INSTANCE 0x60
-#define COMMAND_CLASS_DOOR_LOCK 0x62
-#define COMMAND_CLASS_USER_CODE 0x63
-#define COMMAND_CLASS_CONFIGURATION 0x70
-#define COMMAND_CLASS_ALARM 0x71
-#define COMMAND_CLASS_MANUFACTURER_SPECIFIC 0x72
-#define COMMAND_CLASS_POWERLEVEL 0x73
-#define COMMAND_CLASS_PROTECTION 0x75
-#define COMMAND_CLASS_LOCK 0x76
-#define COMMAND_CLASS_NODE_NAMING 0x77
-#define COMMAND_CLASS_FIRMWARE_UPDATE_MD 0x7A
-#define COMMAND_CLASS_GROUPING_NAME 0x7B
-#define COMMAND_CLASS_REMOTE_ASSOCIATION_ACTIVATE 0x7C
-#define COMMAND_CLASS_REMOTE_ASSOCIATION 0x7D
-#define COMMAND_CLASS_BATTERY 0x80
-#define COMMAND_CLASS_CLOCK 0x81
-#define COMMAND_CLASS_HAIL 0x82
-#define COMMAND_CLASS_WAKE_UP 0x84
-#define COMMAND_CLASS_ASSOCIATION 0x85
-#define COMMAND_CLASS_VERSION 0x86
-#define COMMAND_CLASS_INDICATOR 0x87
-#define COMMAND_CLASS_PROPRIETARY 0x88
-#define COMMAND_CLASS_LANGUAGE 0x89
-#define COMMAND_CLASS_TIME 0x8A
-#define COMMAND_CLASS_TIME_PARAMETERS 0x8B
-#define COMMAND_CLASS_GEOGRAPHIC_LOCATION 0x8C
-#define COMMAND_CLASS_COMPOSITE 0x8D
-#define COMMAND_CLASS_MULTI_INSTANCE_ASSOCIATION 0x8E
-#define COMMAND_CLASS_MULTI_CMD 0x8F
-#define COMMAND_CLASS_ENERGY_PRODUCTION 0x90
-#define COMMAND_CLASS_MANUFACTURER_PROPRIETARY 0x91
-#define COMMAND_CLASS_SCREEN_MD 0x92
-#define COMMAND_CLASS_SCREEN_ATTRIBUTES 0x93
-#define COMMAND_CLASS_SIMPLE_AV_CONTROL 0x94
-#define COMMAND_CLASS_AV_CONTENT_DIRECTORY MD 0x95
-#define COMMAND_CLASS_AV_RENDERER_STATUS 0x96
-#define COMMAND_CLASS_AV_CONTENT_SEARCH_MD 0x97
-#define COMMAND_CLASS_SECURITY 0x98
-#define COMMAND_CLASS_AV_TAGGING_MD 0x99
-#define COMMAND_CLASS_IP_CONFIGURATION 0x9A
-#define COMMAND_CLASS_ASSOCIATION_COMMAND_CONFIGURATION 0x9B
-#define COMMAND_CLASS_SENSOR_ALARM 0x9C
-#define COMMAND_CLASS_SILENCE_ALARM 0x9D
-#define COMMAND_CLASS_SENSOR_CONFIGURATION 0x9E
-#define COMMAND_CLASS_MARK 0xEF
-#define COMMAND_CLASS_NON_INTEROPERABLE 0xF0
+#define COMMAND_CLASS_NO_OPERATION 0x00 // 0
+#define COMMAND_CLASS_BASIC 0x20 // 32
+#define COMMAND_CLASS_CONTROLLER_REPLICATION 0x21 // 33
+#define COMMAND_CLASS_APPLICATION_STATUS 0x22 // 34
+#define COMMAND_CLASS_ZIP_SERVICES 0x23 // 35
+#define COMMAND_CLASS_ZIP_SERVER 0x24 // 36
+#define COMMAND_CLASS_SWITCH_BINARY 0x25 // 37
+#define COMMAND_CLASS_SWITCH_MULTILEVEL 0x26 // 38
+#define COMMAND_CLASS_SWITCH_ALL 0x27 // 39
+#define COMMAND_CLASS_SWITCH_TOGGLE_BINARY 0x28 // 40
+#define COMMAND_CLASS_SWITCH_TOGGLE_MULTILEVEL 0x29 // 41
+#define COMMAND_CLASS_CHIMNEY_FAN 0x2A // 42
+#define COMMAND_CLASS_SCENE_ACTIVATION 0x2B // 43
+#define COMMAND_CLASS_SCENE_ACTUATOR_CONF 0x2C // 44
+#define COMMAND_CLASS_SCENE_CONTROLLER_CONF 0x2D // 45
+#define COMMAND_CLASS_ZIP_CLIENT 0x2E // 46
+#define COMMAND_CLASS_ZIP_ADV_SERVICES 0x2F // 47
+#define COMMAND_CLASS_SENSOR_BINARY 0x30 // 48
+#define COMMAND_CLASS_SENSOR_MULTILEVEL 0x31 // 49
+#define COMMAND_CLASS_METER 0x32 // 50
+#define COMMAND_CLASS_COLOR 0x33 // 51
+#define COMMAND_CLASS_ZIP_ADV_CLIENT 0x34 // 52
+#define COMMAND_CLASS_METER_PULSE 0x35 // 53
+#define COMMAND_CLASS_THERMOSTAT_HEATING 0x38 // 56
+#define COMMAND_CLASS_THERMOSTAT_MODE 0x40 // 64
+#define COMMAND_CLASS_THERMOSTAT_OPERATING_STATE 0x42 // 66
+#define COMMAND_CLASS_THERMOSTAT_SETPOINT 0x43 // 67
+#define COMMAND_CLASS_THERMOSTAT_FAN_MODE 0x44 // 68
+#define COMMAND_CLASS_THERMOSTAT_FAN_STATE 0x45 // 69
+#define COMMAND_CLASS_CLIMATE_CONTROL_SCHEDULE 0x46 // 70
+#define COMMAND_CLASS_THERMOSTAT_SETBACK 0x47 // 71
+#define COMMAND_CLASS_DOOR_LOCK_LOGGING 0x4C // 76
+#define COMMAND_CLASS_SCHEDULE_ENTRY_LOCK 0x4E // 78
+#define COMMAND_CLASS_BASIC_WINDOW_COVERING 0x50 // 80
+#define COMMAND_CLASS_MTP_WINDOW_COVERING 0x51 // 81
+#define COMMAND_CLASS_CRC_16_ENCAP 0x56 // 86
+#define COMMAND_CLASS_ASSOCIATION_GROUP_INFORMATION 0x59 // 89
+#define COMMAND_CLASS_DEVICE_RESET_LOCALLY 0x5A // 90
+#define COMMAND_CLASS_CENTRAL_SCENE 0x5B // 91
+#define COMMAND_CLASS_ZWAVE_PLUS 0x5E // 94
+#define COMMAND_CLASS_MULTI_INSTANCE 0x60 // 96
+#define COMMAND_CLASS_DOOR_LOCK 0x62 // 98
+#define COMMAND_CLASS_USER_CODE 0x63 // 99
+#define COMMAND_CLASS_CONFIGURATION 0x70 // 112
+#define COMMAND_CLASS_ALARM 0x71 // 113
+#define COMMAND_CLASS_MANUFACTURER_SPECIFIC 0x72 // 114
+#define COMMAND_CLASS_POWERLEVEL 0x73 // 115
+#define COMMAND_CLASS_PROTECTION 0x75 // 117
+#define COMMAND_CLASS_LOCK 0x76 // 118
+#define COMMAND_CLASS_NODE_NAMING 0x77 // 119
+#define COMMAND_CLASS_FIRMWARE_UPDATE_MD 0x7A // 122
+#define COMMAND_CLASS_GROUPING_NAME 0x7B // 123
+#define COMMAND_CLASS_REMOTE_ASSOCIATION_ACTIVATE 0x7C // 124
+#define COMMAND_CLASS_REMOTE_ASSOCIATION 0x7D // 125
+#define COMMAND_CLASS_BATTERY 0x80 // 128
+#define COMMAND_CLASS_CLOCK 0x81 // 129
+#define COMMAND_CLASS_HAIL 0x82 // 130
+#define COMMAND_CLASS_WAKE_UP 0x84 // 132
+#define COMMAND_CLASS_ASSOCIATION 0x85 // 133
+#define COMMAND_CLASS_VERSION 0x86 // 134
+#define COMMAND_CLASS_INDICATOR 0x87 // 135
+#define COMMAND_CLASS_PROPRIETARY 0x88 // 136
+#define COMMAND_CLASS_LANGUAGE 0x89 // 137
+#define COMMAND_CLASS_TIME 0x8A // 138
+#define COMMAND_CLASS_TIME_PARAMETERS 0x8B // 139
+#define COMMAND_CLASS_GEOGRAPHIC_LOCATION 0x8C // 140
+#define COMMAND_CLASS_COMPOSITE 0x8D // 141
+#define COMMAND_CLASS_MULTI_INSTANCE_ASSOCIATION 0x8E // 142
+#define COMMAND_CLASS_MULTI_CMD 0x8F // 143
+#define COMMAND_CLASS_ENERGY_PRODUCTION 0x90 // 144
+#define COMMAND_CLASS_MANUFACTURER_PROPRIETARY 0x91 // 145
+#define COMMAND_CLASS_SCREEN_MD 0x92 // 146
+#define COMMAND_CLASS_SCREEN_ATTRIBUTES 0x93 // 147
+#define COMMAND_CLASS_SIMPLE_AV_CONTROL 0x94 // 148
+#define COMMAND_CLASS_AV_CONTENT_DIRECTORY_MD 0x95 // 149
+#define COMMAND_CLASS_AV_RENDERER_STATUS 0x96 // 150
+#define COMMAND_CLASS_AV_CONTENT_SEARCH_MD 0x97 // 151
+#define COMMAND_CLASS_SECURITY 0x98 // 152
+#define COMMAND_CLASS_AV_TAGGING_MD 0x99 // 153
+#define COMMAND_CLASS_IP_CONFIGURATION 0x9A // 154
+#define COMMAND_CLASS_ASSOCIATION_COMMAND_CONFIGURATION 0x9B // 155
+#define COMMAND_CLASS_SENSOR_ALARM 0x9C // 156
+#define COMMAND_CLASS_SILENCE_ALARM 0x9D // 157
+#define COMMAND_CLASS_SENSOR_CONFIGURATION 0x9E // 158
+#define COMMAND_CLASS_MARK 0xEF // 239
+#define COMMAND_CLASS_NON_INTEROPERABLE 0xF0 // 240
 
-#define BASIC_TYPE_CONTROLLER 0x01
-#define BASIC_TYPE_STATIC_CONTROLLER 0x02
-#define BASIC_TYPE_SLAVE 0x03
-#define BASIC_TYPE_ROUTING_SLAVE 0x04
+#define BASIC_TYPE_CONTROLLER 0x01 // 1
+#define BASIC_TYPE_STATIC_CONTROLLER 0x02 // 2
+#define BASIC_TYPE_SLAVE 0x03 // 3
+#define BASIC_TYPE_ROUTING_SLAVE 0x04 // 4
 
-#define GENERIC_TYPE_GENERIC_CONTROLLER 0x01
-#define GENERIC_TYPE_STATIC_CONTROLLER 0x02
-#define GENERIC_TYPE_AV_CONTROL_POINT 0x03
-#define GENERIC_TYPE_DISPLAY 0x06
-#define GENERIC_TYPE_GARAGE_DOOR 0x07
-#define GENERIC_TYPE_THERMOSTAT 0x08
-#define GENERIC_TYPE_WINDOW_COVERING 0x09
-#define GENERIC_TYPE_REPEATER_SLAVE 0x0F
-#define GENERIC_TYPE_SWITCH_BINARY 0x10
-#define GENERIC_TYPE_SWITCH_MULTILEVEL 0x11
-#define GENERIC_TYPE_SWITCH_REMOTE 0x12
-#define GENERIC_TYPE_SWITCH_TOGGLE 0x13
-#define GENERIC_TYPE_ZIP_GATEWAY 0x14
-#define GENERIC_TYPE_ZIP_NODE 0x15
-#define GENERIC_TYPE_SENSOR_BINARY 0x20
-#define GENERIC_TYPE_SENSOR_MULTILEVEL 0x21
-#define GENERIC_TYPE_WATER_CONTROL 0x22
-#define GENERIC_TYPE_METER_PULSE 0x30
-#define GENERIC_TYPE_METER 0x31
-#define GENERIC_TYPE_ENTRY_CONTROL 0x40
-#define GENERIC_TYPE_SEMI_INTEROPERABLE 0x50
-#define GENERIC_TYPE_SENSOR_ALARM 0xA1
-#define GENERIC_TYPE_NON_INTEROPERABLE 0xFF
+#define GENERIC_TYPE_GENERIC_CONTROLLER 0x01 // 1
+#define GENERIC_TYPE_STATIC_CONTROLLER 0x02 // 2
+#define GENERIC_TYPE_AV_CONTROL_POINT 0x03 // 3
+#define GENERIC_TYPE_DISPLAY 0x04 // 4
+#define GENERIC_TYPE_NETWORK_EXTENDER 0x05 // 5
+#define GENERIC_TYPE_APPLIANCE 0x06 // 6
+#define GENERIC_TYPE_NOTIFICATION_SENSOR 0x07 // 7
+#define GENERIC_TYPE_THERMOSTAT 0x08 // 8
+#define GENERIC_TYPE_WINDOW_COVERING 0x09 // 9
+#define GENERIC_TYPE_REPEATER_SLAVE 0x0F // 15
+#define GENERIC_TYPE_SWITCH_BINARY 0x10 // 16
+#define GENERIC_TYPE_SWITCH_MULTILEVEL 0x11 // 17
+#define GENERIC_TYPE_SWITCH_REMOTE 0x12 // 18
+#define GENERIC_TYPE_SWITCH_TOGGLE 0x13 // 19
+#define GENERIC_TYPE_ZIP_GATEWAY 0x14 // 20
+#define GENERIC_TYPE_ZIP_NODE 0x15 // 21
+#define GENERIC_TYPE_VENTILATION 0x16 // 22
+#define GENERIC_TYPE_SECURITY_PANEL 0x17 // 23
+#define GENERIC_TYPE_WALL_CONTROLLER 0x18 // 24
+#define GENERIC_TYPE_SENSOR_BINARY 0x20 // 32
+#define GENERIC_TYPE_SENSOR_MULTILEVEL 0x21 // 33
+#define GENERIC_TYPE_METER_PULSE 0x30 // 48
+#define GENERIC_TYPE_METER 0x31 // 49
+#define GENERIC_TYPE_ENTRY_CONTROL 0x40 // 64
+#define GENERIC_TYPE_SEMI_INTEROPERABLE 0x50 // 80
+#define GENERIC_TYPE_SENSOR_ALARM 0xA1 // 161
+#define GENERIC_TYPE_NON_INTEROPERABLE 0xFF // 255
 
 extern "C" {
 
@@ -157,6 +166,8 @@ const char* DomoZWave_GetLibraryTypeName( uint32 home );
 const char* DomoZWave_ControllerType( uint32 home );
 
 // Enable/disable polling of the devices by open-zwave
+int32 DomoZWave_GetPollInterval( );
+void DomoZWave_SetPollInterval( int32 milliseconds, bool intervalbetweenpolls );
 void DomoZWave_EnablePolling( uint32 home, int32 node, int32 polltime );
 void DomoZWave_DisablePolling( uint32 home, int32 node );
 
@@ -193,31 +204,19 @@ bool DomoZWave_SetConfigParam( uint32 home, int32 node, int32 param, int32 value
 bool DomoZWave_SetConfigParamList( uint32 home, int32 node, int32 param, const char* value );
 void DomoZWave_RequestConfigParam( uint32 home, int32 node, int32 param );
 void DomoZWave_RequestAllConfigParams( uint32 home, int32 node );
-const char* DomoZWave_GetNodeConfigValue( uint32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigList( uint32 home, int32 node );
-const char* DomoZWave_GetNodeConfigLabel( uint32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigHelp( uint32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigValue( uint32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigValueType( uint32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigValueList( uint32 home, int32 node, int32 item );
-bool DomoZWave_GetNodeConfigValueReadOnly( uint32 home, int32 node, int32 item );
+const char* DomoZWave_GetNodeConfig( uint32 home, int32 node );
 
 // Retrieve the node neighborhood list or commandclass list
 const char* DomoZWave_GetNodeNeighborsList( uint32 home, int32 node );
 const char* DomoZWave_GetNodeCommandClassList( uint32 home, int32 node, int32 instance );
 
 // Request or update the group/association of a node
-int DomoZWave_GetNodeGroupCount( uint32 home, int32 node );
-const char* DomoZWave_GetNodeGroupList( uint32 home, int32 node, int32 ogroup );
-int DomoZWave_GetNodeGroupMax( uint32 home, int32 node, int32 ogroup );
-const char* DomoZWave_GetNodeGroupLabel( uint32 home, int32 node, int32 ogroup );
+const char* DomoZWave_GetNodeGroup( uint32 home, int32 node );
 void DomoZWave_AddAssociation( uint32 home, int32 node, int group, int otherNode );
 void DomoZWave_RemoveAssociation( uint32 home, int32 node, int group, int otherNode );
 
 // Request or set UserCode of a node
-int DomoZWave_GetNodeUserCodeCount( uint32 home, int32 node );
-const char* DomoZWave_GetNodeUserCodeLabel( uint32 home, int32 node, int32 usercode );
-const char* DomoZWave_GetNodeUserCodeValue( uint32 home, int32 node, int32 usercode );
+const char* DomoZWave_GetNodeUserCode( uint32 home, int32 node );
 bool DomoZWave_SetNodeUserCodeStart( uint32 home, int32 node );
 bool DomoZWave_SetNodeUserCodeStop( uint32 home );
 bool DomoZWave_SetNodeUserCodeRemove( uint32 home, int32 node, int32 usercode );
@@ -252,6 +251,7 @@ void DomoZWave_TestNetwork( uint32 home, int32 count );
 
 // Statistical information
 const char* DomoZWave_GetDriverStatistics( uint32 home );
+const char* DomoZWave_GetNodeStatistics( uint32 home, int32 node );
 long DomoZWave_GetSendQueueCount( uint32 home );
 
 // Make certain information readable
@@ -259,11 +259,12 @@ const char* DomoZWave_CommandClassIdName( int class_value );
 const char* DomoZWave_GenreIdName( int genre );
 const char* DomoZWave_BasicTypeName( int basictype );
 const char* DomoZWave_GenericTypeName( int generictype );
+const char* DomoZWave_SpecificTypeName( int generictype, int specifictype );
 
 //-----------------------------------------------------------------------------
 // Thermostate and Scenes are not supported (yet)
 //-----------------------------------------------------------------------------
 
-void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams );
+void cURL_Post_JSON(uint32 QueueId, uint32 HomeId, char* Method, char* PostData );
 
 }

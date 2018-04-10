@@ -22,7 +22,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Weeder"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "Weeder"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -41,12 +40,12 @@ Public ErrorWhere As String
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private $bEnabled As Boolean
 Private $sSerPort As String
-Private $bWeederDebug As Boolean
+Private $bDebug As Boolean
 
 Public hWeeder As New SerialPort
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -60,7 +59,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   ' Copy configuration items locally
   $bEnabled = cPl.Settings["enabled"]
   $sSerPort = cPl.Settings["serialport"]
-  $bWeederDebug = cPl.Settings["debug"]
+  $bDebug = cPl.Settings["debug"]
  
   ' Connect/Initialize connection
   Connect()
@@ -68,7 +67,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -97,14 +96,14 @@ Public Function Connect() As Boolean
   End With
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -162,7 +161,7 @@ Public Sub Send(sCommand As String)
 
   If hWeeder.Status <> Net.Active Then Return
 
-  If $bWeederDebug Then Main.WriteDebugLog(LogLabel & "Write: " & sCommand)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Write: " & sCommand)
   Print #hWeeder, sCommand & "\r"
   WeederRead()
 
@@ -186,7 +185,7 @@ Public Sub WeederRead()
   Wend
   sData = Replace(sData, Chr(10), "")
 
-  If $bWeederDebug Then
+  If $bDebug Then
     If InStr(sData, "?")
       Main.WriteDebugLog(LogLabel & "Syntax error -> " & sData)
     Else

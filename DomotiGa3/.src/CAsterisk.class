@@ -21,7 +21,6 @@
 ' Module/Class specific variables 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Asterisk"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "Asterisk API"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -44,12 +43,12 @@ Private $iTCPPort As Integer
 Private $sUser As String
 Private $sPassword As String
 Private $iPolltime As Integer
-Private $bAsteriskDebug As Boolean
+Private $bDebug As Boolean
 
 Public hAsterisk As New Socket
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -67,7 +66,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $iPollTime = cPl.Settings["polltime"]
   $sUser = cPl.Settings["user"]
   $sPassword = cPl.Settings["password"]
-  $bAsteriskDebug = cPl.Settings["debug"]
+  $bDebug = cPl.Settings["debug"]
  
   ' Connect/Initialize connection
   Connect()
@@ -75,7 +74,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -96,7 +95,7 @@ Public Function Connect() As Boolean
   hAsterisk.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
 
@@ -104,7 +103,7 @@ Public Function Connect() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -139,7 +138,7 @@ Public Sub Asterisk_Read()
     If InStr(sData, "Asterisk Call Manager") Then Main.WriteLog(LogLabel & sData)
     If InStr(sData, "Response: Error") Or InStr(sData, "Response: Success") Then
       Line Input #hAsterisk, sData
-      If $bAsteriskDebug Then Main.WriteDebugLog(LogLabel & sData)
+      If $bDebug Then Main.WriteDebugLog(LogLabel & sData)
       ' put support for parsing incoming events/calls here
     Endif
   Endif
@@ -168,7 +167,7 @@ Public Function Disconnect() As Boolean
 
   ' try to close the connection
   Try hAsterisk.Close
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
 
   ' all ok
   Return True

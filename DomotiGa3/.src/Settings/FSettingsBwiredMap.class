@@ -126,12 +126,10 @@ Public Sub txtWebsite_KeyPress()
 End
 
 Public Sub txtWebsite_GotFocus()
-  
+
   Balloon("URL without http://", txtTitle)
-  
+
 End
-
-
 
 Public Sub txtWebsitePicUrl_KeyPress()
 
@@ -198,7 +196,7 @@ Public Sub btnSave_Click()
   If Main.bServer Then
     Plugin.Restart("BwiredMap", 1)
   Else
-    Client.ModuleRestart("BwiredMap")
+    Client.Plugin_Restart("BwiredMap")
   Endif
 
   Me.Close
@@ -234,6 +232,9 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tbvBwiredDevices_DblClick()
 
+  If Not chkEnabled.Value Then Return
+
+  btnSave.Enabled = True
   iCurRow = tbvBwiredDevices.Row
   ' open bwired device editor window
   FEditBwiredDevices.Show()
@@ -298,6 +299,17 @@ Private Sub EnableDisableSettings()
   tbvBwiredDevices.Enabled = chkEnabled.Value
   btnUpload.Enabled = chkEnabled.Value
   txtPushTime.Enabled = chkEnabled.Value
+  btnAddDevice.Enabled = chkEnabled.Value
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnAddDevice_Click()
+
+  iCurRow = tbvBwiredDevices.Row
+  ' open Bwired device editor window
+  FEditBwiredDevices.Show()
+
+End

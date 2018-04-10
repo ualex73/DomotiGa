@@ -34,9 +34,9 @@ Public Sub Form_Open()
     FMain.Close
     Return
   Endif
-  
+
   Me.Text = "DomotiGa " & IIf(Main.bServer, "Server ", "Client ") & Main.sProgramVersion & " - Open Source Home Automation" & " - (" & Main.sSQLHost & ":" & Main.sSQLDatabase & ")"
-  If Main.bMainDebug Then Main.WriteLog(("Main Debug enabled."))
+  If Main.bMainDebug Then Main.WriteLog("[Main] " & ("Main Debug enabled."))
 
   ' Only generate tagline in server mode
   If Main.bServer Then Main.SetGlobalVar("Tagline", Main.Random_Text("remarks_tags"))
@@ -45,45 +45,42 @@ Public Sub Form_Open()
   Me.Move(Main.iWindowX, Main.iWindowY, Main.iWindowWidth, Main.iWindowHeight)
 
   RefreshMenu()
+
   OpenMenu(Main.sStartpage)
+
   If Main.bSoundEnabled Then Sounds.PlaySnd("click.wav")
 
-  ' display correct menu layout depending on program mode
-  If Main.bServer = True Then
-    MenuClient.Visible = False
-    MenuClientSettingsGUI.Visible = False
-    MenuClientSettingsMySQL.Visible = False
-    MenuSettingsMySQL.Visible = True
-    MenuSettingsGUI.Visible = True
-  Else
-    MenuClient.Visible = True
-    MenuClientSettingsMySQL.Visible = True
-    MenuClientSettingsGUI.Visible = True
-    MenuSettingsMySQL.Visible = False
-    MenuSettingsGUI.Visible = False
-  Endif
-
-  ' check if xmlrpc service can be reached, versions match, or xmlrpc is disabled
+  ' check if json-rpc service can be reached, versions match, or xmlrpc is disabled
   CheckClientServerConnect()
 
 End
 
 Public Sub CheckClientServerConnect()
 
-  If Main.bServer = False Then
-    If Main.bXMLRPCEnabled = True Then
-      Client.GetProgramVersion()
-    Else
-      Message.Warning("You have disabled the XMLRPC module, so communication\nbetween client & server is not possible!\n")
+  Dim rRPCSettings As Result
+
+  If Not Main.bServer Then
+    rRPCSettings = Main.GetSettingTable("jsonrpc")
+    If rRPCSettings!enabled = False Then
+      Error.Raise("You have disabled the JSON-RPC plugin")
     Endif
+    If Main.iJSONRPCPort <> rRPCSettings!httpport Then
+      Error.Raise("Client JSON-RPC port (" & Main.iJSONRPCPort & ") does not match server port (" & rRPCSettings!httpport & ")")
+    Endif
+
+    ' All fine
+    Client.GetProgramVersion()
   Endif
+
+Catch
+  Message.Warning(Error.Text & ", so communication\nbetween client & server is not possible!\n")
 
 End
 
 Public Sub CheckServerVersion(sServerVersion As String)
 
   If Len(sServerVersion) = 0 Then
-    Message.Warning("Couldn't connect to XMLRPC service\nlocated at http://" & Main.sXMLRPCHost & ":" & Main.iXMLRPCPort & "\nIs DomotiGaServer running?")
+    Message.Warning("Couldn't connect to JSON-RPC service\nlocated at http://" & Main.sJSONRPCHost & ":" & Main.iJSONRPCHost & "\nIs DomotiGaServer running?")
   Else
     If sServerVersion <> Main.sProgramVersion Then
       Message.Warning("The server runs version " & sServerVersion & " and\nthis client runs version " & Main.sProgramVersion & "\nPlease fix!")
@@ -120,6 +117,8 @@ Public Sub RefreshMenu()
 
   Dim rResult, rResultMenu As Result
   Dim iCount, iPanel As Integer
+  Dim oObject As Object
+  Dim sName As String
 
   VBoxMenu1.Height = 0
   VBoxMenu2.Height = 0
@@ -142,19 +141,32 @@ Public Sub RefreshMenu()
             If rResult!menu = 1 Then
               hToolButton = New ToolButton(VBoxMenu1) As "MenuToolButton"
               VBoxMenu1.Height = VBoxMenu1.Height + 42
+              VBoxMenu1.Width = 130
             Else If rResult!menu = 2 Then
               hToolButton = New ToolButton(VBoxMenu2) As "MenuToolButton"
               VBoxMenu2.Height = VBoxMenu2.Height + 42
+              VBoxMenu2.Width = 130
             Else If rResult!menu = 3 Then
               hToolButton = New ToolButton(VBoxMenu3) As "MenuToolButton"
               VBoxMenu3.Height = VBoxMenu3.Height + 42
+              VBoxMenu3.Width = 130
             Else
               hToolButton = New ToolButton(VBoxMenu4) As "MenuToolButton"
               VBoxMenu4.Height = VBoxMenu4.Height + 42
+              VBoxMenu4.Width = 130
             Endif
+
+            ' Try to load the Form to be displayed, to get the translated form name
+            Try oObject = Object.New(rResult!item)
+            If Not Error Then
+              sName = oObject.Text
+            Else
+              sName = rResult!name
+            Endif
+
             With hToolButton
               .Name = rResult!id
-              .Text = rResult!name
+              .Text = sName
               .Background = Color.TextBackground
               .Font = Font["-1"]
               .Height = 42
@@ -216,11 +228,7 @@ Public Sub OpenMenu(sStart As String)
     Case "FTVGuide"
       OpenPage(FTVGuide)
     Case "FWeather"
-      If Main.bWeatherUGEnabled Then
-        OpenPage(FWeatherUnderground)
-      Else
-        OpenPage(FWeatherBug)
-      Endif
+      OpenPage(FWeather)
     Case "FLogfiles"
       OpenPage(FLogfiles)
     Case "FDebug"
@@ -274,6 +282,20 @@ Public Sub UpdateStatusPanel()
     FMain.pbOneWire.Visible = False
   Endif
 
+  If Plugin.IsPluginEnabled("OpenTherm", 0) Then
+    FMain.tbOT.Visible = True
+    FMain.pbOT.Visible = True
+  Else
+    FMain.tbOT.Visible = False
+    FMain.pbOT.Visible = False
+  Endif
+  If Plugin.IsPluginEnabled("Velbus", 0) Then
+    FMain.tbVelbus.Visible = True
+    FMain.pbVelbus.Visible = True
+  Else
+    FMain.tbVelbus.Visible = False
+    FMain.pbVelbus.Visible = False
+  Endif
   If Plugin.IsPluginEnabled("DSC", 0) Then
     FMain.tbDSC.Visible = True
     FMain.pbDSC.Visible = True
@@ -282,6 +304,18 @@ Public Sub UpdateStatusPanel()
     FMain.tbDSC.Visible = False
     FMain.pbDSC.Visible = False
     FMain.MenuToolsDSCPanel.Enabled = False
+  Endif
+
+  If Plugin.IsPluginEnabled("Toon", 0) Then
+    FMain.MenuToolsToonCmdr.Enabled = True
+  Else
+    FMain.MenuToolsToonCmdr.Enabled = False
+  Endif
+
+  If Plugin.IsPluginEnabled("KNX", 0) Then
+    FMain.MenuToolsKNXCmdr.Enabled = True
+  Else
+    FMain.MenuToolsKNXCmdr.Enabled = False
   Endif
 
   If Plugin.IsPluginEnabled("RFXComRX", 0) Or Plugin.IsPluginEnabled("RFXComTX", 0) Or Main.bRFXComxPLEnabled Or Plugin.IsPluginEnabled("RFXComTRX", 0) Then
@@ -304,12 +338,12 @@ Public Sub UpdateStatusPanel()
     FMain.MenuToolsX10Cmdr.Enabled = False
   Endif
 
-  If Plugin.IsPluginEnabled("EIB", 0) Then
-    FMain.tbEIB.Visible = True
-    FMain.pbEIB.Visible = True
+  If Plugin.IsPluginEnabled("KNX", 0) Then
+    FMain.tbKNX.Visible = True
+    FMain.pbKNX.Visible = True
   Else
-    FMain.tbEIB.Visible = False
-    FMain.pbEIB.Visible = False
+    FMain.tbKNX.Visible = False
+    FMain.pbKNX.Visible = False
   Endif
 
   If Plugin.IsPluginEnabled("PLCBUS", 0) Then
@@ -325,17 +359,11 @@ Public Sub UpdateStatusPanel()
   If Plugin.IsPluginEnabled("OpenZWave", 0) Then
     FMain.tbZWave.Visible = True
     FMain.pbZWave.Visible = True
-    FMain.MenuToolsZWaveCmdr.Enabled = True
+    FMain.MenuToolsOpenZWaveCmdr.Enabled = True
   Else
     FMain.tbZWave.Visible = False
     FMain.pbZWave.Visible = False
-    FMain.MenuToolsZWaveCmdr.Enabled = False
-  Endif
-
-  If Plugin.IsPluginEnabled("Domotica", 0) Then
-    FMain.MenuToolsDomoCmdr.Enabled = True
-  Else
-    FMain.MenuToolsDomoCmdr.Enabled = False
+    FMain.MenuToolsOpenZWaveCmdr.Enabled = False
   Endif
 
   If Plugin.IsPluginEnabled("CUL", 0) Then
@@ -370,21 +398,19 @@ Public Sub Form_Resize()
 
   ' sidepanel
   If spnMain.Hidden Then
-    spnMain.Move(1, 1, 8, Me.ClientHeight - 33)
+    spnMain.Move(1, 1, 8, Me.ClientHeight - 38)
   Else
-    spnMain.Move(1, 1, 160, Me.ClientHeight - 33)
+    spnMain.Move(1, 1, 155, Me.ClientHeight - 38)
   Endif
   ' toolpanel
-  tpnMain.Move(1, 1, 148, Me.ClientHeight - 35)
+  tpnMain.Move(1, 1, 148, Me.ClientHeight - 39)
   ScrollViewMenu1.Move(0, 1, 144, Me.ClientHeight - 120)
   ScrollViewMenu2.Move(0, 1, 144, Me.ClientHeight - 120)
   ScrollViewMenu3.Move(0, 1, 144, Me.ClientHeight - 120)
   ScrollViewMenu4.Move(0, 1, 144, Me.ClientHeight - 120)
   ' status panel & bar
-  pnlStatus.Move(2, Me.ClientHeight - 29, Me.ClientWidth - 4, 24)
-  hbStatus.Move(4, 1, Me.ClientWidth - 12, 24)
-  ' workspace
-  wrkMain.Move(spnMain.Width + 2, 3, Me.ClientWidth - spnMain.Width - 4, Me.ClientHeight - 35)
+  pnlStatus.Move(2, Me.ClientHeight - 34, Me.ClientWidth - 4, 32)
+  hbStatus.Move(4, 1, Me.ClientWidth - 12, 32)
 
 End
 
@@ -432,6 +458,7 @@ Public Sub DisplayGraphs(sRange As String, sGroup As String, oPanel As Object, O
               Try pGraph = Picture.Load(sGraphPic)
             Else
               If Main.bRRDToolDebug Then Main.WriteDebugLog("[RRDTool] Failed to download graph '" & sGraphUrl & "'")
+              pGraph = Null
             Endif
           Endif
           If pGraph Then
@@ -486,8 +513,8 @@ Public Sub DisplayHeader(sText As String, oPanel As Object)
   With hText
     .Border = False
     .Text = sText
-    .Height = 30
-    .Width = 350
+    .Height = 32
+    .Width = Me.ClientW - 20
     .Font = Font["Sans Serif, 12"]
     .Tag = sText
   End With
@@ -502,25 +529,34 @@ Public Sub DisplayMessage(sText As String, oPanel As Object)
   With hText
     .Border = False
     .Text = sText
-    .Height = 30
-    .Width = 350
-    .Font = Font["Sans Serif, 8"]
+    .Height = 32
+    .Width = Me.ClientW - 20
     .Tag = sText
   End With
 
 End
 
-Public Sub FillCombo(oObject As Object, sType As String)
+Public Sub FillCombo(oObject As Object, sRange As String)
 
   Dim iCnt As Integer
+  Dim fCnt As Float
 
-  Select sType
+  oObject.Clear
+  Select sRange
     Case "FF"
       For iCnt = 0 To 255
         oObject.Add(Hex(iCnt, 2))
       Next
+    Case "3F"
+      For iCnt = 0 To 31
+        oObject.Add(Hex(iCnt, 2))
+      Next
     Case "1F"
       For iCnt = 0 To 31
+        oObject.Add(Hex(iCnt, 2))
+      Next
+    Case "7F"
+      For iCnt = 0 To 127
         oObject.Add(Hex(iCnt, 2))
       Next
     Case "16"
@@ -531,38 +567,35 @@ Public Sub FillCombo(oObject As Object, sType As String)
       For iCnt = 1 To 32
         oObject.Add(iCnt)
       Next
+    Case "05"
+      For iCnt = 0 To 5
+        oObject.Add(Format(iCnt, "00"))
+      Next
+    Case "06"
+      For iCnt = 1 To 6
+        oObject.Add(Format(iCnt, "00"))
+      Next
+    Case "F"
+      For iCnt = 0 To 15
+        oObject.Add(Hex(iCnt, 1))
+      Next 
+    Case "0F"
+      For iCnt = 0 To 15
+        oObject.Add(Hex(iCnt, 2))
+      Next
+    Case "7"
+      For iCnt = 0 To 7
+        oObject.Add(Format(iCnt, "00"))
+      Next
     Case "4"
       For iCnt = 0 To 3
         oObject.Add(Hex(iCnt, 1))
       Next
+    Case "28"
+      For fCnt = 5 To 28 Step 0.5
+        oObject.Add(Format(fCnt, "#0.0"))
+      Next
   End Select
-
-End
-
-Public Sub GetStatusIcon(sCmd As String, sOn As String, sOff As String, sDim As String) As String
-
-  Dim aValue As String[]
-  Dim sPath As String = Main.sBaseDir &/ "icons"
-
-  ' split command
-  aValue = Split(UCase(sCmd), " ")
-  ' ON, OFF
-  If aValue.Count = 1 Then
-    Select aValue[0]
-      Case "ON", "OPEN", "MOTION", "UP", "AWAKE", "LIGHT"
-        If Len(sOn) Then Return sPath &/ sOn
-      Default
-        If Len(sOff) Then Return sPath &/ sOff
-    End Select
-  ' DIM 1, NO MOTION
-  Else If aValue.Count = 2 Then
-    If aValue[0] = "DIM" Then
-      If Len(sDim) Then Return sPath &/ sDim
-    Else
-      If Len(sOff) Then Return sPath &/ sOff
-    Endif
-  Endif
-  Return ""
 
 End
 
@@ -571,17 +604,15 @@ Public Sub DisplaySensors(sGroup As String, oPanel As Object, sGroup2 As String)
   Dim hText As TextLabel
   Dim rDevice, rType, rDeviceValue As Result
   Dim hPanel As Panel
-  Dim sText, sValue As String
-  Dim sLabel As String
+  Dim sText, sValue, sLabel As String
   Dim bPrintHeader, bDisplayHeader As Boolean
   Dim hMovieBox As MovieBox
 
   Try rDevice = Devices.GetDevicesAndValues(["enabled": True, "groups": ["%" & sGroup & "%", "%" & sGroup2 & "%"], "inc_device_values": False])
- 
   If rDevice Then
     If rDevice.Count Then
       For Each rDevice
-       
+
         If Not bDisplayHeader Then
           Select sGroup2
             Case "Virtual"
@@ -601,19 +632,17 @@ Public Sub DisplaySensors(sGroup As String, oPanel As Object, sGroup2 As String)
           With hPanel
             .X = 10
             .Y = 0
-            .Height = 20
-            .Width = oPanel.Width - 10
+            .Height = 32
+            .Width = Me.ClientW - 20
           End With
           ' name
           hText = New TextLabel(hPanel) As "Sensors"
           With hText
-            .Foreground = Color.Gray
             .Text = ("Name")
             .X = 30
             .Y = 0
-            .Height = 30
+            .Height = 32
             .Width = 150
-            .Font = Font["Sans Serif, 8, Normal"]
           End With
           ' value 1 name
           If InStr(sGroup, "Climate") Or InStr(sGroup, "HVAC") Then
@@ -626,13 +655,11 @@ Public Sub DisplaySensors(sGroup As String, oPanel As Object, sGroup2 As String)
           ' value 1
           hText = New TextLabel(hPanel) As "Sensors"
           With hText
-            .Foreground = Color.Gray
             .Text = sText
             .X = 185
             .Y = 0
-            .Height = 30
+            .Height = 32
             .Width = 50
-            .Font = Font["Sans Serif, 8, Normal"]
           End With
           sText = ""
           ' value2 if set
@@ -650,13 +677,11 @@ Public Sub DisplaySensors(sGroup As String, oPanel As Object, sGroup2 As String)
             ' value2
             hText = New TextLabel(hPanel) As "Sensors"
             With hText
-              .Foreground = Color.Gray
               .Text = sText
               .X = 270
               .Y = 0
-              .Height = 30
+              .Height = 32
               .Width = 90
-              .Font = Font["Sans Serif, 8, Normal"]
             End With
           Endif
           If sGroup <> "Security" Then
@@ -671,13 +696,11 @@ Public Sub DisplaySensors(sGroup As String, oPanel As Object, sGroup2 As String)
               ' value3
               hText = New TextLabel(hPanel) As "Sensors"
               With hText
-                .Foreground = Color.Gray
                 .Text = sText
                 .X = 355
                 .Y = 0
-                .Height = 30
+                .Height = 32
                 .Width = 90
-                .Font = Font["Sans Serif, 8, Normal"]
               End With
             Endif
             ' value4
@@ -688,20 +711,17 @@ Public Sub DisplaySensors(sGroup As String, oPanel As Object, sGroup2 As String)
             If sText Then
               hText = New TextLabel(hPanel) As "Sensors"
               With hText
-                .Foreground = Color.Gray
                 .Text = ("Extra")
                 .X = 440
                 .Width = 90
                 .Y = 0
-                .Height = 30
-                .Font = Font["Sans Serif, 8, Normal"]
+                .Height = 32
               End With
             Endif
           Endif
           ' last seen time
           hText = New TextLabel(hPanel) As "Sensors"
           With hText
-            .Foreground = Color.Gray
             .Text = ("Last Seen")
             If sGroup = "Security" Then
               .X = 355
@@ -709,25 +729,23 @@ Public Sub DisplaySensors(sGroup As String, oPanel As Object, sGroup2 As String)
               .X = 525
             Endif
             .Y = 0
-            .Height = 30
-            .Width = 120
-            .Font = Font["Sans Serif, 8, Normal"]
+            .Height = 32
+            .Width = 150
           End With
 
           bPrintheader = True
         Endif
 
         ' fetch devicetype values
-        Try rType = Main.hDB.Exec("SELECT * FROM devicetypes WHERE id = &1", rDevice!module)
+        Try rType = Main.hDB.Exec("SELECT * FROM devicetypes WHERE id = &1", rDevice!devicetype_id)
 
         hPanel = New Panel(oPanel) As "Panel"
         With hPanel
           .X = 10
           .Y = 0
-          .Height = 20
+          .Height = 32
           .Width = oPanel.Width - 10
         End With
-
 
         ' device name
         hText = New TextLabel(hPanel) As "Sensors"
@@ -735,29 +753,27 @@ Public Sub DisplaySensors(sGroup As String, oPanel As Object, sGroup2 As String)
           .Text = rDevice!device_name
           .X = 30
           .Y = 0
-          .Height = 20
+          .Height = 32
           .Width = 150
-          .Font = Font["Sans Serif, 8, Normal"]
         End With
 
-         Try rDeviceValue = Devices.GetValues(["device_id": rDevice!device_id, "valuenum": [1, 2, 3, 4]])
- 
+        Try rDeviceValue = Devices.GetValues(["device_id": rDevice!device_id, "valuenum": [1, 2, 3, 4]])
         If rDeviceValue Then
           If rDeviceValue.Count Then
             For Each rDeviceValue
-       
+
               If rDeviceValue!valuenum == 1 Then
                 hMovieBox = New MovieBox(hPanel) As "Icon"
                 With hMovieBox
-                Try .Path = FMain.GetStatusIcon(rDeviceValue!value, rDevice!device_onicon, rDevice!device_officon, rDevice!device_dimicon)
-                .Height = 20
-                .Width = 20
+                Try .Path = Main.sBaseDir &/ "icons" &/ Devices.GetStatusIcon(rDeviceValue!value, rDevice!device_onicon, rDevice!device_officon, rDevice!device_dimicon)
+                .Height = 32
+                .Width = 32
                 .X = 10
                 .Y = 0
                 .Playing = True
                 End With
               Endif
-       
+
               sValue = Devices.CorrectValue(rDeviceValue!value, rDeviceValue!correction, rDevice!device_id)
               sLabel = rDeviceValue!units
 
@@ -767,14 +783,12 @@ Public Sub DisplaySensors(sGroup As String, oPanel As Object, sGroup2 As String)
                 .Text = sValue & " " & sLabel
                 .X = 185 + (rDeviceValue!valuenum * 80 - 80) 
                 .Y = 0
-                .Height = 20
+                .Height = 32
                 .Width = 90
-                .Font = Font["Sans Serif, 8, Normal"]
               End With
             Next
           Endif
         Endif
-
 
         ' last seen time
         If rDevice!device_lastseen Then
@@ -791,9 +805,8 @@ Public Sub DisplaySensors(sGroup As String, oPanel As Object, sGroup2 As String)
             .X = 525
           Endif
           .Y = 0
-          .Height = 20
+          .Height = 32
           .Width = 180
-          .Font = Font["Sans Serif, 8, Normal"]
         End With
       Next
 
@@ -802,7 +815,7 @@ Public Sub DisplaySensors(sGroup As String, oPanel As Object, sGroup2 As String)
       With hPanel
         .X = 35
         .Y = 0
-        .Height = 20
+        .Height = 32
         .Width = oPanel.Width - 10
       End With
     Else
@@ -830,8 +843,7 @@ Public Sub DisplaySensorsforLocation(iLocationId As Integer, oPanel As Object)
   Dim rDevice, rType As Result
   Dim hMovieBox As MovieBox
   Dim hPanel As Panel
-  Dim sText, sValue As String
-  Dim sLabel As String
+  Dim sText, sValue, sLabel As String
   Dim bPrintHeader As Boolean
   Dim iHeight As Integer
   Dim oObject As Object
@@ -840,19 +852,18 @@ Public Sub DisplaySensorsforLocation(iLocationId As Integer, oPanel As Object)
   If rDevice.Count Then
     For Each rDevice
       sValue = Devices.CorrectValue(rDevice!device_value_value, rDevice!device_value_correction, rDevice!device_id)
-      
       sLabel = rDevice!device_value_units
-      
+
       ' create panel for sensor info
       If Not bPrintHeader Then
         hPanel = New Panel(oPanel) As "Panel"
         With hPanel
           .X = 25
           .Y = 0
-          .Height = 20
+          .Height = 32
           .Width = oPanel.Width - 10
         End With
-        
+
         ' name
         hText = New TextLabel(hPanel) As "Sensors"
         With hText
@@ -860,11 +871,10 @@ Public Sub DisplaySensorsforLocation(iLocationId As Integer, oPanel As Object)
           .Text = ("Name")
           .X = 30
           .Y = 0
-          .Height = 20
+          .Height = 32
           .Width = 150
-          .Font = Font["Sans Serif, 7, Normal"]
         End With
-        
+
         ' last change time
         hText = New TextLabel(hPanel) As "Sensors"
         With hText
@@ -872,57 +882,54 @@ Public Sub DisplaySensorsforLocation(iLocationId As Integer, oPanel As Object)
           .Text = ("Last Seen")
           .X = 490
           .Y = 0
-          .Height = 20
+          .Height = 32
           .Width = 140
-          .Font = Font["Sans Serif, 7, Normal"]
         End With
         bPrintheader = True
       Endif
-      
+
       ' fetch devicetype values
-      Try rType = Main.hDB.Exec("SELECT * FROM devicetypes WHERE id = &1", rDevice!device_module_id)
-      
+      Try rType = Main.hDB.Exec("SELECT * FROM devicetypes WHERE id = &1", rDevice!device_devicetype_id)
+
       hPanel = New Panel(oPanel) As "Panel"
       With hPanel
         .X = 35
         .Y = 0
-        .Height = 20
+        .Height = 32
         .Width = oPanel.Width - 10
       End With
-      
+
       ' device icon
       hMovieBox = New MovieBox(hPanel) As "Icon"
       With hMovieBox
-        .Path = FMain.GetStatusIcon(rDevice!device_value_value, rDevice!device_onicon, rDevice!device_officon, rDevice!device_dimicon)
-        .Height = 20
+        .Path = Main.sBaseDir &/ "icons" &/ Devices.GetStatusIcon(rDevice!device_value_value, rDevice!device_onicon, rDevice!device_officon, rDevice!device_dimicon)
+        .Height = 32
         .Width = 20
         .X = 10
         .Y = 0
         .Playing = True
       End With
-      
+
       ' device name
       hText = New TextLabel(hPanel) As "Sensors"
       With hText
         .Text = rDevice!device_name
         .X = 30
         .Y = 0
-        .Height = 20
+        .Height = 32
         .Width = 150
-        .Font = Font["Sans Serif, 7, Normal"]
       End With
-      
+
       ' value
       hText = New TextLabel(hPanel) As "Sensors"
       With hText
         .Text = sValue & " " & sLabel
         .X = 180
         .Y = 0
-        .Height = 20
+        .Height = 32
         .Width = 90
-        .Font = Font["Sans Serif, 7, Normal"]
       End With
-      
+
       ' last seen time
       If rDevice!device_lastseen Then
         sText = Replace$(Str$(Format(rDevice!device_lastseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
@@ -934,9 +941,8 @@ Public Sub DisplaySensorsforLocation(iLocationId As Integer, oPanel As Object)
         .Text = sText
         .X = 490
         .Y = 0
-        .Height = 20
+        .Height = 32
         .Width = 120
-        .Font = Font["Sans Serif, 7, Normal"]
       End With
     Next
 
@@ -945,7 +951,7 @@ Public Sub DisplaySensorsforLocation(iLocationId As Integer, oPanel As Object)
     With hPanel
       .X = 35
       .Y = 0
-      .Height = 20
+      .Height = 32
       .Width = oPanel.Width - 10
     End With
   Endif
@@ -1006,7 +1012,7 @@ Public Sub DisplayNotImplemented(sText As String, oPanel As Object)
     .Y = 21
     .Text = sText
     .Width = 364
-    .Height = 35
+    .Height = 32
   End With
 
 End
@@ -1014,7 +1020,7 @@ End
 Public Sub spnMain_Arrange()
 
   ' resize workspace
-  wrkMain.Move(spnMain.Width + 2, 3, Me.ClientWidth - spnMain.Width - 4, Me.ClientHeight - 35)
+  wrkMain.Move(spnMain.Width + 2, 3, Me.ClientWidth - spnMain.Width - 4, Me.ClientHeight - 40)
 
 End
 
@@ -1035,23 +1041,29 @@ End
 Public Sub Form_Close()
 
   Dim wWindow As Window
+  Dim hSettings As Settings
 
   If Main.bServer Then
-      If Message.Question("Are you sure that you want to close the server?", ("Yes"), ("No")) = 2 Then
+    If Message.Question(("Are you sure that you want to close the server?"), ("Yes"), ("No")) = 2 Then
       Stop Event
       Return
     Endif
   Endif
 
   ' save window size and position
-  Main.SetConfigValue("GUI/WindowX", Me.X)
-  Main.SetConfigValue("GUI/WindowY", Me.Y)
-  Main.SetConfigValue("GUI/WindowHeight", Me.Height)
-  Main.SetConfigValue("GUI/WindowWidth", Me.Width)
+  hSettings = New Settings(Main.sBaseDir &/ Main.sSettings)
+  hSettings["GUI/WindowX"] = Me.X 
+  hSettings["GUI/WindowY"] = Me.Y 
+  hSettings["GUI/WindowHeight"] = Me.Height
+  hSettings["GUI/WindowWidth"] = Me.Width
+
+  Try hSettings.Save
+  If Error Then
+    Message.Error("Unable to write to file '" & Main.sBaseDir &/ Main.sSettings & "'\nPlease check the file permissions")
+  Endif
 
   ' exit program
   Main.CloseAll()
-  FMain.Close
 
   For Each wWindow In Windows
     Try wWindow.Close
@@ -1067,10 +1079,23 @@ Public Function Search(tv As TableView, i As Integer, col As Integer, Mode As In
   pos = i
 
   For k = i To tv.Rows.Count - 1
-    If TypeOf(Val(tv[k, col].Text)) <= gb.Float Then
+    v1 = tv[k, col].Text
+    v2 = tv[pos, col].Text
+    If Len(v1) <> Len(v2) And If v1 And If RegExp.Match(v1, "\\d\\d:\\d\\d:\\d\\d$") Then
+      ' time versus date-time: 07:43:12 versus 2014/11/23 16:26:34 (other time/dates can be sorted as string)
+      If mode = 0 Then ' min
+        If Len(v1) > Len(v2) Then
+          pos = k
+        Endif
+      Else ' max
+        If Len(v1) < Len(v2) Then
+          pos = k
+        Endif
+      Endif
+    Else If TypeOf(Val(tv[k, col].Text)) <= gb.Float Then
       ' behaves like number
-      v1 = Val(tv[k, col].Text)
-      v2 = Val(tv[pos, col].Text)
+      v1 = Val(v1)
+      v2 = Val(v2)
 
       If v1 = Null Then
         v1 = 0
@@ -1091,9 +1116,6 @@ Public Function Search(tv As TableView, i As Integer, col As Integer, Mode As In
       Endif
     Else
       ' behaves like string
-      v1 = tv[k, col].Text
-      v2 = tv[pos, col].Text
-
       If v1 = Null Then
         v1 = " "
       Endif
@@ -1190,7 +1212,20 @@ Public Function SearchGrid(gv As GridView, i As Integer, col As Integer, Mode As
   pos = i
 
   For k = i To gv.Rows.Count - 1
-    If TypeOf(Val(gv[k, col].Text)) <= gb.Float Then
+    v1 = gv[k, col].Text
+    v2 = gv[pos, col].Text
+    If Len(v1) <> Len(v2) And If v1 And If RegExp.Match(v1, "\\d\\d:\\d\\d:\\d\\d$") Then
+      ' time versus date-time: 07:43:12 versus 2014/11/23 16:26:34 (other time/dates can be sorted as string)
+      If mode = 0 Then ' min
+        If Len(v1) > Len(v2) Then
+          pos = k
+        Endif
+      Else ' max
+        If Len(v1) < Len(v2) Then
+          pos = k
+        Endif
+      Endif
+    Else If TypeOf(Val(gv[k, col].Text)) <= gb.Float Then
       ' behaves like number
       v1 = Val(gv[k, col].Text)
       v2 = Val(gv[pos, col].Text)
@@ -1239,31 +1274,27 @@ Public Function SearchGrid(gv As GridView, i As Integer, col As Integer, Mode As
 
   Return pos
 
+Catch
+
 End
 
 Public Sub ChangeGrid(gv As GridView, i As Integer, pos As Integer)
 
   Dim k As Integer
-  Dim row As New String[]
 
-  ' load first data into row
   For k = 0 To gv.Columns.Count - 1
-    row.Add(gv[i, k].Text)
-  Next
-
-  ' put second row into first
-  For k = 0 To gv.Columns.Count - 1
-    gv[i, k].Text = gv[pos, k].Text
-  Next
-
-  ' finally, save temporary data
-  For k = 0 To gv.Columns.Count - 1
-    gv[pos, k].Text = row[k]
+    If gv[i, k].Text Or If gv[pos, k].Text Then
+      Swap gv[i, k].Text, gv[pos, k].Text
+    Else If gv[i, k].Picture Or If gv[pos, k].Picture Then
+      Swap gv[i, k].Picture, gv[pos, k].Picture
+    Endif
   Next
 
 End
 
 Public Sub MenuLogout_Click()
+
+  Main.WriteLog("[Main] " & ("Logged out '") & txtUser.Text & ("'"))
 
   Main.bLogOut = True
   ' show splash screen, load program
@@ -1284,31 +1315,16 @@ Public Sub MenuAbout_Click()
 
 End
 
-Public Sub MenuSupport_Click()
-
-  Try Desktop.Open("http://www.domotiga.nl")
-  If Error Then Message.Error("No internet connection available?")
-
-End
-
-Public Sub MenuDonate_Click()
-
-  Try Desktop.Open("https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=NT48KZRT7F3FA&lc=US&item_name=DomotiGa%20Open%20Source%20Project&item_number=domotiga&currency_code=EUR&bn=PP%2dDonationsBF%3abtn_donate_SM%2egif%3aNonHosted")
-  If Error Then Message.Error("No internet connection available?")
-
-End
-
 ' device menu entries
-Public Sub MenuDeviceModules_Click()
+Public Sub MenuDeviceTypesGroups_Click()
 
-  FEditModulesGroups.Show
+  FEditDeviceTypesGroups.Show
 
 End
 
 Public Sub MenuEditDevices_Click()
 
-  FDeviceEditor.bAddDevice = True
-  FDeviceEditor.Show
+  FDeviceEditor.Run()
 
 End
 
@@ -1407,9 +1423,9 @@ Public Sub MenuToolsDomoCmdr_Click()
 
 End
 
-Public Sub MenuToolsZWaveCmdr_Click()
+Public Sub MenuToolsOpenZWaveCmdr_Click()
 
-  FToolsZWaveCmdr.Show
+  FToolsOpenZWaveCmdr.Show
 
 End
 
@@ -1441,6 +1457,12 @@ End
 Public Sub MenuSettingsAstro_Click()
 
   FSettingsAstro.Show
+
+End
+
+Public Sub MenuSettingsDeviceDiscover_Click()
+
+  FSettingsDeviceDiscover.Show
 
 End
 
@@ -1477,12 +1499,6 @@ End
 Public Sub MenuSettingsVoiceText_Click()
 
   FSettingsVoiceText.Show
-
-End
-
-Public Sub MenuSettingsPing_Click()
-
-  FSettingsPing.Show
 
 End
 
@@ -1552,6 +1568,18 @@ Public Sub MenuSettingsUPS_Click()
 
 End
 
+Public Sub MenuSettingsVelbus_Click()
+
+  FSettingsVelbus.Show
+
+End
+
+Public Sub MenuSettingsWirelessTags_Click()
+
+  FSettingsWirelessTags.Show
+
+End
+
 Public Sub MenuSettingsHDDTemp_Click()
 
   FSettingsHDDTemp.Show
@@ -1618,9 +1646,9 @@ Public Sub MenuSettingsServerStats_Click()
 
 End
 
-Public Sub MenuSettingsEIB_Click()
+Public Sub MenuSettingsKNX_Click()
 
-  FSettingsEIB.Show
+  FSettingsKNX.Show
 
 End
 
@@ -1685,11 +1713,6 @@ Public Sub MenuSettingsFritzBox_Click()
 
 End
 
-Public Sub MenuSettingsDomotica_Click()
-
-  FSettingsDomotica.Show()
-
-End
 
 Public Sub MenuSettingsDigitemp_Click()
 
@@ -1740,18 +1763,6 @@ Public Sub MenuEditMenus_Click()
 
 End
 
-Public Sub MenuClientSettingsMySQL_Click()
-
-  FSettingsMySQL.Show
-
-End
-
-Public Sub MenuClientSettingsGUI_Click()
-
-  FSettingsGUI.Show
-
-End
-
 Public Sub MenuSettingsCameras_Click()
 
   FSettingsCameras.Show
@@ -1781,9 +1792,9 @@ Public Sub MenuSettingsLIRC_Click()
 
 End
 
-Public Sub MenuSettingsPachube_Click()
+Public Sub MenuSettingsXively_Click()
 
-  FSettingsPachube.Show
+  FSettingsXively.Show
 
 End
 
@@ -1798,6 +1809,13 @@ Public Sub MenuSettingsGenericIO_Click()
   FSettingsGenericIO.Show
 
 End
+
+Public Sub MenuSettingsPhilipsHue_Click()
+
+  FSettingsPhilipsHue.Show
+
+End
+
 
 Public Sub MenuSettingsPLCBUS_Click()
 
@@ -1838,12 +1856,6 @@ End
 Public Sub MenuSettingsTVGuideCategories_Click()
 
   FEditTVProgramCategories.Show
-
-End
-
-Public Sub MenuSettingsWeatherBug_Click()
-
-  FSettingsWeatherBug.Show
 
 End
 
@@ -2123,7 +2135,7 @@ End
 
 Public Sub MenuSettingsWeatherUnderground_Click()
 
-  FSettingsWeatherUG.Show
+  FSettingsWeatherUnderground.Show
 
 End
 
@@ -2148,5 +2160,154 @@ End
 Public Sub MenuSettingsJSONRPC_Click()
 
   FSettingsJSONRPC.Show
+
+End
+
+Public Sub MenuSettingsViera_Click()
+
+  FSettingsViera.Show
+
+End
+
+Public Sub MenuSettingsToon_Click()
+
+  FSettingsToon.Show
+
+End
+
+Public Sub MenuSettingsJerome_Click()
+
+  FSettingsJerome.Show
+
+End
+
+Public Sub MenuSettingsPushbullet_Click()
+
+  FSettingsPushbullet.Show
+
+End
+
+Public Sub MenuSettingsWiringPi_Click()
+
+  FSettingsWiringPi.Show
+
+End
+
+Public Sub MenuToolsToonCmdr_Click()
+
+  FToolsToonCmdr.Show
+
+End
+
+Public Sub MenuToolsKNXCmdr_Click()
+
+  FToolsKNXCmdr.Show
+
+End
+
+Public Sub MenuSettingsOpenWeatherMap_Click()
+
+  FSettingsOpenWeatherMap.Show
+
+End
+
+Public Sub MenuSettingsForecastIo_Click()
+
+  FSettingsForecastIo.Show
+
+End
+
+Public Sub MenuSettingsMySensors_Click()
+
+  FSettingsMySensors.Show
+
+End
+
+Public Sub MenuSettingsOmniksol_Click()
+
+  FSettingsOmniksol.Show
+
+End
+
+' open urls in browser
+Public Sub MenuGooglePlus_Click()
+
+  Try Desktop.Open("https://plus.google.com/u/0/communities/109060776024494564180")
+  If Error Then Message.Error("No internet connection available?")
+
+End
+
+Public Sub MenuGitHub_Click()
+
+  Try Desktop.Open("https:/github.com/DomotiGa")
+  If Error Then Message.Error("No internet connection available?")
+
+End
+
+Public Sub MenuProject_Click()
+
+  Try Desktop.Open("https://www.domotiga.nl")
+  If Error Then Message.Error("No internet connection available?")
+
+End
+
+Public Sub MenuDonateProject_Click()
+
+  Try Desktop.Open("https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=NT48KZRT7F3FA&lc=US&item_name=DomotiGa%20Open%20Source%20Project&item_number=domotiga&currency_code=EUR&bn=PP%2dDonationsBF%3abtn_donate_SM%2egif%3aNonHosted")
+  If Error Then Message.Error("No internet connection available?")
+
+End
+
+Public Sub Ipx800_Click()
+
+  FSettingsIpx800.Show
+
+End
+
+Public Sub MenuSettingsConrad8Relay_Click()
+
+  FSettingsConrad8Relay.Show
+
+End
+
+Public Sub MenuSettingsBroadcastUDP_Click()
+
+  FSettingsBroadcastUDP.Show
+
+End
+
+Public Sub MenuSettingsNetworkDetect_Click()
+
+  FSettingsNetworkDetect.Show
+
+End
+
+Public Sub MenuSettingsBuienradar_Click()
+
+  FSettingsBuienradar.Show()
+
+End
+
+Public Sub MenuSettingsRFLink_Click()
+
+  FSettingsRFLink.Show()
+
+End
+
+Public Sub UniPi_Click()
+
+  FSettingsUniPi.Show()
+
+End
+
+Public Sub MenuSSLCertificates_Click()
+
+  FEditSSLCertificates.Show()
+
+End
+
+Public Sub MenuSettingsModbus_Click()
+
+  FSettingsModbus.Show()
 
 End

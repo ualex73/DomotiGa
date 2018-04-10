@@ -16,7 +16,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Onkyo"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "Onkyo/Integra Receiver"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -36,7 +35,7 @@ Public ErrorWhere As String
 Private $bEnabled As Boolean
 Private $sTCPHost As String
 Private $iTCPPort As String
-Private $bOnkyoDebug As Boolean
+Private $bDebug As Boolean
 Private $sInterface As String
 Private $sSerPort As String
 Private $sBaud As String
@@ -47,7 +46,7 @@ Public hOnkyoSer As New SerialPort
 Public sBuffer As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -65,7 +64,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sInterface = cPl.Settings["type"]
   $sSerPort = cPl.Settings["serialport"]
   $sBaud = cPl.Settings["baudrate"]
-  $bOnkyoDebug = cPl.Settings["debug"]
+  $bDebug = cPl.Settings["debug"]
  
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
@@ -77,7 +76,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -98,7 +97,7 @@ Public Function ConnectTCP() As Boolean
   hOnkyo.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
 
@@ -106,7 +105,7 @@ Public Function ConnectTCP() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -137,14 +136,14 @@ Public Function ConnectSerial() As Boolean
   End With
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -169,7 +168,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Onkyo_Closed()
 
-  Main.WriteLog(LogLabel & "TCP socket closed.")
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
 
 End
 
@@ -183,7 +182,7 @@ Public Function Disconnect() As Boolean
   Try hOnkyoSer.Close
 
   If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
   Else
     Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
   Endif
@@ -224,7 +223,7 @@ Private Sub SendCmd(sCmd As String)
 
   Dim sStr As String = "ISCP\x00\x00\x00\x10\x00\x00\x00" & Chr(Len(sCmd)) & "\x01\x00\x00\x00!1" & sCmd & "\n"
 
-  ' IF $bOnkyoDebug THEN Main.WriteDebugLog(LogLabel & "Sending '") & sCmd & ("' to Receiver."))
+  ' IF $bDebug THEN Main.WriteDebugLog(LogLabel & "Sending '") & sCmd & ("' to Receiver."))
 
   If $sInterface = "tcp" Then
     Try Print #hOnkyo, sStr
@@ -233,7 +232,7 @@ Private Sub SendCmd(sCmd As String)
     Try Print #hOnkyoSer, sStr
     If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the serial port! -> " & Error.Text)
   Endif
-  If $bOnkyoDebug Then Main.WriteDebugLog(LogLabel & "> " & sCmd)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sCmd)
 
 End
 
@@ -242,21 +241,28 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCommand(sAddress As String, sValue As String)
 
+  Dim aCmd As String[]
+
   ' ignore sAddress, only fixed unit 1?
   Select Case LCase(sValue)
     Case "on"
-      SendCmd("PWR01")
+      SetCommand("power", "on", sAddress)
     Case "off"
-      SendCmd("PWR00")
+      SetCommand("power", "off", sAddress)
     Case Else
-      If $bOnkyoDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sValue)
+      aCmd = Split(sValue, " ")
+      If aCmd.Count = 2 Then
+        SetCommand(aCmd[0], aCmd[1], sAddress)
+      Else
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sValue)
+      Endif
+      SetCommand(sValue, sAddress)
   End Select
-
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' to control from xmlrpc or music page buttons
+' to control from json-rpc or music page buttons
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
 
@@ -264,6 +270,7 @@ Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
 
   ' commands here are for Integra DTR-40.1
   ' ignore sAddress, only fixed unit 1
+  sAddress = sAddress
   Select Case LCase(sCmd)
     Case "power"
       ' 00 - Off, 01 - On
@@ -372,7 +379,7 @@ Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
           SendCmd("ZVL" & Hex(Val(sValue)))
       End Select
     Case Else
-      If $bOnkyoDebug Then Main.WriteDebugLog(LogLabel & "Unsupported set command received: " & sCmd & " " & sValue)
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported set command received: " & sCmd & " " & sValue)
   End Select
 
 End
@@ -380,12 +387,22 @@ End
 Public Sub GetCommand(sCmd As String, sAddress As String)
 
   ' ignore sAddress, only fixed unit 1
+  sAddress = sAddress
   Select Case LCase(sCmd)
     Case "power"
       SendCmd("QSTN")
     Case Else
-      If $bOnkyoDebug Then Main.WriteDebugLog(LogLabel & "Unsupported get value received: " & sCmd)
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported get value received: " & sCmd)
   End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Onkyo_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 
@@ -441,7 +458,7 @@ Private Sub ParseLine(sBuf As String)
   If InStr(sBuf, "ISCP", 1) Then
     sStr = Mid(sBuf, InStr(sBuf, "!") + 2, 5)
     sCat = Left(sStr, 3)
-    If $bOnkyoDebug Then Main.WriteDebugLog(LogLabel & "< " & sStr)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sStr)
 
     Select Case sCat
       Case "PWR"
@@ -461,7 +478,7 @@ End
 Private Sub OnkyoSetValue(sItem As String, vValue As Variant)
 
   Main.SetGlobalVar("Onkyo_" & sItem, vValue)
-  If $bOnkyoDebug Then Main.WriteDebugLog(LogLabel & "Received Item: " & sItem & " Value: " & vValue)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received Item: " & sItem & " Value: " & vValue)
 
 End
 

@@ -40,9 +40,29 @@ Public Sub txtSerialPort_KeyPress()
 
 End
 
+Public Sub txtDownloadCode_KeyPress()
+
+  btnSave.Enabled = True
+
+End
+
 Public Sub chkDebug_Click()
 
   btnSave.Enabled = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ValidInput() As Boolean
+
+  If txtDownloadCode.Value < 1000 Or If txtDownloadCode.Value > 9999 Then
+    Balloon(("Please enter a valid pin of 4 digits (1000-9999)"), txtDownloadCode)
+    Return False
+  Endif
+
+  Return True
 
 End
 
@@ -50,13 +70,18 @@ Public Sub btnSave_Click()
 
   Dim rResult As Result
 
+  ' Only validate if it is enabled
+  If chkEnabled.Value Then
+    If Not ValidInput() Then Return
+  Endif
+
   ' save new Visonics settings
-  rResult = Main.hDB.Exec("UPDATE settings_visonic SET debug = &1, serialport = &2, enabled = &3 WHERE id = 1", chkDebug.Value, txtSerialPort.Text, chkEnabled.Value)
+  rResult = Main.hDB.Exec("UPDATE settings_visonic SET debug = &1, serialport = &2, enabled = &3, autosynctime = &4, forcestandardmode = &5, motiontimeout = &6, sensorarmstatus = &7, downloadcode = &8, type = &9, tcphost = &{10}, tcpport = &{11} WHERE id = 1", chkDebug.Value, txtSerialPort.Text, chkEnabled.Value, chkAutosynctime.Value, chkForcestdmode.Value, sbMotiontimeout.Value, sbSensorarmstatus.Value, txtDownloadCode.Value, cmbType.Text, txtTCPHost.Text, txtTCPPort.Value)
 
   If Main.bServer Then
     Plugin.Restart("Visonic", 1)
   Else
-    Client.ModuleRestart("Visonic")
+    Client.Plugin_Restart("Visonic")
   Endif
 
   Me.Close
@@ -88,7 +113,15 @@ Private Sub LoadSettings(iRow As Integer) As Boolean
 
   If rResult.Count Then
     chkEnabled.Value = rResult!enabled
-    txtSerialPort.text = rResult!serialport
+    txtTCPPort.Text = rResult!tcpport
+    txtTCPHost.Text = rResult!tcphost
+    cmbType.Text = rResult!type
+    txtSerialPort.Text = rResult!serialport
+    txtDownloadCode.Text = rResult!downloadcode
+    chkAutosynctime.Value = rResult!autosynctime
+    chkForcestdmode.Value = rResult!forcestandardmode
+    sbMotiontimeout.Value = rResult!motiontimeout
+    sbSensorarmstatus.Value = rResult!sensorarmstatus
     chkDebug.Value = rResult!debug
     Return True
   Else
@@ -102,8 +135,88 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub EnableDisableSettings()
 
+  cmbType.Enabled = chkEnabled.Value
+  txtTCPHost.Enabled = chkEnabled.Value
+  txtTCPPort.Enabled = chkEnabled.Value
   txtSerialPort.Enabled = chkEnabled.Value
+  chkAutosynctime.Enabled = chkEnabled.Value
+  chkForcestdmode.Enabled = chkEnabled.Value
+  sbMotiontimeout.Enabled = chkEnabled.Value
+  sbSensorarmstatus.Enabled = chkEnabled.Value
   chkDebug.Enabled = chkEnabled.Value
+  btnSerial.Enabled = chkEnabled.Value
+  txtDownloadCode.Enabled = chkEnabled.Value
+
+  If chkEnabled.Value Then SetButtons()
 
 End
 
+Public Sub btnSerial_Click()
+
+  Dim sSerialPort As String
+
+  sSerialPort = FToolsSerialPorts.Run()
+  If sSerialPort Then txtSerialPort.Text = sSerialPort
+  btnSave.Enabled = True
+
+End
+
+Public Sub chkAutosynctime_Click()
+
+  btnSave.Enabled = True
+
+End
+
+Public Sub chkForcestdmode_Click()
+
+  btnSave.Enabled = True
+
+End
+
+Public Sub sbMotiontimeout_KeyPress()
+
+  btnSave.Enabled = True
+
+End
+
+Public Sub sbSensorarmstatus_KeyPress()
+
+  btnSave.Enabled = True
+
+End
+
+Private Sub SetButtons()
+
+  If cmbType.Text = "tcp" Then
+    txtSerialPort.Enabled = False
+    txtTCPHost.Enabled = True
+    txtTCPPort.Enabled = True
+    btnSerial.Enabled = False
+  Endif
+  If cmbType.Text = "serial" Then
+    txtSerialPort.Enabled = True
+    txtTCPHost.Enabled = False
+    txtTCPPort.Enabled = False
+    btnSerial.Enabled = True
+  Endif
+
+End
+
+Public Sub cmbType_Click()
+
+  SetButtons()
+  btnSave.Enabled = True
+
+End
+
+Public Sub txtTCPHost_KeyPress()
+
+  btnSave.Enabled = True
+
+End
+
+Public Sub txtTCPPort_KeyPress()
+
+  btnSave.Enabled = True
+
+End

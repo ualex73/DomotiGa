@@ -1,0 +1,888 @@
+' Gambas module file
+
+' Description:
+' Util.module
+' This module provides generic routines available in all other modules and classes, and not putting it in the Main.module anymore
+
+' Development Status:
+' Just started
+
+' Credits:
+' Alexander Kuiper
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+' Following collection stores already downloaded files, normally no need to re-download
+Private $cDownloadedFiles As New Collection
+Private $aDay As String[]
+Private $aMonth As String[]
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Convert Unix Epoch to readable format 
+' UTC=True - then timezone info will be added
+' Hex=True - we expect a length of 8 and in hex format
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub TimeSinceEpoch(sTime As String, Optional bUTC As Boolean = False, Optional bHex As Boolean = False) As String
+
+  Dim gTime As Date
+
+  If bHex Then
+    If Len(sTime) <> 8 Then Return ""
+  Endif
+
+  ' calculate time since epoch
+  If bHex Then
+    gTime = DateAdd(Date(1970, 1, 1), gb.Second, Val("&H" & sTime & "&"))
+  Else
+    gTime = DateAdd(Date(1970, 1, 1), gb.Second, Val(sTime))
+  Endif
+
+  If bUTC Then
+    gTime = DateAdd(gTime, gb.Second, CInt(Main.fAstroAutoTimezone * 3600))
+  Endif
+
+  Return Format$(gTime, "yyyy/mm/dd hh:nn:ss")
+
+Catch ' some errors
+  Main.WriteDebugLog("[Util] ERROR: TimeSinceEpoch Failed (" & sTime & "), '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Retrieve a file from the internet, from the give URL.
+' The file will be download in the TmpFile location and
+' the temporary filename will be returned
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DownloadFile(SUrl As String, Optional bReDownload As Boolean = False) As String
+
+  Dim hHttpC As HttpClient
+  Dim sBuffer As String
+  Dim SFile As String
+
+  ' If we already downloaded the file, don't download it again
+  If Not bReDownload Then
+    If $cDownloadedFiles.Exist(sUrl) Then
+      Return $cDownloadedFiles[sUrl]
+    Endif
+  Endif
+
+  hHttpC = New HttpClient
+  hHttpC.URL = sUrl
+  hHttpC.Async = False
+  hHttpC.Timeout = 5
+  hHttpC.Get()
+
+  '--- check if succesfull ---
+  If hHttpC.Status < 0 Then
+    '--- something went wrong ---
+    Main.WriteDebugLog("[Util] ERROR: Unable to download URL '" & sUrl & "' Code=" & CStr(hHttpC.Status))
+    Return ""
+  Else
+    '--- success - read the data ---
+    If Lof(hHttpC) Then sBuffer = Read #hHttpC, Lof(hHttpC)
+  Endif
+
+  '--- do a final check on access right ---
+  If Trim(UCase(sBuffer)) = "ACCESS DENIED" Then
+    Main.WriteDebugLog("[Util] ERROR: Access denied to URL '" & sUrl & "'")
+    Return ""
+  Else
+    sFile = Temp() & "." & File.Ext(sUrl)
+    File.Save(sFile, sBuffer)
+    $cDownloadedFiles[sUrl] = sFile
+    Return sFile
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Use the Google Geocode API to search for location/cities and their latitude and longtitude
+' Returned is collection:
+' info - returned if a none-fatal error happens
+' error - fatal error
+' city - list of cities, if search is successfull
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GoogleGeoCodeSearch(sLocation As String) As Collection
+
+  Dim hGoogleGeocode As HttpClient
+  Dim sUrl As String
+  Dim sBuffer As String
+  Dim cResult As New Collection
+  Dim vResponse As Variant
+  Dim cItem As Collection
+  Dim cCity As New Collection[]
+
+  sUrl = "https://maps.googleapis.com/maps/api/geocode/json?address="
+
+  If Not sLocation Then
+    cResult["info"] = "NOLOCATION"
+    Return cResult
+  Endif
+
+  ' Create URL
+  sUrl = "http://maps.googleapis.com/maps/api/geocode/json?address=" & URL.Encode(sLocation) & "&" & "sensor=false"
+
+  ' Create HttpClient and configure  
+  hGoogleGeocode = New HttpClient
+  hGoogleGeocode.URL = sUrl
+  hGoogleGeocode.TimeOut = 5
+  hGoogleGeocode.Async = False
+  hGoogleGeocode.Post("", "")
+
+  If hGoogleGeocode.Status < 0 Then
+    ' Faillure fetching data or apikey is invalid
+    cResult["error"] = "Unable to connect Google Geocode\nCode=" & hGoogleGeocode.Status & ", HTTP=" & hGoogleGeocode.Code
+    Return cResult
+  Else
+    ' success or error - read the data
+    If Lof(hGoogleGeocode) Then sBuffer = Read #hGoogleGeocode, Lof(hGoogleGeocode)
+
+    ' Decode the retrieved JSON data
+    Try vResponse = JSON.Decode(sBuffer)
+    If Error Then
+      cResult["error"] = "Failed decoding Google Geocode data. ERROR=" & Error.Text
+      Return cResult
+    Endif
+
+    If Not vResponse.Exist("status") Then
+      cResult["error"] = "Invalid response from Google Geocode"
+      Return cResult
+    Endif
+
+    If vResponse["status"] <> "OK" And vResponse["status"] <> "ZERO_RESULTS" Then
+      cResult["error"] = "Google Geocode denied the request or it was invalid\nResponse=" & vResponse["status"]
+      Return cResult
+    Endif
+
+    If vResponse["status"] = "ZERO_RESULTS" Then
+      cResult["info"] = "NOTFOUND"
+      Return cResult
+    Endif
+
+    For Each cItem In vResponse["results"]
+      cCity.Add(["city": cItem["formatted_address"], "latitude": cItem["geometry"]["location"]["lat"], "longitude": cItem["geometry"]["location"]["lng"]])
+    Next
+
+    cResult["city"] = cCity
+    Return cResult
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return the Beaufort value, when the Mph is supplied
+' Used by multiple weather plugins
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function WindBeaufort(WindSpeed As Float) As Integer
+
+  Dim iBeaufort As Integer
+
+  If WindSpeed < 1 Then
+    iBeaufort = 0
+  Else If WindSpeed >= 1 And WindSpeed <= 3 Then
+    iBeaufort = 1
+  Else If WindSpeed > 3 And WindSpeed <= 7 Then
+    iBeaufort = 2
+  Else If WindSpeed > 7 And WindSpeed <= 12 Then
+    iBeaufort = 3
+  Else If WindSpeed > 12 And WindSpeed <= 17 Then
+    iBeaufort = 4
+  Else If WindSpeed > 17 And WindSpeed <= 24 Then
+    iBeaufort = 5
+  Else If WindSpeed > 24 And WindSpeed <= 30 Then
+    iBeaufort = 6
+  Else If WindSpeed > 30 And WindSpeed <= 38 Then
+    iBeaufort = 7
+  Else If WindSpeed > 38 And WindSpeed <= 46 Then
+    iBeaufort = 8
+  Else If WindSpeed > 46 And WindSpeed <= 54 Then
+    iBeaufort = 9
+  Else If WindSpeed > 54 And WindSpeed <= 63 Then
+    iBeaufort = 10
+  Else If WindSpeed > 63 And WindSpeed <= 72 Then
+    iBeaufort = 11
+  Else If WindSpeed > 72 Then
+    iBeaufort = 12
+  Endif
+
+  Return iBeaufort
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return a collection with keys being the serial ports and
+' the values being the serial/by-id name if present
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ScanSerialPorts(sPath As String, sFilter As String) As Collection
+
+  Dim sName, sRealName, sById As String
+  Dim aPortsById As String[]
+  Dim aSerialPorts As String[]
+  Dim cSerPort2ById As New Collection
+  Dim cResult As New Collection
+  Dim sByIdPath As String = "/dev/serial/by-id/"
+
+  ' get the serial devices with id's
+  cSerPort2ById.Clear()
+  Try aPortsById = Dir(sByIdPath)
+  If aPortsById Then
+    For Each sById In aPortsById
+      Exec ["readlink", "-f", sByIdPath &/ sById] To sRealName
+      sRealName = Trim(sRealName)
+      If Not sRealName Then sRealName = sName
+      cSerPort2ById.Add(sById, sRealName)
+    Next
+  Endif
+
+  ' fill array with available ports according to filter
+  Try aSerialPorts = Dir(sPath, sFilter)
+  ' only if devices found
+  If aSerialPorts Then
+    aSerialPorts.Sort
+    cResult.Clear
+    For Each sRealName In aSerialPorts
+      sRealName = sPath &/ sRealName
+      If cSerPort2ById.Exist(sRealName) Then
+        sById = cSerPort2ById[sRealName]
+        cSerPort2ById.Remove(sRealName)
+      Else
+        sById = "-"
+      Endif
+      cResult.Add(sById, sRealName)
+    Next
+  Endif
+
+  ' If there are any devices with id's left, add them still
+  For Each cSerPort2ById
+    sRealName = cSerPort2ById.Key
+    sById = cSerPort2ById[sRealName]
+    cResult.Add(sById, sRealName)
+  Next
+
+  Return cResult
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get ip address of this machine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Detect_IPAddr() As String[]
+
+  Dim sHost As String
+  Dim aIPs As String[]
+  Dim aResult As New String[]
+
+  ' inet 192.168.178.24/24 brd 192.168.178.255 scope global eth0
+  Shell "ip addr | grep brd | grep inet | awk -F ' ' '{print $2}' | awk -F '/' '{print $1}'" To sHost
+
+  aIPs = Split(Trim$(sHost), "\n")
+  For Each sHost In aIPs
+    If InStr(sHost, " ") Then sHost = Mid(sHost, 1, InStr(sHost, " "))
+    aResult.Add(sHost)
+  Next
+
+  Return aResult
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' determine broadcast address(es) of this machine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Detect_BroadcastAddr() As String[]
+
+  Dim sHost As String
+  Dim aIPs As String[]
+  Dim aResult As New String[]
+
+  Shell "ip addr | grep brd | grep inet | awk -F ' ' '{print $4}' | grep -v '^127\\.'" To sHost
+
+  aIPs = Split(Trim$(sHost), "\n")
+  For Each sHost In aIPs
+    If InStr(sHost, " ") Then sHost = Mid(sHost, 1, InStr(sHost, " "))
+    aResult.Add(sHost)
+  Next
+
+  Return aResult
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' check if command can be found on system
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ProgramExist(sProg As String) As Boolean
+
+  Dim sTemp As String
+  Dim iPos As Integer
+
+  iPos = String.InStr(sProg, " ")
+  If iPos Then sProg = String.Left(sProg, iPos - 1)
+
+  Shell "which " & sProg To sTemp
+
+  If Not sTemp Then Return False
+  Return Not (Trim$(sTemp) Like "which: *")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Returns True of False in string format for display
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DisplayBool(bSwitch As Variant) As String
+
+  If TypeOf(bSwitch) = gb.Boolean Then
+    Select bSwitch
+      Case True
+          Return "True"
+      Case Else
+          Return "False"
+    End Select
+  Else
+    If bSwitch Then
+      Return "True"
+    Else
+      Return "False"
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Convert XML Data to a JSON Collection/Array
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub XMLToJSON(sData As String) As JSONCollection
+
+  Dim XmlR As New XmlReader
+  Dim cData As New JSONCollection
+  Dim cElement As JSONCollection
+  Dim oTmp As Object
+  Dim iDepth As Integer = -1
+  Dim aLabel As New String[]
+  Dim iCnt As Integer
+  Dim sKey As String
+
+  ' Create new Reader and import the string into the Reader
+  XmlR = New XmlReader
+  Try XmlR.FromString(sData)
+
+  ' If we hit an error, return Null instead of a valid Collection
+  If Error Then Return Null
+
+  ' Loop through XML structure
+  While Not XmlR.Eof
+
+    Select Case XmlR.Node.Type
+      Case XmlReaderNodeType.None ' Do nothing - normally "<?xml ... >"
+      Case XmlReaderNodeType.Element
+
+        sKey = XmlR.Node.Name
+
+        If iDepth <> XmlR.Node.Depth Then
+          ' Resize label array if too small
+          If (XmlR.Node.Depth + 1) > aLabel.Count Then
+            aLabel.Resize(XmlR.Node.Depth + 1)
+          Endif
+
+          ' Add/modify the label
+          aLabel[XmlR.Node.Depth] = sKey
+
+          cElement = cData
+          For iCnt = 0 To XmlR.Node.Depth - 1
+            If cElement[aLabel[iCnt]] = Null Then
+              cElement[aLabel[iCnt]] = New JSONCollection
+            Endif
+
+            If TypeOf(cElement[aLabel[iCnt]]) = gb.Object And If Object.Type(cElement[aLabel[iCnt]]) = "JSONCollection[]" Then
+              cElement = cElement[aLabel[iCnt]][cElement[aLabel[iCnt]].Count - 1]
+            Else
+              cElement = cElement[aLabel[iCnt]]
+            Endif
+          Next
+
+          iDepth = XmlR.Node.Depth
+        Endif
+
+        If XmlR.Node.Attributes.Count Then
+          If Not cElement.Exist(sKey) Then
+            cElement[XmlR.Node.Name] = New JSONCollection
+            For Each XmlR.Node.Attributes
+              cElement[sKey].Add(XmlR.Node.Value, XmlR.Node.Name)
+            Next
+          Else
+            ' We need to convert the JSONCollection to JSONCollection[]
+            If TypeOf(cElement[sKey]) = gb.Object And If Object.Type(cElement[sKey]) = "JSONCollection" Then
+              oTmp = cElement[sKey]
+              cElement[sKey] = New JSONCollection[]
+              cElement[sKey].Add(oTmp)
+
+              ' Now add the new information to the array
+              oTmp = New JSONCollection
+              For Each XmlR.Node.Attributes
+                oTmp.Add(XmlR.Node.Value, XmlR.Node.Name)
+              Next
+              cElement[sKey].Add(oTmp)
+            Endif
+
+          Endif
+        Else
+          cElement.Add(Null, XmlR.Node.Name)
+        Endif
+
+      Case XmlReaderNodeType.Text ' #text#
+        If cElement.Exist(sKey) Then
+          ' Check if we got a null value, then just assign a value
+          If TypeOf(cElement[sKey]) = gb.Null Then
+            cElement[sKey] = XmlR.Node.Value
+          Else
+            ' Check if we got a JSONCollection[], then do some magic on it
+            If TypeOf(cElement[sKey]) = gb.Object And If Object.Type(cElement[sKey]) = "JSONCollection[]" Then
+              ' We just add it to the LAST entry in the Collection[]?
+              cElement[sKey][cElement[sKey].Count - 1].Add(XmlR.Node.Value, "#text")
+            Else
+              ' A normal JSONCollection, add the text
+              cElement[sKey].Add(XmlR.Node.Value, "#text")
+            Endif
+          Endif
+
+          If cElement.Count = 1 Then
+
+          Endif
+        Else
+          cElement[sKey] = XmlR.Node.Value
+        Endif
+      Case XmlReaderNodeType.EndElement
+        iDepth = XmlR.Node.Depth
+
+    End Select
+
+    ' Read next XML node
+    XmlR.Read()
+  Wend
+
+  ' Return created JSON Collection
+  Return cData
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Pad a string from the left side
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub LeftPad(vVar As Variant, iLength As Integer, sPad As String) As String
+
+  vVar = CStr(vVar)
+
+  While (Len(vVar) < iLength)
+    vVar = sPad & vVar
+  Wend
+
+  Return vVar
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Format as a HTTP/SMTP date like 'Sun, 06 Sep 2015 09:14:47 GMT'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub FormatHTTPDate(Optional dDate As Date = 0) As String
+
+  If Not dDate Then dDate = Now
+  dDate -= Frac(Date(Now)) ' Go to GMT
+
+  If Not $aDay Then
+    $aDay = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    $aMonth = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  Endif
+
+  Return $aDay[WeekDay(dDate)] & ", " & Format(Day(dDate), "00") & " " & $aMonth[Month(dDate) - 1] & " " & Year(dDate) & " " & Format(Time(dDate), "hh:nn:ss") & " GMT"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Encrypt password in DomotiGa style
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PasswordEncrypt(sPassword As String, Optional sType As String = "SHA256") As String
+
+  Dim sEncrypt As String
+
+  ' We don't encrypt blank passwords
+  If Not sPassword Then Return ""
+
+  ' Choose the right encryption type
+  Select UCase(sType)
+    Case "MD5"
+      sEncrypt = Crypt.MD5(sPassword)
+      Return "MD5" & Mid(sEncrypt, 4, 8) & Mid(sEncrypt, 13)
+    Case "SHA256"
+      sEncrypt = Crypt.SHA256(sPassword)
+      Return "SHA256" & Mid(sEncrypt, 4, 13) & Mid(sEncrypt, 18)
+    Case "SHA512"
+      sEncrypt = Crypt.SHA512(sPassword)
+      Return "SHA512" & Mid(sEncrypt, 4, 13) & Mid(sEncrypt, 18)
+    Case Else ' Other types we don't support
+      Return ""
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Verify if password and encrypted match. True=Match, False=Not Match
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PasswordVerify(sPassword As String, sEncrypt As String) As Boolean
+
+  ' DES - Key=2 + Length=11:
+  ' BTQI7IFR8QNbk
+  ' DomotiGa: DESBTQI7IFR8QNbk
+
+  ' MD5 - $1$ + Key=8 + $ + Length=22:
+  ' $1$8P0uTCnG$UMlGd7URvf9JWMTnlNsSE/
+  ' DomotiGa: MD58P0uTCnGUMlGd7URvf9JWMTnlNsSE/
+
+  ' SHA256 - $5$ + Key=13 + $ + Length=43:
+  ' $5$Cfba75C/JZWer$3lrMaVnu/Qik7O8gAU.vhUOwbqXoJPXw00Gj57GmB17
+  ' DomotiGa: SHA256Cfba75C/JZWer3lrMaVnu/Qik7O8gAU.vhUOwbqXoJPXw00Gj57GmB17
+
+  ' SHA512 - $6$ + Key=13 + $ + Length=86:
+  ' $6$z3tRzD5ZPYgnY$vjDr2QEoHLQ7FcEPNWLrfhTHF/nOHrPaMaYc/taPUVEzoK8wDaTA6BZFmdlAuRRYoMAe44Ld5JoOCe6SH5JBw0
+  ' DomotiGa: SHA512z3tRzD5ZPYgnYvjDr2QEoHLQ7FcEPNWLrfhTHF/nOHrPaMaYc/taPUVEzoK8wDaTA6BZFmdlAuRRYoMAe44Ld5JoOCe6SH5JBw0
+
+  If Not sPassword Then Return False
+  If Not sEncrypt Then Return False
+
+  If InStr(sEncrypt, "MD5") = 1 Then
+    If Len(sEncrypt) <> 33 Then Return False
+    sEncrypt = "$1$" & Mid(sEncrypt, 4, 8) & "$" & Mid(sEncrypt, 12)
+  Else If InStr(sEncrypt, "SHA256") = 1 Then
+    If Len(sEncrypt) <> 62 Then Return False
+    sEncrypt = "$5$" & Mid(sEncrypt, 7, 13) & "$" & Mid(sEncrypt, 20)
+  Else If InStr(sEncrypt, "SHA512") = 1 Then
+    If Len(sEncrypt) <> 105 Then Return False
+    sEncrypt = "$6$" & Mid(sEncrypt, 7, 13) & "$" & Mid(sEncrypt, 20)
+  Else
+    Return False
+  Endif
+
+  ' The crypt check does an inverse. False=GOOD True=WRONG
+  If Crypt.Check(sPassword, sEncrypt) Then
+    Return False
+  Else
+    Return True
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub JSONWriteValue(sStream As Stream, vVal As Variant)
+  
+  Dim sStr As String
+  Dim iPos As Integer
+  Dim aArray As Array
+  Dim cCol As Collection
+  
+  Select Case TypeOf(vVal)
+    
+    Case gb.Null
+      Write #sStream, "null"
+    
+    Case gb.Boolean
+      If vVal Then
+        Write #sStream, "true"
+      Else
+        Write #sStream, "false"
+      Endif
+    
+    Case gb.Byte, gb.Short, gb.Integer, gb.Long, gb.Float
+      Write #sStream, CStr(vVal)
+    
+    Case gb.Date
+      Write #sStream, Chr$(34) & CStr(vVal) & Chr$(34)
+    
+    Case gb.String
+      sStr = Quote(vVal)
+      Do
+        iPos = InStr(sStr, "\\", iPos + 1)
+        If iPos = 0 Then Break
+        If Mid$(sStr, iPos + 1, 1) = "x" Then
+          Mid$(sStr, iPos, 4) = "\\u00" & Mid$(sStr, iPos + 2, 2)
+        Else
+          Inc iPos
+        Endif
+      Loop
+      Write #sStream, sStr
+    
+    Case Else
+      If vVal Is Array Then
+        aArray = vVal
+        Write #sStream, "["
+        For iPos = 0 To vVal.Max
+          If iPos Then Write #sStream, ", "
+          JSONWriteValue(sStream, vVal[iPos])
+        Next
+        Write #sStream, "]"
+      Else If vVal Is Collection Then
+        cCol = vVal
+        Write #sStream, "{"
+        For Each vVal In cCol
+          If iPos Then Write #sStream, ", "
+          JSONWriteValue(sStream, cCol.Key)
+          Write #sStream, ": " 
+          JSONWriteValue(sStream, vVal)
+          Inc iPos
+        Next
+        Write #sStream, "}"
+      Endif
+    
+  End Select
+    
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Optimized JSON.Encode, can be dropped in Gambas 4.x
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub JSONEncode(Value As Variant) As String
+
+  Dim sStream As Stream
+  Dim sStr As String
+
+  sStream = Open String For Write
+  JSONWriteValue(sStream, Value)
+  sStr = Close sStream
+  Return sStr
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Convert byte array to a readable string
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ByteToHex(aData As Byte[], Optional bSpace As Boolean = True) As String
+
+  Dim sStr As String = ""
+  Dim bData As Byte
+
+  If aData And If aData.Count Then
+    ' Add a space between hex values
+    If bSpace Then
+      For Each bData In aData
+        sStr &= IIf(sStr, " ", "") & Hex$(bData, 2)
+      Next
+    Else
+      For Each bData In aData
+        sStr &= Hex$(bData, 2)
+      Next
+    Endif
+  Endif
+
+  Return sStr
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display weekday in string
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DisplayWeekday(bDay As Byte) As String
+
+  Select bDay
+    Case 0
+      Return "Monday"
+    Case 1
+      Return "Tuesday"
+    Case 2
+      Return "Wednesday"
+    Case 3
+      Return "Thursday"
+    Case 4
+      Return "Friday"
+    Case 5
+      Return "Saturday"
+    Case 6
+      Return "Sunday"
+    Case Else
+      Return "UNKNOWN"
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Check the existance of pid files in ~/domotiga/log, to check no other
+' Server instance is running. We run 'true' if we detect another instance.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CheckDomotiGaPid() As String
+
+  Dim hFile As File
+  Dim sPid As String
+  Dim sName As String
+
+  ' We run in client mode, so ignore pid checks
+  If Not Main.bServer Then Return False
+
+  sPid = ""
+
+  ' Check if the DomotiGa GUI is running
+  If Exist(Main.sBaseDir &/ "logs" &/ "DomotiGa3.pid") Then
+    Try hFile = Open Main.sBaseDir &/ "logs" &/ "DomotiGa3.pid" For Input
+    Try Line Input #hFile, sPid
+    Try Close #hFile
+
+    ' Check if we got a valid pid
+    If sPid And If IsNumber(sPid) Then
+
+      If Exist("/proc/" & sPid & "/comm") Then
+        Try hFile = Open "/proc/" & sPid & "/comm" For Input
+        Try Line Input #hFile, sName
+        Try Close #hFile
+
+        ' Return true if this is a Gambas3 process
+        If sName = "gbr3" Or If sName = "gbx3" Then Return "DomotiGa3"
+      Endif
+    Endif
+
+  Endif
+
+  sPid = ""
+
+  ' Check if the DomotiGa Server is running
+  If Exist(Main.sBaseDir &/ "logs" &/ "DomotiGaServer3.pid") Then
+    Try hFile = Open Main.sBaseDir &/ "logs" &/ "DomotiGaServer3.pid" For Input
+    Try Line Input #hFile, sPid
+    Try Close #hFile
+
+    ' Check if we got a valid pid
+    If sPid And If IsNumber(sPid) Then
+
+      If Exist("/proc/" & sPid & "/comm") Then
+        Try hFile = Open "/proc/" & sPid & "/comm" For Input
+        Try Line Input #hFile, sName
+        Try Close #hFile
+
+        ' Return true if this is a Gambas3 process
+        If sName = "gbr3" Or If sName = "gbx3" Then Return "DomotiGaServer3"
+      Endif
+    Endif
+
+  Endif
+
+  Return ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CreateDomotiGaPid()
+
+  Dim hFile As File
+
+  ' We run in client mode, don't do anything
+  If Not Main.bServer Then Return
+
+  ' Write our pid to the file
+  Try hFile = Open Main.sBaseDir &/ "logs" &/ Application.Name & ".pid" For Write Append
+  Try Print #hFile, Application.Id
+  Try Close #hFile
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Remove pid file, at end of the application
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DeleteDomotiGaPid()
+
+  Try Kill Main.sBaseDir &/ "logs" &/ Application.Name & ".pid"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generate a Two Factor Authentication Secret (TFA Secret)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub TFASetupSecret() As String
+
+  Dim sTFASecret, sStr As String
+
+  'call python createsecret in domotiga basedir/tfa
+  sStr = "python " & Main.sBaseDir &/ "tfa/createsecret.py"
+  Shell sStr To sTFASecret
+
+  ' remove new line (no /n)
+  sTFASecret = Left(sTFASecret, Len(sTFASecret) - 1)
+
+ Return sTFASecret
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generate a Two Factor Authentication URI (TFA URI) to generate QR code.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub TFAProvisioningURI(sTFASecret As String, sUserName As String) As String
+
+  Dim sURI, sStr As String
+
+  'call python createsecret in domotiga basedir/tfa
+  sStr = "python " & Main.sBaseDir &/ "tfa/provisioninguri.py" & " " & sTFASecret & " " & sUserName
+  Shell sStr To sURI
+
+  ' remove new line (no /n)
+  sURI = Left(sURI, Len(sURI) - 1)
+  ' add label
+  sURI &= "&issuer=DomotiGa"
+
+  Return sURI
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generate a Two Factor Authentication QR code.
+' See also api info https://developers.google.com/chart/infographics/docs/qr_codes#syntax
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub TFAQR(sURI As String, sMethod As String) As String
+
+  Dim sStr1, sStr2 As String
+  Dim sTFAQR As String
+
+  sTFAQR = Temp$
+  'sTFAQR = sTFAQR & "chart.png"
+
+  If sMethod = "Google" Then
+    'sMethod = "google"
+    'create TFA QR code
+    'example:
+    'https://chart.googleapis.com/chart?cht=qr&chs=250x250&chl=otpauth%3A%2F%2Ftotp%2Falice%40google.com%3Fsecret%3DJBSWY3DPEHPK3PXP
+    'wget "https://chart.googleapis.com/chart?cht=qr&chs=200x200&chl=otpauth://totp/rakker?secret=OGFVFHWNZS73GCZ&issuer=DomotiGa" -O /tmp/gambas.1001/73778/1.tmp
+    sStr1 = Shell$("https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl=" & sURI)
+    sStr2 = "wget " & sStr1 & " -O " & sTFAQR
+    Shell sStr2 Wait
+  Else If sMethod = "system" Then
+    'not yet implemented. Generate qr by shell command
+  Else
+    'error - should never happen
+  Endif
+
+  Return sTFAQR
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Verify TFA code (two factor authentication) given secret and 6 digit code of app. Return true or false.
+' note: returning boolean seems not to work as returned results is interpreted someway to "true". Therefore string choosen.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub TFAVerify(sTFASecret As String, iTFACode As Integer) As String
+
+  Dim sTFAVerify, sStr As String
+
+  ' call python createsecret in domotiga basedir/tfa
+  sStr = "python " & Main.sBaseDir &/ "tfa/verifytfa.py" & " " & sTFASecret & " " & iTFACode
+  Shell sStr To sTFAVerify
+
+  ' remove new line (no /n)
+  sTFAVerify = Left(sTFAVerify, Len(sTFAVerify) - 1)
+
+  Return sTFAVerify
+
+End
+

@@ -5,11 +5,6 @@
   Background = Color.TextBackground
   Text = ("Devices")
   Icon = Picture["icons/light-on.png"]
-  { tbvDevices TableView
-    MoveScaled(1,5,89,52)
-    Mode = Select.Single
-    Header = GridView.Horizontal
-  }
   { ToolBar1 ToolBar
     MoveScaled(0,0,93,4)
     { HBox1 HBox
@@ -36,15 +31,20 @@
         Expand = True
       }
       { chkHidden CheckBox
-        MoveScaled(60,1,14,3)
+        MoveScaled(60,0,14,4)
         Font = Font["-2"]
         Text = ("Show Hidden")
       }
       { chkDisabled CheckBox
-        MoveScaled(75,1,14,3)
+        MoveScaled(75,0,14,4)
         Font = Font["-2"]
         Text = ("Show Disabled")
       }
     }
+  }
+  { gvDevices GridView
+    MoveScaled(1,5,89,52)
+    Mode = Select.Multiple
+    Header = GridView.Horizontal
   }
 }

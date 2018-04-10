@@ -19,7 +19,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "YouLess"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "YouLess"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -28,6 +27,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[YouLess] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -38,14 +38,14 @@ Public ErrorWhere As String
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private $bEnabled As Boolean
 Private $iPolltime As Integer
-Private $bYouLessDebug As Boolean
+Private $bDebug As Boolean
 
 Private hYouLess As New HttpClient
 Private tYouLess As Timer
-Public cData As New Collection
+Private $cData As New Collection
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -59,15 +59,23 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   ' Copy configuration items locally
   $bEnabled = cPl.Settings["enabled"]
   $iPollTime = cPl.Settings["polltime"]
-  $bYouLessDebug = cPl.Settings["debug"]
- 
+  $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("YouLess Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
   ' Connect/Initialize connection
   Connect()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -92,7 +100,7 @@ Public Function Connect() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   Return False
 
 End
@@ -111,7 +119,7 @@ Public Function Disconnect() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   Return False
 
 End
@@ -133,24 +141,20 @@ Private Sub FindDevices()
   Dim sUrl As String
   Dim rResult As Result
 
-  rResult = Devices.FindDevicesForInterface(Devices.FindInterface("YouLess Interface"))
-  If rResult.Available Then
-    If rResult.Count Then
-      If $bYouLessDebug Then Main.WriteDebugLog(LogLabel & rResult.Count & " device(s) found.")
-      For Each rResult
-        Try cData.Remove(rResult!address)
-        sUrl = "http://" & rResult!address & "/a?f=j"
-        hYouLess = New HttpClient As "hYouLess"
-        hYouLess.URL = sUrl
-        hYouLess.TimeOut = 8
-        hYouLess.Tag = rResult!address
-        hYouLess.Async = True
-        hYouLess.Get()
-        If $bYouLessDebug Then Main.WriteDebugLog(LogLabel & "Fetching '" & sUrl & "'")
-      Next
-    Else
-      Main.WriteDebugLog(LogLabel & "No YouLess device(s) found.")
-    Endif
+  rResult = Devices.FindDevicesForInterface(InterfaceId, Instance)
+  If rResult And If rResult.Available Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & rResult.Count & " device(s) found.")
+    For Each rResult
+      Try $cData.Remove(rResult!address)
+      sUrl = "http://" & rResult!address & "/a?f=j"
+      hYouLess = New HttpClient As "hYouLess"
+      hYouLess.URL = sUrl
+      hYouLess.TimeOut = 8
+      hYouLess.Tag = rResult!address
+      hYouLess.Async = True
+      hYouLess.Get()
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Fetching '" & sUrl & "'")
+    Next
   Else
     Main.WriteDebugLog(LogLabel & "No YouLess device(s) found.")
   Endif
@@ -168,12 +172,12 @@ Public Sub hYouLess_Read()
   Dim sData, sBuffer As String
 
   If Lof(Last) Then sBuffer = Read #Last, Lof(Last)
-  If cData[Last.Tag] Then
-    sData = cData[Last.Tag] & sBuffer
+  If $cData[Last.Tag] Then
+    sData = $cData[Last.Tag] & sBuffer
   Else
     sData = sBuffer
   Endif
-  cData[Last.Tag] = sData
+  $cData[Last.Tag] = sData
 
 End
 
@@ -186,8 +190,8 @@ Public Sub hYouLess_Finished()
 
   Select hYouLess.Code
     Case 200
-      sBuffer = cData[Last.Tag]
-      If $bYouLessDebug Then Main.WriteDebugLog(LogLabel & "Received '" & Replace(sBuffer, "\n", "") & "' for device with address '" & Last.Tag & "'")
+      sBuffer = $cData[Last.Tag]
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received '" & Replace(sBuffer, "\n", "") & "' for device with address '" & Last.Tag & "'")
       ParseData(Last.Tag, sBuffer)
     Case Else
       Main.WriteDebugLog(LogLabel & "Unknown error occured while trying to get YouLess data for device with address '" & Last.Tag & "'! HTTP=" & Last.Code & ", Buffer=" & sBuffer)
@@ -210,7 +214,7 @@ Private Sub ParseData(sAddress As String, sData As String)
   sCnt = Replace(Trim(cData["cnt"]), ",", ".")
   sPwr = cData["pwr"]
   sCon = cData["con"]
-  If $bYouLessDebug Then
+  If $bDebug Then
     Main.WriteDebugLog(LogLabel & "Device: " & sAddress)
     Main.WriteDebugLog(LogLabel & "Counter: " & sCnt & " kWh")
     Main.WriteDebugLog(LogLabel & "Usage: " & sPwr & " Watt")
@@ -218,16 +222,16 @@ Private Sub ParseData(sAddress As String, sData As String)
   Endif
 
   ' find device id
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("YouLess Interface"), "YOULESS")
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, "YOULESS")
   ' update device
   If iDeviceId Then
-    Devices.ValueUpdateExt(iDeviceId, 1, sCnt, Devices.ValueType_Energy_kWh)
-    Devices.ValueUpdateExt(iDeviceId, 2, sPwr, Devices.ValueType_Power_Watt)
-    Devices.ValueUpdateExt(iDeviceId, 3, sCon)
+    Devices.ValueUpdate(iDeviceId, 1, sCnt, Devices.ValueType_Energy_kWh)
+    Devices.ValueUpdate(iDeviceId, 2, sPwr, Devices.ValueType_Power_Watt)
+    Devices.ValueUpdate(iDeviceId, 3, sCon)
   Endif
 
 Catch
-  Main.WriteDebugLog(LogLabel & "Error parsing YouLess data " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "Error parsing YouLess data '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 

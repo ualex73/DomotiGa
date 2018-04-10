@@ -21,7 +21,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "LIRC"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "LIRC"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Timo Sariwating"
@@ -41,13 +40,13 @@ Public ErrorWhere As String
 Private $bEnabled As Boolean
 Private $sTCPHost As String
 Private $iTCPPort As String
-Private $bLIRCDebug As Boolean
+Private $bDebug As Boolean
 
 Public hLIRC As New Socket
 Public sBuffer As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -62,7 +61,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bEnabled = cPl.Settings["enabled"]
   $sTCPHost = cPl.Settings["tcphost"]
   $iTCPPort = cPl.Settings["tcpport"]
-  $bLIRCDebug = cPl.Settings["debug"]
+  $bDebug = cPl.Settings["debug"]
  
   ' Connect/Initialize connection
   Connect()
@@ -70,7 +69,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -91,7 +90,7 @@ Public Function Connect() As Boolean
   hLIRC.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
 
@@ -99,7 +98,7 @@ Public Function Connect() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -118,7 +117,7 @@ End
 
 Public Sub LIRC_Closed()
 
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed. (is lircd still running?)")
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
 
 End
 
@@ -130,7 +129,7 @@ Public Function Disconnect() As Boolean
   ' try to close the connection
   Try hLIRC.Close
 
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
 
   ' all ok
   Return True
@@ -165,13 +164,13 @@ Private Sub ParseLine(sStr As String)
   Dim aScan As String[]
   Dim sRemote, sButton As String
 
-  If $bLIRCDebug Then Main.WriteDebugLog(LogLabel & "Parse String: " & sStr)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Parse String: " & sStr)
   Try aScan = Scan(sStr, "* * * *")
   If Not Error Then
     sRemote = aScan[3]
     sButton = aScan[2]
     If aScan[1] = "00" Then Events.CheckIRRemoteEvents(sRemote, sButton)
-    If $bLIRCDebug Then Main.WriteDebugLog(LogLabel & "Remote: " & sRemote & " Button: " & sButton)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Remote: " & sRemote & " Button: " & sButton)
   Endif
 
 End

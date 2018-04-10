@@ -6,10 +6,16 @@
 ' www.openzwave.com / code.google.com/p/open-zwave
 
 ' Development Status:
-' Almost finished
+' Finished
+
+' Links:
+' http://www.openzwave.com
+' http://code.google.com/p/open-zwave
+' http://www.pepper1.net/zwavedb/
 
 ' Credits:
 ' Thanks to Willem-Jan from ezHome.nl, Enver from Tane.nl and Jaren for the open-zwave wrapper code.
+' The code is rewritten by Alexander Kuiper
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -20,16 +26,17 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "OpenZWave"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "OpenZWave Z-Wave"
 Public PluginVersion As String = "2.00"
 Public PluginAuthor As String = "Alexander Kuiper"
 Public PluginProtocols As String[]
-Public PluginMaxInstances As Integer = 1
+Public PluginMaxInstances As Integer = 9
 Public PluginRunTask As Boolean = True
+Public PluginType As Integer = Plugin.Type_OpenZWave
 
 Public KeyName As String
 Public LogLabel As String = "[OpenZWave] "
+Public InterfaceId As Integer = 0
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -41,6 +48,7 @@ Public ErrorWhere As String
 Private $bEnabled As Boolean
 Private $sSerPort As String
 Private $bDebug As Boolean
+Private $bLibDebug As Boolean
 Private $iPollTime As Integer
 Private $sPollTimeListening As String
 Private $bEnablePollListening As Boolean
@@ -56,9 +64,7 @@ Public bAllQueried As Boolean
 Public sAPIVersion As String
 Public sSDKVersion As String
 
-Public hJSONRPC As JsonRpcServer
 Private ZWaveNetwork As New Collection
-Private $sCurrentMethod As String
 
 ' Timer variables to cancel certain commands/states in open-zwave
 Public tSerialConnected As Timer
@@ -69,9 +75,52 @@ Public tZWaveLED As New Timer
 Public tOZWKeepAlive As New Timer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Other Variable definitions like sockets, timers, etc
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public hServerSocket As CServerSocket
+Private $cClients As New Object[]
+Private $sCurrentMethod As String
+Private $cMethods As New String[]
+Private $cIPWhiteList As New String[]
+Private $iReply As Integer
+Private $vReply As Variant
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Constants
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Const JSONRPC_PARSEERROR As Integer = -32700
+Private Const JSONRPC_INVALIDREQUEST As Integer = -32600
+Private Const JSONRPC_METHODNOTFOUND As Integer = -32601
+Private Const JSONRPC_INVALIDPARAMS As Integer = -32602
+Private Const JSONRPC_INTERNALERROR As Integer = -32603
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Internal structures
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Struct OpenZWaveEntry
+  NodeId As Integer
+  Basic As Integer
+  Generic As Integer
+  Specific As Integer
+  DeviceType As String
+  Listening As Boolean
+  FrequentListening As Boolean
+  Beaming As Boolean
+  Routing As Boolean
+  Security As Boolean
+  MaxBaudRate As Integer
+  Version As Integer
+  Instances As Collection
+End Struct
+
+Public Struct OpenZWaveEntryValue
+  Values As Collection
+End Struct
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Version - needs to match the domozwave library version
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public sLibDomoZwave As String = "DomoZWave version 2.00"
+Public sLibDomoZwave As String = "DomoZWave version 2.10"
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' The wrapper for the OpenZWave library
@@ -86,14 +135,14 @@ Private Extern DomoZWave_Init(deviceConfigPath As String, zwConfigPath As String
 Private Extern DomoZWave_Destroy()
 
 ' Enable or disable logging (OZW_Log.txt) - after the initial Init one
-Private Extern DomoZWave_Log(logging As Boolean)
+'Private Extern DomoZWave_Log(logging As Boolean)
 
 ' Add or remove SerialPorts
 Private Extern DomoZWave_AddSerialPort(serialPort As String, jsonrpcurl As String, logging As Boolean)
 Private Extern DomoZWave_RemoveSerialPort(serialPort As String)
 
 ' Write zwcfg*xml, normally not needed
-Private Extern DomoZWave_WriteConfig(home As Integer)
+'Private Extern DomoZWave_WriteConfig(home As Integer)
 
 ' Retrieve wrapper and controller information
 Private Extern DomoZWave_Version() As String
@@ -103,6 +152,8 @@ Private Extern DomoZWave_GetLibraryTypeName(home As Integer) As String
 Private Extern DomoZWave_ControllerType(home As Integer) As String
 
 ' Enable/disable polling of the devices by open-zwave
+'Private Extern DomoZWave_GetPollInterval() As Integer
+Private Extern DomoZWave_SetPollInterval(msecinterval As Integer, intervalbetweenpolls As Boolean)
 Private Extern DomoZWave_EnablePolling(home As Integer, node As Integer, polltime As Integer)
 Private Extern DomoZWave_DisablePolling(home As Integer, node As Integer)
 
@@ -113,12 +164,12 @@ Private Extern DomoZWave_GetNodeProductName(home As Integer, node As Integer) As
 Private Extern DomoZWave_GetNodeName(home As Integer, node As Integer) As String
 Private Extern DomoZWave_GetNodeLocation(home As Integer, node As Integer) As String
 Private Extern DomoZWave_GetNodeManufacturerId(home As Integer, node As Integer) As String
-Private Extern DomoZWave_GetNodeProductType(home As Integer, node As Integer) As String
-Private Extern DomoZWave_GetNodeProductId(home As Integer, node As Integer) As String
-Private Extern DomoZWave_SetNodeManufacturerName(home As Integer, node As Integer, manufacturerName As String)
-Private Extern DomoZWave_SetNodeProductName(home As Integer, node As Integer, productName As String)
-Private Extern DomoZWave_SetNodeName(home As Integer, node As Integer, nodeName As String)
-Private Extern DomoZWave_SetNodeLocation(home As Integer, node As Integer, nodeLocation As String)
+'Private Extern DomoZWave_GetNodeProductType(home As Integer, node As Integer) As String
+'Private Extern DomoZWave_GetNodeProductId(home As Integer, node As Integer) As String
+'Private Extern DomoZWave_SetNodeManufacturerName(home As Integer, node As Integer, manufacturerName As String)
+'Private Extern DomoZWave_SetNodeProductName(home As Integer, node As Integer, productName As String)
+'Private Extern DomoZWave_SetNodeName(home As Integer, node As Integer, nodeName As String)
+'Private Extern DomoZWave_SetNodeLocation(home As Integer, node As Integer, nodeLocation As String)
 Private Extern DomoZWave_GetNodeLibraryVersion(home As Integer, node As Integer) As String
 Private Extern DomoZWave_GetNodeProtocolVersion(home As Integer, node As Integer) As String
 Private Extern DomoZWave_GetNodeApplicationVersion(home As Integer, node As Integer) As String
@@ -139,30 +190,19 @@ Private Extern DomoZWave_SetConfigParam(home As Integer, node As Integer, param 
 Private Extern DomoZWave_SetConfigParamList(home As Integer, node As Integer, param As Integer, value As String) As Boolean
 Private Extern DomoZWave_RequestConfigParam(home As Integer, node As Integer, param As Integer)
 Private Extern DomoZWave_RequestAllConfigParams(home As Integer, node As Integer)
-Private Extern DomoZWave_GetNodeConfigList(home As Integer, node As Integer) As String
-Private Extern DomoZWave_GetNodeConfigLabel(home As Integer, node As Integer, item As Integer) As String
-Private Extern DomoZWave_GetNodeConfigHelp(home As Integer, node As Integer, item As Integer) As String
-Private Extern DomoZWave_GetNodeConfigValue(home As Integer, node As Integer, item As Integer) As String
-Private Extern DomoZWave_GetNodeConfigValueType(home As Integer, node As Integer, item As Integer) As String
-Private Extern DomoZWave_GetNodeConfigValueList(home As Integer, node As Integer, item As Integer) As String
-Private Extern DomoZWave_GetNodeConfigValueReadOnly(home As Integer, node As Integer, item As Integer) As Boolean
+Private Extern DomoZWave_GetNodeConfig(home As Integer, node As Integer) As String
 
 ' Retrieve the node neighborhood list or commandclass list
 Private Extern DomoZWave_GetNodeNeighborsList(home As Integer, node As Integer) As String
 Private Extern DomoZWave_GetNodeCommandClassList(home As Integer, node As Integer, Optional instance As Integer) As String
 
 ' Request or update the group/association of a node
-Private Extern DomoZWave_GetNodeGroupCount(home As Integer, node As Integer) As Integer
-Private Extern DomoZWave_GetNodeGroupList(home As Integer, node As Integer, ogroup As Integer) As String
-Private Extern DomoZWave_GetNodeGroupMax(home As Integer, node As Integer, ogroup As Integer) As Integer
-Private Extern DomoZWave_GetNodeGroupLabel(home As Integer, node As Integer, ogroup As Integer) As String
+Private Extern DomoZWave_GetNodeGroup(home As Integer, node As Integer) As String
 Private Extern DomoZWave_AddAssociation(home As Integer, node As Integer, group As Integer, othernode As Integer)
 Private Extern DomoZWave_RemoveAssociation(home As Integer, node As Integer, group As Integer, othernode As Integer)
 
 ' Request or set UserCode of a node
-Private Extern DomoZWave_GetNodeUserCodeCount(home As Integer, node As Integer) As Integer
-Private Extern DomoZWave_GetNodeUserCodeLabel(home As Integer, node As Integer, usercode As Integer) As String
-Private Extern DomoZWave_GetNodeUserCodeValue(home As Integer, node As Integer, usercode As Integer) As String
+Private Extern DomoZWave_GetNodeUserCode(home As Integer, node As Integer) As String
 Private Extern DomoZWave_SetNodeUserCodeStart(home As Integer, node As Integer) As Boolean
 Private Extern DomoZWave_SetNodeUserCodeStop(home As Integer) As Boolean
 Private Extern DomoZWave_SetNodeUserCodeRemove(home As Integer, node As Integer, usercode As Integer) As Boolean
@@ -179,43 +219,40 @@ Private Extern DomoZWave_ControllerHardReset(home As Integer)
 Private Extern DomoZWave_CancelControllerCommand(home As Integer) As Boolean
 Private Extern DomoZWave_AddDevice(home As Integer) As Boolean
 Private Extern DomoZWave_RemoveDevice(home As Integer) As Boolean
-Private Extern DomoZWave_AssignReturnRoute(home As Integer, node As Integer, destnode As Integer) As Boolean
-Private Extern DomoZWave_DeleteAllReturnRoutes(home As Integer, node As Integer) As Boolean
+'Private Extern DomoZWave_AssignReturnRoute(home As Integer, node As Integer, destnode As Integer) As Boolean
+'Private Extern DomoZWave_DeleteAllReturnRoutes(home As Integer, node As Integer) As Boolean
 Private Extern DomoZWave_RequestNetworkUpdateFromPrimary(home As Integer) As Boolean
-Private Extern DomoZWave_CreateNewPrimary() As Boolean
-Private Extern DomoZWave_TransferPrimaryRole() As Boolean
+'Private Extern DomoZWave_CreateNewPrimary() As Boolean
+'Private Extern DomoZWave_TransferPrimaryRole() As Boolean
 Private Extern DomoZWave_HasNodeFailed(home As Integer, node As Integer, Optional addqueue As Boolean = False) As Boolean
 Private Extern DomoZWave_RemoveFailedNode(home As Integer, node As Integer) As Boolean
 Private Extern DomoZWave_ReplaceFailedNode(home As Integer, node As Integer) As Boolean
-Private Extern DomoZWave_SendNodeInformation(home As Integer, node As Integer) As Boolean
-Private Extern DomoZWave_ReplicationSend(home As Integer, node As Integer) As Boolean
-Private Extern DomoZWave_HealNetworkNode(home As Integer, node As Integer, doRR As Boolean)
+'Private Extern DomoZWave_SendNodeInformation(home As Integer, node As Integer) As Boolean
+'Private Extern DomoZWave_ReplicationSend(home As Integer, node As Integer) As Boolean
+'Private Extern DomoZWave_HealNetworkNode(home As Integer, node As Integer, doRR As Boolean)
 Private Extern DomoZWave_HealNetwork(home As Integer, doRR As Boolean)
-Private Extern DomoZWave_TestNetworkNode(home As Integer, node As Integer, count As Integer)
-Private Extern DomoZWave_TestNetwork(home As Integer, count As Integer)
+'Private Extern DomoZWave_TestNetworkNode(home As Integer, node As Integer, count As Integer)
+'Private Extern DomoZWave_TestNetwork(home As Integer, count As Integer)
 
 ' Statistical information
 Private Extern DomoZWave_GetDriverStatistics(home As Integer) As String
-Private Extern DomoZWave_GetSendQueueCount(home As Integer) As Long
+Private Extern DomoZWave_GetNodeStatistics(home As Integer, node As Integer) As String
+'Private Extern DomoZWave_GetSendQueueCount(home As Integer) As Long
 
 ' Make certain information readable - no HomeId required
 Private Extern DomoZWave_CommandClassIdName(class_value As Integer) As String
 Private Extern DomoZWave_GenreIdName(genre As Integer) As String
 Private Extern DomoZWave_BasicTypeName(basictype As Integer) As String
 Private Extern DomoZWave_GenericTypeName(generictype As Integer) As String
+Private Extern DomoZWave_SpecificTypeName(generictype As Integer, specifictype As Integer) As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StartPlugin(cPl As CPluginEntry)
-
-  Dim bLibDebug As Boolean
-  Dim iJsonRpcPort As Integer
-  Dim hOpenZwaveBase As Object
-  Dim sVersion As String
 
   KeyName = cPl.KeyName
   Instance = cPl.Instance
@@ -233,6 +270,75 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sUpdateNeighbor = cPl.Settings["updateneighbor"]
   $bEnableUpdateNeighbor = cPl.Settings["enableupdateneighbor"]
 
+    ' Check if we a "libdebug" settings, that is used during StartAll
+  If cPl.Settings.Exist("libdebug") Then
+    $bLibDebug = cPl.Settings["libdebug"]
+  Else
+    $bLibDebug = $bDebug
+  Endif
+
+  ' Retrieve our Interface Id, we don't have to retrieve it more then once
+  InterfaceId = Devices.FindInterface("Z-Wave Controller")
+  If InterfaceId = 0 Then
+    WriteLog("ERROR: Required InterfaceId for 'Z-Wave Controller' can't be retrieved from the database")
+
+    IsRunning = False
+    ErrorText = "Required InterfaceId for 'Z-Wave Controller' can't be retrieved from the database"
+    Return
+  Endif
+
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add a new JSON-RPC method
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub RegisterMethod(sMethod As String)
+
+  If Not $cMethods.Exist(sMethod, gb.IgnoreCase) Then
+    $cMethods.Add(sMethod)
+  Endif 
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Connect/Setup OpenZWave
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Connect()
+
+  Dim sVersion As String
+  Dim iCnt As Integer
+  Dim iJsonRpcPort As Integer
+
   ' Re-Initialize information
   iHomeId = 0
   iControllerId = 0
@@ -244,11 +350,31 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] = 0
   Endif
 
+  $cMethods.Clear()
+
+  RegisterMethod("openzwave.homeid")
+  RegisterMethod("openzwave.allqueried")
+  RegisterMethod("openzwave.addnode")
+  RegisterMethod("openzwave.removenode")
+  RegisterMethod("openzwave.setvalue")
+
+  ' Only allow local connections
+  $cIPWhiteList.Add("127.0.0.1")
+
+  hServerSocket = New CServerSocket As "hServerSocket"
+
   ' Find available JSON-RPC port - every instance uses their own port. It is unlikely anybody has more than 1 controller
-  iJsonRpcPort = StartJSONRPC()
+  For iCnt = (16000 + Instance) To 65535
+    hServerSocket.Port = iCnt
+    Try hServerSocket.Listen()
+    If Not Error Then
+      iJsonRpcPort = iCnt
+      Break
+    Endif
+  Next
 
   If iJsonRpcPort = 0 Then
-    Main.WriteLog(LogLabel & "ERROR: Required OpenZWave JSON-RPC Server can not be started, no ports available above 16000")
+    WriteLog("ERROR: Required OpenZWave JSON-RPC Server can not be started, no ports available above 16000")
 
     IsRunning = False
     ErrorText = "Net Not Active, unable to start a JSON-RPC on port 16000-65535"
@@ -256,13 +382,6 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   Endif
 
   If Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] = 0 Then
-
-    ' Check if we a "libdebug" settings, that is used during StartAll
-    If cPl.Settings.Exist("libdebug") Then
-      bLibDebug = cPl.Settings["libdebug"]
-    Else
-      bLibDebug = $bDebug
-    Endif
 
     ' Check if the library matches the required version
     sVersion = Version()
@@ -292,7 +411,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     Endif
 
     ' We need to call OpenZWave_Init
-    DomoZWave_Init(Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/", Main.sBaseDir &/ "wrappers/domozwave/", Main.sBaseDir &/ "logs" &/ Main.sDomoZWaveFile, bLibDebug)
+    DomoZWave_Init(Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/", Main.sBaseDir &/ "wrappers/domozwave/", Main.sBaseDir &/ "logs" &/ Main.sDomoZWaveFile, $bLibDebug)
   Endif
 
   ' Add +1 to ZWaveControllers count
@@ -313,18 +432,25 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Shutdown our OpenZWave JSON-RPC server
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub StopPlugin()
+Private Sub Disconnect()
 
-  ' Try to stop timer first
+  Dim oObj As Object
+
+  For Each oObj In $cClients
+    Try oObj.Close()
+  Next
+
+  $cClients.Clear()
+
+  Try hServerSocket.Close()
+
+ ' Try to stop timer first
   Try tSerialConnected.Stop
 
   ' Try to remove the SerialPort from the openzwave library
   Try DomoZWave_RemoveSerialPort($sSerPort)
-
-  ' Stop the OpenZWave JSON-RPC server instance
-  StopJSONRPC()
 
   ' Substract the instance from the current list. It can become negative
   Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] = Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] - 1
@@ -338,6 +464,246 @@ Public Sub StopPlugin()
   If Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] <= 0 Then
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Destroyed open-zwave wrapper.")
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Register an incoming connection. We support JSON-RPC over 
+' HTTP (including URL) and WebSockets
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hServerSocket_Connection(RemoteHost As String)
+
+  Dim hS As CSocket
+
+  hS = New CSocket As "hSocket"
+
+  ' If a whitelist exist, reject all other IP address
+  If $cIPWhiteList.Count >= 1 Then
+    If Not $cIPWhiteList.Exist(RemoteHost) Then
+      Try hS.AcceptSocket(hServerSocket)
+      hS.Close()
+      Return
+    Endif
+  Endif
+
+  ' Do an assignment, if SSL fails, we can get an error
+  Try hS.AssignSocket()
+  If Error Then
+    WriteLog("ERROR: Cannot assign ServerSocket. Msg=" & Error.Text)
+    Return
+  Endif
+
+  ' We support HTTP only
+  hS.Protocol = hS.PROTOCOL_HTTP
+
+' Overrule the content-type
+  hS.HTTPHeaders = ["content-type: application/json"]
+
+  $cClients.Add(hS)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Close and remove Socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub RemoveSocket(hS As CSocket)
+
+  Try $cClients.Remove($cClients.Find(hS))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Read data from the Socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hSocket_Read(sJsonData As Variant)
+
+  Dim vTestData As Variant
+  Dim vJsonData As New Variant[]
+  Dim Entry As Variant
+  Dim vOutput As New Variant[]
+  Dim sJSONVersion As String
+  Dim sMethod As String
+  Dim JsonBatch As Boolean
+  Dim vId As Variant
+  Dim jCol As JSONCollection
+
+  ' Remove all NewLine and Carriage Return
+  sJsonData = Replace(sJsonData, Chr(13), "")
+  sJsonData = Replace(sJsonData, Chr(10), "")
+
+  ' Try to decode the string
+  Try vTestData = JSON.Decode(sJsonData, True)
+  If Error Then
+    Last.Begin()
+    Last.Print(Util.JSONEncode(JsonError(JSONRPC_PARSEERROR)))
+    Last.Send()
+
+    Return
+  Endif
+
+  Try Entry = vTestData[0]
+  If Error Then
+    Last.Begin()
+    Last.Print(Util.JSONEncode(JsonError(JSONRPC_PARSEERROR)))
+    Last.Send()
+
+    Return
+  Endif
+
+  ' No array, just 1 call
+  If Entry = Null Then
+    JsonBatch = False
+    vJsonData.Add(vTestData)
+  Else
+    JsonBatch = True
+    vJsonData = vTestData
+  Endif
+
+  For Each Entry In vJsonData
+
+    Try sJSONVersion = Entry["jsonrpc"]
+    ' Check if we got a method name
+
+    If sJSONVersion = "2.0" Then
+      ' Check if we got a method name
+      Try sMethod = Entry["method"]
+      If Error Then
+        vOutput.Add(JsonError(JSONRPC_INVALIDREQUEST))
+      Else
+        If TypeOf(Entry["method"]) = gb.String Then
+          Try vId = Entry["id"]
+
+          sMethod = LCase(sMethod)
+
+          If Not $cMethods.Exist(sMethod) Then
+            vOutput.Add(JsonError(JSONRPC_METHODNOTFOUND, vId))
+          Else
+            $iReply = 0 
+            $vReply = Null
+
+            ' Convert the 'Null' to ""
+            If Entry["params"] Then
+              For Each Entry["params"]
+                If Entry["params"][Entry["params"].Key] = Null Then
+                  Entry["params"].Add("", Entry["params"].Key)
+                Else If TypeOf(Entry["params"][Entry["params"].Key]) = gb.Object And If Object.Type(Entry["params"][Entry["params"].Key]) = "JSONCollection" Then
+                  jCol = Entry[Entry["params"].Key]
+                  For Each jCol
+                    If jCol[jCol.Key] = Null Then
+                      jCol.Add("", jCol.Key)
+                    Endif
+                  Next
+                Endif
+              Next
+            Endif
+            ' Just pass all the data for testing
+            RemoteCall(sMethod, Entry["params"])
+
+            ' If id=Null then it is most likely a Json-Rpc notification, we shouldn't respond to it
+            If vId <> Null Then
+
+              ' The response from JSON-RPC handle can't be empty!
+              If $vReply = Null Then
+                If $iReply <> 0 Then
+                  vOutput.Add(JsonError($iReply, vId))
+                Else
+                  vOutput.Add(JsonError(JSONRPC_INTERNALERROR, vId))
+                Endif
+              Else
+                vOutput.Add(JsonToRpc($vReply, vId))
+              Endif
+            Endif
+          Endif
+        Else
+          vOutput.Add(JsonError(JSONRPC_INVALIDREQUEST))
+        Endif
+      Endif
+    Else
+      vOutput.Add(JsonError(JSONRPC_INVALIDREQUEST))
+    Endif
+
+  Next
+
+  If vOutput.Count >= 1 Then
+    If JsonBatch Then
+      Try sJsonData = JSON.Encode(vOutput)
+    Else
+      Try sJsonData = JSON.Encode(vOutput[0])
+    Endif
+
+    If Error Then
+      ' JSON data is invalid, thrown an internal error
+      sJsonData = JSON.Encode(JsonError(JSONRPC_INTERNALERROR))
+    Endif
+
+    Last.Begin()
+    Last.Print(sJsonData)
+    Last.Send()
+  Endif
+
+Catch
+  Last.Begin()
+  Last.Print(Util.JSONEncode(JsonError(JSONRPC_INTERNALERROR)))
+  Last.Send()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Remove a suddenly socket from the list
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hSocket_Closed()
+
+  RemoveSocket(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Create a Json Collection with a specific error message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub JsonError(iError As Integer, Optional vId As Variant = Null) As JSONCollection
+
+  Dim cJsonData As New JSONCollection
+  Dim cError As New JSONCollection
+
+  ' Fill the error fields first
+  cError.Add(iError, "code")
+  Select Case iError
+    Case JSONRPC_PARSEERROR
+      cError.Add("Parse error", "message")
+    Case JSONRPC_INVALIDREQUEST
+      cError.Add("Invalid request", "message")
+    Case JSONRPC_METHODNOTFOUND
+      cError.Add("Method not found", "message")
+    Case JSONRPC_INVALIDPARAMS
+      cError.Add("Invalid params", "message")
+    Case JSONRPC_INTERNALERROR
+      cError.Add("Internal error", "message")
+    Default
+      cError.Add("Unknown error", "message")
+  End Select
+
+  ' Build up the collection
+  cJsonData.Add("2.0", "jsonrpc")
+  cJsonData.Add(cError, "error")
+  cJsonData.Add(vId, "id")
+
+  Return cJsonData
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Convert a JsonCollection to a valid JSON-RPC 2.0 Collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub JsonToRpc(cJsonResponse As Variant, vId As Variant) As JSONCollection
+
+  Dim cJsonData As New JSONCollection
+
+  ' Build up the collection
+  cJsonData.Add("2.0", "jsonrpc")
+  cJsonData.Add(cJsonResponse, "result")
+  cJsonData.Add(vId, "id")
+
+  Return cJsonData
 
 End
 
@@ -381,7 +747,7 @@ Public Sub RunTask()
         Return
       Endif
 
-      RequestNodeDynamicReport(0, True)
+      RequestNodeDynamicReport(0, False)
     Endif
   Endif
 
@@ -421,13 +787,16 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
     iValue = 255
   Else If InStr(sCmd, "DIM ") Then
     Try iValue = Val(Replace(sCmd, "DIM ", ""))
+  Else If InStr(sCmd, "SP ") Then
+    ' Convert the decimal number to an integer
+    Try iValue = CFloat(Trim(Replace(Replace(sCmd, "SP ", ""), ",", "."))) * 1000
   Endif
 
   If iValue >= 0 Then
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Set value for node " & sNode & " and instance " & sInstance & " to " & iValue)
     DomoZWave_SetValue(iHomeId, sNode, sInstance, iValue)
   Else
-    Main.WriteDebugLog(LogLabel & "Only DIM and ON/OFF commands are supported!")
+    Main.WriteDebugLog(LogLabel & "Only DIM, ON/OFF and SP commands are supported!")
   Endif
 
 End
@@ -447,7 +816,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub RequestType(sType As String, iNodeId As Integer, bListening As Boolean, bDisablePoll As Boolean) As Boolean
 
-  Dim cNode As COpenZWaveEntry
+  Dim cNode As Object
   Dim vVar As Variant
   Dim aNodes As New Integer[]
   Dim iCurrent As Integer
@@ -479,17 +848,16 @@ Private Sub RequestType(sType As String, iNodeId As Integer, bListening As Boole
 
     ' Go through the node list and selected the nodes
     For Each vVar In ZWaveNetwork
-      If InStr(ZWaveNetwork.Key, "node=") = 1 Then
-        ' Map it on our specific entry
-        cNode = vVar
 
-        ' We can only poll the complete device, not the instances individually
-        ' Also we should exclude (static) controllers
-        If cNode.Instance = 1 And If cNode.Basic >= 3 Then
-          If cNode.Listening = bListening Then aNodes.Add(cNode.NodeId)
-        Endif
+      ' Map it on our specific entry
+      cNode = vVar
 
+      ' We can only poll the complete device, not the instances individually
+      ' Also we should exclude (static) controllers
+      If cNode.Basic >= 3 Then
+        If cNode.Listening = bListening Then aNodes.Add(cNode.NodeId)
       Endif
+
     Next
 
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Trigger " & IIf(bListening, "listening", "sleeping") & " nodes to update their " & sLog1 & ".")
@@ -627,69 +995,6 @@ Public Sub RequestAllConfigParams(iNodeId As Integer)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeConfigList(iNodeId As Integer) As String
-
-  Return DomoZWave_GetNodeConfigList(iHomeId, iNodeId)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeConfigLabel(iNodeId As Integer, Item As Integer) As String
-
-  Return DomoZWave_GetNodeConfigLabel(iHomeId, iNodeId, Item)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeConfigHelp(iNodeId As Integer, Item As Integer) As String
-
-  Return DomoZWave_GetNodeConfigHelp(iHomeId, iNodeId, Item)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeConfigValue(iNodeId As Integer, Item As Integer) As String
-
-  Return DomoZWave_GetNodeConfigValue(iHomeId, iNodeId, Item)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeConfigValueType(iNodeId As Integer, Item As Integer) As String
-
-  Return DomoZWave_GetNodeConfigValueType(iHomeId, iNodeId, Item)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeConfigValueList(iNodeId As Integer, Item As Integer) As String
-
-  Return DomoZWave_GetNodeConfigValueList(iHomeId, iNodeId, Item)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeConfigValueReadOnly(iNodeId As Integer, Item As Integer) As Boolean
-
-  Return DomoZWave_GetNodeConfigValueReadOnly(iHomeId, iNodeId, Item)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Retrieve the node neighborhood list or commandclass list
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetNodeNeighborsList(iNodeId As Integer) As String
@@ -707,57 +1012,17 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 '
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeCommandClassList(iNodeId As Integer, Optional Instance As Integer = 0) As String
+Public Sub GetNodeCommandClassList(iNodeId As Integer, Optional iInstance As Integer = 0) As String
 
   Dim NList As String
 
   'IF $bDebug THEN Main.WriteDebugLog(LogLabel & "Requesting commandclasslist for node id " & iNodeId & IIf(Instance >= 1, " instance " & Instance, "") & ".")
-  NList = DomoZWave_GetNodeCommandClassList(iHomeId, iNodeId, Instance)
+  NList = DomoZWave_GetNodeCommandClassList(iHomeId, iNodeId, iInstance)
 
   ' Replace the "COMMAND_CLASS_", because it is in each value (makes the string too long)
   NList = Replace$(NList, "COMMAND_CLASS_", "")
   ' Replace the "|" with ", " to make it more human readable
   Return Replace$(NList, "|", ", ")
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Group Association
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeGroupCount(iNodeId As Integer) As Integer
-
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Requested group count for node id " & iNodeId & ".")
-  Return DomoZWave_GetNodeGroupCount(iHomeId, iNodeId)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeGroupList(iNodeId As Integer, group As Integer) As String
-
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Requested group list for node id " & iNodeId & ".")
-  Return DomoZWave_GetNodeGroupList(iHomeId, iNodeId, group)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeGroupMax(iNodeId As Integer, group As Integer) As Integer
-
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Requested group max for node id " & iNodeId & " and group " & group & ".")
-  Return DomoZWave_GetNodeGroupMax(iHomeId, iNodeId, group)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeGroupLabel(iNodeId As Integer, group As Integer) As String
-
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Requested group label for node id " & iNodeId & " and group " & group & ".")
-  Return DomoZWave_GetNodeGroupLabel(iHomeId, iNodeId, group)
 
 End
 
@@ -778,33 +1043,6 @@ Public Sub RemoveAssociation(iNodeId As Integer, iAssociationGroup As Integer, i
 
   If $bDebug Then Main.WriteDebugLog(LogLabel & "Remove association node id " & iNodeId & " between group " & iAssociationGroup & " and node " & iAssociationNode & ".")
   DomoZWave_RemoveAssociation(iHomeId, iNodeId, iAssociationGroup, iAssociationNode)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' UserCode functions, usefull for e.g. Tag Reader
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeUserCodeCount(iNodeId As Integer) As Integer
-
-  Return DomoZWave_GetNodeUserCodeCount(iHomeId, iNodeId)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeUserCodeLabel(iNodeId As Integer, UserCode As Integer) As String
-
-  Return DomoZWave_GetNodeUserCodeLabel(iHomeId, iNodeId, UserCode)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeUserCodeValue(iNodeId As Integer, UserCode As Integer) As String
-
-  Return DomoZWave_GetNodeUserCodeValue(iHomeId, iNodeId, UserCode)
 
 End
 
@@ -922,7 +1160,7 @@ Public Sub CancelControllerCommand() As Boolean
 
 End
 
-Public Sub AddDevice() As Boolean
+Public Sub IncludeDevice() As Boolean
 
   Dim bResult As Boolean
 
@@ -934,7 +1172,7 @@ Public Sub AddDevice() As Boolean
   If bResult Then
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Begin add device, press button on device to add!")
 
-    ' Start our 30sec timer - we *need* to put it in CZWave.class, because the Z-Wave Commander 
+    ' Start our 30sec timer - we *need* to put it in COpenZWave.class, because the Z-Wave Commander 
     ' closing can resulting in "hanging" of the controller
     tControllerCommand = Null
     tControllerCommand = New Timer As "tControllerCommand"
@@ -948,7 +1186,7 @@ Public Sub AddDevice() As Boolean
 
 End
 
-Public Sub RemoveDevice() As Boolean
+Public Sub ExcludeDevice() As Boolean
 
   Dim bResult As Boolean
 
@@ -984,11 +1222,11 @@ Public Sub RequestNetworkUpdate()
 
 End
 
-Public Sub HasNodeFailed(iNodeId As Integer) As Boolean
+Public Sub HasNodeFailed(iNodeId As Integer, Optional bQueue As Boolean = False) As Boolean
 
   Dim bResult As Boolean
 
-  bResult = DomoZWave_HasNodeFailed(iHomeId, iNodeId)
+  bResult = DomoZWave_HasNodeFailed(iHomeId, iNodeId, bQueue)
 
   If bResult Then
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Check if node has failed, call X to check the response")
@@ -1048,15 +1286,9 @@ Public Sub GenreIdName(genre As Integer) As String
 
 End
 
-Public Sub BasicTypeName(basictype As Integer) As String
+Public Sub GetNodeQueryStage(iNodeId As Integer) As String
 
-  Return DomoZWave_BasicTypeName(basictype)
-
-End
-
-Public Sub GenericTypeName(generictype As Integer) As String
-
-  Return DomoZWave_GenericTypeName(generictype)
+  Return DomoZWave_GetNodeQueryStage(iHomeId, iNodeId)
 
 End
 
@@ -1066,9 +1298,32 @@ Public Sub GetNodeManufacturerName(iNodeId As Integer) As String
 
 End
 
+Public Sub GetNodeManufacturerId(iNodeId As Integer) As Integer
+
+  Dim sId As String
+  Dim iId As Integer
+
+  sId = DomoZWave_GetNodeManufacturerId(iHomeId, iNodeId)
+  Try iId = CInt(Val("&H" & sId))
+  Return iId
+
+End
+
 Public Sub GetNodeProductName(iNodeId As Integer) As String
 
   Return DomoZWave_GetNodeProductName(iHomeId, iNodeId)
+
+End
+
+Public Sub GetNodeName(iNodeId As Integer) As String
+
+  Return DomoZWave_GetNodeName(iHomeId, iNodeId)
+
+End
+
+Public Sub GetNodeLocation(iNodeId As Integer) As String
+
+  Return DomoZWave_GetNodeLocation(iHomeId, iNodeId)
 
 End
 
@@ -1093,15 +1348,14 @@ End
 Public Sub GetNodeLastSeen(iNodeId As Integer) As String
 
   Dim iLastSeen As Integer
-  Dim d As Date
-
+ 
   If iControllerId = iNodeId Then
     Return ("N/A")
   Endif
 
   iLastSeen = DomoZWave_GetNodeLastSeen(iHomeId, iNodeId)
   If iLastSeen >= 1 Then
-    Return DateAdd(CDate("1/1/1970"), gb.Second, iLastSeen) 
+    Return DateAdd(CDate("1/1/1970"), gb.Second, iLastSeen + CInt(Main.fAstroAutoTimezone * 3600))
   Else
     Return ("Never")
   Endif
@@ -1114,50 +1368,9 @@ Public Sub GetNodeStatus(iNodeId As Integer) As String
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' get value from node
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetCurrentValueNode(iNodeId As Integer) As String
+Public Sub GetLibraryTypeName() As String
 
-  Dim rResult As Result
-
-  rResult = Main.hDB.Exec("SELECT * FROM devices_zwave WHERE nodeid = &1", iNodeId)
-  If Not rResult.Available Then
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Node with id '" & iNodeId & "' not found in database!")
-    Return 0
-  Else
-    Return rResult!value
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' update a node record with value
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub UpdateValueNode(sAddress As String, iValue As Integer, sValue As String) As Boolean
-
-  Dim rResult As Result
-
-  Select iValue
-    Case 1
-      rResult = Main.hDB.Exec("UPDATE devices_zwave SET value = &1 WHERE nodeid = &2", sValue, sAddress)
-    Case 2
-      rResult = Main.hDB.Exec("UPDATE devices_zwave SET value2 = &1 WHERE nodeid = &2", sValue, sAddress)
-    Case 3
-      rResult = Main.hDB.Exec("UPDATE devices_zwave SET value3 = &1 WHERE nodeid = &2", sValue, sAddress)
-    Case 4
-      rResult = Main.hDB.Exec("UPDATE devices_zwave SET value4 = &1 WHERE nodeid = &2", sValue, sAddress)
-    Case Else
-      ' We need to skip Value255 - Battery level
-      Return True
-  End Select
-
-  If rResult Then
-    Return True
-  Else
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Node with id '" & sAddress & "' not found in database!")
-    Return False
-  Endif
+  Return DomoZWave_GetLibraryTypeName(iHomeId)
 
 End
 
@@ -1199,7 +1412,7 @@ Public Sub GetControllerType() As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Return the API version
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetAPIVersion() As String
 
@@ -1208,7 +1421,7 @@ Public Sub GetAPIVersion() As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Return the SDK version
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetSDKVersion() As String
 
@@ -1217,36 +1430,28 @@ Public Sub GetSDKVersion() As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Get the Open-ZWave wrapper version
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeList() As Integer[]
+Public Sub GetWrapperVersion() As String
 
-  Dim vVar As Variant
-  Dim aNodes As New Integer[]
-  Dim sNode As String
+  Dim sVersion As String
 
-  For Each vVar In ZWaveNetwork
-    If InStr(ZWaveNetwork.Key, "node=") = 1 And If InStr(ZWaveNetwork.Key, ":") = 0 Then
-      sNode = Replace(ZWaveNetwork.Key, "node=", "")
-      Try aNodes.Add(CInt(sNode))
-    Endif
-  Next
-
-  aNodes.Sort()
-  Return aNodes
+  Try sVersion = DomoZWave_Version()
+  If Error Then sVersion = "UNKNOWN"
+  Return sVersion
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Get the Open-ZWave library version
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetNodeInfo(iNode As Integer) As COpenZWaveEntry
+Public Sub GetOZWVersion() As String
 
-  Dim cNode As New COpenZWaveEntry
+  Dim sVersion As String
 
-  Try cNode = ZWaveNetwork["node=" & iNode]
-
-  Return cNode
+  Try sVersion = DomoZWave_OZWVersion()
+  If Error Then sVersion = "UNKNOWN"
+  Return sVersion
 
 End
 
@@ -1260,7 +1465,7 @@ Public Sub tSerialConnected_Timer()
   Else
     If (iSerialConnected * tSerialConnected.Delay) >= 15000 Then
       tSerialConnected.Stop
-      Main.WriteLog(LogLabel & "ERROR: interface FAILED to connect to Port " & $sSerPort & " (retrying)")
+      Main.WriteLog(LogLabel & "ERROR: serial interface FAILED to connect to port " & $sSerPort & " (retrying)")
     Endif
   Endif
 
@@ -1297,9 +1502,13 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' translate between API and SDK version numbering
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub SDKVersion(sVersion As String) As String
+Public Sub SDKVersion(sVersion As String) As String
 
   Select sVersion
+    Case "2.32"
+      Return "4.26"
+    Case "2.36"
+      Return "5.01"
     Case "2.40"
       Return "4.27"
     Case "2.48"
@@ -1320,6 +1529,8 @@ Private Sub SDKVersion(sVersion As String) As String
       Return "5.02 Patch 3"
     Case "2.9"
       Return "4.22"
+    Case "2.96"
+      Return "6.00 beta 1"
     Case "2.99"
       Return "6.00 beta 1 Patch 1"
     Case "3.03"
@@ -1370,6 +1581,14 @@ Private Sub SDKVersion(sVersion As String) As String
       Return "6.00.05 beta 1"
     Case "3.79"
       Return "6.50.01 beta"
+    Case "3.83"
+      Return "6.51.00"
+    Case "3.92"
+      Return "6.51.01"
+    Case "3.95"
+      Return "6.51.02"
+    Case "3.99"
+      Return "6.51.03"
     Default
       Return "Unknown"
   End Select
@@ -1377,65 +1596,10 @@ Private Sub SDKVersion(sVersion As String) As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Start a JSON-RPC server only to be used by OpenZWave
-' We try to listen on a port-range, if that fails, we return zero
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub StartJSONRPC() As Integer
-
-  Dim hRpcFunc As JsonRpcFunction
-  Dim iCnt As Integer
-
-  ' Create a new instance of the JSON-RPC Server
-  hJSONRPC = New JsonRpcServer As "hJSONRPC"
-
-  ' ### OpenZWave only methods ###
-  hRpcFunc = New JsonRpcFunction("openzwave.homeid")
-  hJSONRPC.Register(hRpcFunc)
-  hRpcFunc = New JsonRpcFunction("openzwave.allqueried")
-  hJSONRPC.Register(hRpcFunc)
-  hRpcFunc = New JsonRpcFunction("openzwave.addnode")
-  hJSONRPC.Register(hRpcFunc)
-  hRpcFunc = New JsonRpcFunction("openzwave.removenode")
-  hJSONRPC.Register(hRpcFunc)
-  hRpcFunc = New JsonRpcFunction("openzwave.setvalue")
-  hJSONRPC.Register(hRpcFunc)
-
-  ' ---------------------------------------------------------
-  ' All have been setup, now try to start the JSOC-RPC server
-  ' ---------------------------------------------------------
-  For iCnt = 16000 To 65535
-    Try hJSONRPC.Listen(iCnt, 10, $bDebug, "127.0.0.1")
-    If hJSONRPC.Listening Then
-      Return iCnt
-    Endif
-  Next
-
-  ' Destroy create hJSONRPC
-  hJSONRPC = Null
-  Return 0
-
-Catch
-  Return 0
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Stop the OpenZWave JSON-RPC server
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub StopJSONRPC()
-
-  Try hJSONRPC.Stop()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Handle the JSON-RPC Remote Calls
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub hJSONRPC_RemoteCall(sName As String, cData As Collection)
-  
-  Dim vValue As Variant
-  Dim cValue As New Collection
-  Dim aValue As New String[]
+Private Sub RemoteCall(sName As String, cData As JSONCollection)
+
   Dim sParam As String
 
   Main.ControlLed("ZWave", "On")
@@ -1445,8 +1609,6 @@ Public Sub hJSONRPC_RemoteCall(sName As String, cData As Collection)
 
   If $bDebug Then
     Try sParam = JSON.Encode(cData)
-    sParam = Replace(sParam, "\"\\u00x0\"", "\"\"")
-    sParam = Replace(sParam, "\"\\u0001\"", "\"\"")
 
     Main.WriteDebugLog("[OpenZWave] " & "Got a RemoteCall for Method '" & sName & "'" & IIf(sParam, ", Params '" & sParam & "'", ""))
   Endif
@@ -1466,7 +1628,7 @@ Public Sub hJSONRPC_RemoteCall(sName As String, cData As Collection)
 
       ' ## Default - return an error ###
     Default
-      hJSONRPC.SetReply(-32601, Null)
+      SetReply(JSONRPC_METHODNOTFOUND, Null)
       Return
   End Select
 
@@ -1476,9 +1638,36 @@ Public Sub hJSONRPC_RemoteCall(sName As String, cData As Collection)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle SetReply and return it to the hJSONRPC procedure
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub SetReply(iReply As Integer, vReply As Variant, Optional sError As String = "")
+
+  $iReply = iReply
+  $vReply = vReply 
+
+  If $bDebug Then
+
+    If iReply = 0 Then
+      Main.WriteDebugLog(LogLabel & "Response for Method '" & $sCurrentMethod & "' Data '" & JSON.Encode(vReply) & "'")
+    Else
+      Main.WriteDebugLog(LogLabel & "Response for Method '" & $sCurrentMethod & "' ErrorCode=" & iReply)
+    Endif
+
+    ' Write error to a the logfile, if it contains a value
+    If sError Then
+      Main.WriteDebugLog(LogLabel & "ERROR: Method '" & $sCurrentMethod & "' - " & sError)
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 '
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub EnableDisableLog(bDebug As Boolean)
+
+  ' TODO
+  bDebug = False
 
 End
 
@@ -1508,34 +1697,6 @@ Private Sub JSONCheckNumber(vValue As Variant) As Boolean
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Converts empty string to Chr(1), because Gambas doesn't
-' support "" strings in collections
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub JSONToEmptyString(sValue As String) As String
-
-  If sValue Then
-    Return sValue
-  Else
-    Return Chr(1)
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Converts Chr(1) to empty string, because Gambas doesn't
-' support "" strings in collections
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub JSONFromEmptyString(sValue As String) As String
-
-  If sValue = Chr(1) Then
-    Return ""
-  Else
-    Return sValue
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 '
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub JSONCheckHomeId(vVar As Variant, Optional bNotNull As Boolean = True) As Boolean
@@ -1544,27 +1705,27 @@ Private Sub JSONCheckHomeId(vVar As Variant, Optional bNotNull As Boolean = True
 
   If vVar = Null Then
     WriteDebugLogError("params 'homeid' is missing")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return False
   Endif
 
   If Not JSONCheckNumber(vVar) Then
     WriteDebugLogError("params 'homeid' is missing or is not numeric")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return False
   Endif
 
   Try iTemp = CInt(vVar)
   If Error Then
     WriteDebugLogError("params 'homeid' is not numeric")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return False
   Endif
 
   If bNotNull Then
     If iHomeId <> iTemp Then
       WriteDebugLogError("params 'homeid' is '" & iTemp & "', it is NOT our homeid '" & iHomeId & "'")
-      hJSONRPC.SetReply(-32602, Null)
+      SetReply(JSONRPC_INVALIDPARAMS, Null)
       Return False
     Endif
   Endif
@@ -1582,20 +1743,20 @@ Private Sub JSONCheckNodeId(vVar As Variant) As Boolean
 
   If vVar = Null Then
     WriteDebugLogError("params 'nodeid' is missing")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return False
   Endif
 
   If Not JSONCheckNumber(vVar) Then
     WriteDebugLogError("params 'nodeid' is missing or is not numeric")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return False
   Endif
 
   Try iTemp = CInt(vVar)
   If Error Then
     WriteDebugLogError("params 'nodeid' is not numeric")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return False
   Endif
 
@@ -1608,7 +1769,7 @@ End
 ' Also the nodes will be removed from the ZWaveNetwork, it will
 ' be automatically populated when needed via AddNode
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Call_OpenZWave_HomeId(cData As Collection)
+Private Sub Call_OpenZWave_HomeId(cData As JSONCollection)
 
   Dim iTemp1 As Integer
   Dim iTemp2 As Integer
@@ -1618,32 +1779,32 @@ Private Sub Call_OpenZWave_HomeId(cData As Collection)
 
   If Not JSONCheckNumber(cData["controllerid"]) Then
     WriteDebugLogError("params 'controllerid' is missing or is not numeric")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return
   Endif
 
   Try iTemp2 = CInt(cData["controllerid"])
   If Error Then
     WriteDebugLogError("params 'controllerid' is not numeric")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return
   Endif
 
   If TypeOf(cData["serialport"]) <> gb.String Then
     WriteDebugLogError("params 'serialport' is missing or isn't a string")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return
   Endif
 
-  If Not JSONFromEmptyString(cData["serialport"]) Then
+  If Not cData["serialport"] Then
     WriteDebugLogError("params 'serialport' is empty string")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return
   Endif
 
   If cData["serialport"] <> $sSerPort Then
     WriteDebugLogError("params 'serialport' is NOT our serialport variable. Ours: '" & $sSerPort & "', Received: '" & cData["serialport"] & "'")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return
   Endif
 
@@ -1663,14 +1824,14 @@ Private Sub Call_OpenZWave_HomeId(cData As Collection)
 
   If $bDebug Then
     Main.WriteDebugLog(LogLabel & "Interface successfully connected to Port " & $sSerPort)
-    Main.WriteDebugLog(LogLabel & "Received response from Z-Wave controller: homeid=0x" & Right(Hex(iHomeId), 8) & ".")
+    Main.WriteDebugLog(LogLabel & "Received response from Z-Wave controller: homeid=0x" & Right(Hex(iHomeId), 8) & " (" & iHomeId & ").")
     Main.WriteDebugLog(LogLabel & "Z-Wave controller id: " & iControllerId & ".")
     Main.WriteDebugLog(LogLabel & "Z-Wave controller type: " & sControllerType & ".")
     Main.WriteDebugLog(LogLabel & "Z-Wave API version: " & sAPIVersion & ".")
     Main.WriteDebugLog(LogLabel & "Z-Wave SDK version: " & sSDKVersion & ".")
   Endif
 
-  hJSONRPC.SetReply(0, True)
+  SetReply(0, True)
 
 End
 
@@ -1679,11 +1840,45 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Call_OpenZWave_AllQueried(cData As Collection)
 
+  Dim cZWaveNode As New OpenZWaveEntry
+
   If Not JSONCheckHomeId(cData["homeid"]) Then Return
 
   bAllQueried = True
 
-  hJSONRPC.SetReply(0, True)
+  SetReply(0, True)
+
+  ' All nodes are queried, now enable polling if > 0
+  If $iPollTime > 0 Then
+    WriteDebugLog("Enabling legacy polling " & $iPollTime & " milliseconds")
+
+    'If DomoZWave_GetPollInterval() = 0 Then
+      ' Enable polling - this applies to all controllers in open-zwave
+      DomoZWave_SetPollInterval($iPollTime, True)
+    'Endif
+  Endif
+
+  For Each cZWaveNode In ZWaveNetwork
+
+    ' Only apply it to listening nodes (none sleeping)
+    If cZWaveNode.Listening Then
+
+      ' We can't query the ourself
+      If cZWaveNode.NodeId = iControllerId Then Continue
+
+      ' If polling is disabled, force it to disable
+      If $iPollTime = 0 Then
+        DomoZWave_DisablePolling(iHomeId, cZWaveNode.NodeId)
+        Continue
+      Endif
+
+      ' TODO: check devices table for disable openzwave polling
+
+      ' Enable polling with intensity = 1 
+      DomoZWave_EnablePolling(iHomeId, cZWaveNode.NodeId, 1)
+    Endif
+
+  Next
 
 End
 
@@ -1692,7 +1887,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Call_OpenZWave_AddNode(cData As Collection)
 
-  Dim NodeInfo As New COpenZWaveEntry
+  Dim cZWaveNode As New OpenZWaveEntry
   Dim iNodeId As Integer
 
   If Not JSONCheckHomeId(cData["homeid"]) Then Return
@@ -1700,29 +1895,51 @@ Private Sub Call_OpenZWave_AddNode(cData As Collection)
   If Not JSONCheckNodeId(cData["nodeid"]) Then Return
   iNodeId = CInt(cData["nodeid"])
 
-  NodeInfo.NodeId = iNodeId
-  NodeInfo.Instance = 1
-  NodeInfo.Basic = CInt(cData["basic"])
-  NodeInfo.Generic = CInt(cData["generic"])
-  NodeInfo.Specific = CInt(cData["specific"])
-  NodeInfo.Listening = CBoolean(cData["listening"])
-  NodeInfo.FrequentListening = CBoolean(cData["frequentlistening"])
-  NodeInfo.Beaming = CBoolean(cData["beaming"])
-  NodeInfo.Routing = CBoolean(cData["routing"])
-  NodeInfo.Security = CBoolean(cData["security"])
-  NodeInfo.Routing = CBoolean(cData["routing"])
-  NodeInfo.MaxBaudRate = CInt(cData["maxbaudrate"])
-  NodeInfo.Version = CInt(cData["version"])
+  cZWaveNode.NodeId = iNodeId
+  cZWaveNode.Basic = CInt(cData["basic"])
+  cZWaveNode.Generic = CInt(cData["generic"])
+  cZWaveNode.Specific = CInt(cData["specific"])
+  cZWaveNode.Listening = CBoolean(cData["listening"])
+  cZWaveNode.FrequentListening = CBoolean(cData["frequentlistening"])
+  cZWaveNode.Beaming = CBoolean(cData["beaming"])
+  cZWaveNode.Routing = CBoolean(cData["routing"])
+  cZWaveNode.Security = CBoolean(cData["security"])
+  cZWaveNode.MaxBaudRate = CInt(cData["maxbaudrate"])
+  cZWaveNode.Version = CInt(cData["version"])
+  cZWaveNode.Instances = New Collection
 
-  ZWaveNetwork["node=" & iNodeId] = NodeInfo 
+  Select cZWaveNode.Generic
+    Case &H01, &H02
+      cZWaveNode.DeviceType = "Z-Wave Controller"
+    Case &H08
+      cZWaveNode.DeviceType = "Z-Wave Thermostat"
+    Case &H10
+      cZWaveNode.DeviceType = "Z-Wave Switch"
+    Case &H11
+      Select cZWaveNode.Specific
+        Case &H05, &H06, &H07
+          cZWaveNode.DeviceType = "Z-Wave Motor Control"
+        Default
+          cZWaveNode.DeviceType = "Z-Wave Dimmer"
+      End Select
+    Case &H12
+      cZWaveNode.DeviceType = "Z-Wave Remote Switch"
+    Case &H20, &H21, &H30, &H31, &HA1
+      cZWaveNode.DeviceType = "Z-Wave Sensor"
+    Case &H40
+      Select cZWaveNode.Specific
+        Case &H01, &H02, &H03
+          cZWaveNode.DeviceType = "Z-Wave Door Lock"
+        Default
+          cZWaveNode.DeviceType = "Z-Wave Entry Control"
+      End Select
+    Default
+      cZWaveNode.DeviceType = "Z-Wave Generic"
+  End Select
 
-  hJSONRPC.SetReply(0, True)
+  ZWaveNetwork[iNodeId] = cZWaveNode
 
-'Public Type As String
-'Public Manufacturer As String
-'Public Model As String
-'Public Neighbors As String
-'Public CommandClasses As String
+  SetReply(0, True)
 
 End
 
@@ -1733,8 +1950,6 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Call_OpenZWave_RemoveNode(cData As Collection)
 
-  Dim ZWaveInstance As Collection
-  Dim vVar As Variant
   Dim iNodeId As Integer
 
   If Not JSONCheckHomeId(cData["homeid"]) Then Return
@@ -1742,30 +1957,27 @@ Private Sub Call_OpenZWave_RemoveNode(cData As Collection)
   If Not JSONCheckNodeId(cData["nodeid"]) Then Return
   iNodeId = CInt(cData["nodeid"])
 
-  For Each vVar In ZWaveNetwork
-    ' Remove node=<nodeid> and node=<nodeid>:<instance>
-    If (ZWaveNetwork.Key = "node=" & iNodeId) Or If InStr(ZWaveNetwork.Key, "node=" & iNodeId & ":") = 1 Then
-      ZWaveNetwork.Remove(ZWaveNetwork.Key)
-    Endif
-  Next
+  If ZWaveNetwork.Exist(iNodeId) Then
+      ZWaveNetwork.Remove(iNodeId)
+  Endif
 
-  hJSONRPC.SetReply(0, True)
+  SetReply(0, True)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Process the receive Open Z-Wave value. Stored in the Z-Wave network
+' for the Open Z-Wave Commander and send to the devices.
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Call_OpenZWave_SetValue(cData As Collection)
 
-  Dim ZWaveInstance As Collection
-  Dim cNode As COpenZWaveEntry
   Dim iNodeId As Integer
   Dim iInstanceId As Integer
   Dim iValueId As Integer
-  Dim iDeviceId As Integer
+  Dim cZWaveNode As New OpenZWaveEntry
+  Dim cZwaveNodeValue As New OpenZWaveEntryValue
   Dim sAddress As String
-  Dim sZWaveNode As String
+  Dim iDeviceId As Integer
 
   If Not JSONCheckHomeId(cData["homeid"]) Then Return
 
@@ -1775,17 +1987,25 @@ Private Sub Call_OpenZWave_SetValue(cData As Collection)
   Try iInstanceId = CInt(cData["instanceid"])
   Try iValueId = CInt(cData["valueid"])
 
-  If iInstanceId = 1 Then
-    sZWaveNode = iNodeId
-  Else
-    sZWaveNode = iNodeId & ":" & iInstanceId
+  ' Instance of 0 isn't valid
+  If iInstanceId = 0 Then iInstanceId = 1
+
+  ' The node has to be known in the Z-Wave network
+  If ZWaveNetwork.Exist(iNodeId) Then
+
+    ' Get the Z-Wave node information
+    cZWaveNode = ZWaveNetwork[iNodeId]
+
+    If Not cZWaveNode.Instances.Exist(iInstanceId) Then
+      cZwaveNodeValue.Values = New Collection
+      cZWaveNode.Instances.Add(cZWaveNodeValue, iInstanceId)
+    Endif
+
+    ' Store the value in the instance
+    cZWaveNode.Instances[iInstanceId].Values[iValueId] = cData["value"] & cData["unit"]
   Endif
 
-  If ZWaveNetwork.Exist("node=" & sZWaveNode) Then
-    cNode = ZWaveNetwork["node=" & sZWaveNode]
-    cNode.Values[iValueId] = cData["value"]
-  Endif
-
+  ' Determine the address of the Z-Wave node
   If iInstanceId = 1 Then
     sAddress = iNodeId
   Else
@@ -1794,13 +2014,193 @@ Private Sub Call_OpenZWave_SetValue(cData As Collection)
 
   ' Update device value
   If $bDebug Then Main.WriteDebugLog(LogLabel & "Got value changed notification for node " & iNodeid & " and instance " & iInstanceId & " value" & iValueId & " changed to " & cData["value"] & ".")
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("Z-Wave Controller"), "ZWAVE")
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, cZWaveNode.DeviceType)
   If iValueId = 255 Then ' battery level
     If iDeviceId Then Devices.Battery(iDeviceId, cData["value"])
   Else ' device value
-    If iDeviceId Then Devices.ValueUpdateExt(iDeviceId, iValueId, cData["value"])
+    If iDeviceId Then Devices.ValueUpdate(iDeviceId, iValueId, cData["value"])
   Endif
 
-  hJSONRPC.SetReply(0, True)
+  SetReply(0, True)
 
 End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Retrieves the OpenZWave instance information for JSON-RPC and OpenZWave Commander
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub JsonRpc_Tools_OpenZWave_Get(cData As JSONCollection) As JSONCollection
+
+  Dim cZWaveNode As New OpenZWaveEntry
+  Dim iZWaveCount As Integer
+  Dim cNode As New JSONCollection
+  Dim aNodes As New Collection[]
+  Dim oInstance As Object
+  Dim cResult As New JSONCollection
+  Dim cValue1 As New JSONCollection
+  Dim cValue2 As New JSONCollection
+  Dim aValue1 As New Collection[]
+  Dim aValue2 As New Collection[]
+  Dim sValue As String
+  Dim iTemp As Integer
+  Dim iCnt As Integer
+
+  If cData = Null Then Return Null
+
+  Select cData["command"]
+
+    ' Get controller information. If working, which API, HomeId, etc
+    Case "controller"
+      cResult.Add(Instance, "instance_id")
+      cResult.Add(IsRunning, "running")
+      If Not IsRunning Then cResult.Add(ErrorText, "errortext")
+      cResult.Add($sSerPort, "serialport")
+      cResult.Add(GetHomeId(), "homeid")
+      cResult.Add(GetControllerId(), "controllerid")
+      cResult.Add(GetControllerType(), "controllertype")
+      cResult.Add(GetAPIVersion(), "apiversion")
+      cResult.Add(GetSDKVersion(), "sdkversion")
+      cResult.Add(GetWrapperVersion(), "wrapperversion")
+      cResult.Add(GetOZWVersion(), "ozwversion")
+      cResult.Add(bAllQueried, "allqueried")
+
+      Try cResult.Add(JSON.Decode(DomoZWave_GetDriverStatistics(iHomeId), True), "statistics")
+
+      iZWaveCount = 0
+      For Each cZWaveNode In ZWaveNetwork
+        iZWaveCount += 1
+        cNode = New JSONCollection
+
+        cNode.Add(cZWaveNode.NodeId, "node_id")
+        cNode.Add(DomoZWave_BasicTypeName(cZWaveNode.Basic), "basic")
+        cNode.Add(DomoZWave_GenericTypeName(cZWaveNode.Generic), "generic")
+        cNode.Add(DomoZWave_SpecificTypeName(cZWaveNode.Generic, cZWaveNode.Specific), "specific")
+        cNode.Add(cZWaveNode.Listening, "listening")
+        cNode.Add(cZWaveNode.FrequentListening, "frequentlistening")
+        cNode.Add(cZWaveNode.Routing, "routing")
+        cNode.Add(cZWaveNode.Security, "security")
+        cNode.Add(cZWaveNode.Beaming, "beaming")
+        cNode.Add(cZWaveNode.MaxBaudrate, "maxbaudrate")
+        cNode.Add(GetNodeManufacturerName(cZWaveNode.NodeId), "manufacturername")
+        cNode.Add(GetNodeManufacturerId(cZWaveNode.NodeId), "manufacturerid")
+        cNode.Add(GetNodeProductName(cZWaveNode.NodeId), "productname")
+        cNode.Add(GetNodeNeighborsList(cZWaveNode.NodeId), "neighbors")
+        cNode.Add(GetNodeCommandClassList(cZWaveNode.NodeId), "commandclass")
+        If iControllerId = cZWaveNode.NodeId Then ' Add controller sdk, because it isn't in the node info
+          cNode.Add(cResult["sdkversion"], "sdkversion")
+          cNode.Add(GetNodeProtocolVersion(cZWaveNode.NodeId), "protocolversion")
+          cNode.Add(GetLibraryTypeName(), "librarytype")
+        Else
+          cNode.Add(SDKVersion(GetNodeProtocolVersion(cZWaveNode.NodeId)), "sdkversion")
+          cNode.Add(GetNodeProtocolVersion(cZWaveNode.NodeId), "protocolversion")
+        Endif
+
+        cNode.Add(IIf(InStr(cNode["commandclass"], "WAKE_UP"), True, False), "wakeup")
+        cNode.Add(IIf(InStr(cNode["commandclass"], "BATTERY"), True, False), "battery")
+        If cZWaveNode.Instances Then
+          cNode.Add(IIf(cZWaveNode.Instances.Count > 1, True, False), "multiinstance")
+        Else
+          cNode.Add(False, "multiinstance")
+        Endif
+
+        cNode.Add(GetNodeApplicationVersion(cZWaveNode.NodeId), "applicationversion")
+        cNode.Add(GetNodeLibraryVersion(cZWaveNode.NodeId), "libraryversion")
+        cNode.Add(GetNodeQueryStage(cZWaveNode.NodeId), "querystage")
+        cNode.Add(GetNodeStatus(cZWaveNode.NodeId), "state")
+        cNode.Add(GetNodeLastSeen(cZWaveNode.NodeId), "lastseen")
+        cNode.Add(GetNodeName(cZWaveNode.NodeId), "customname")
+        cNode.Add(GetNodeLocation(cZWaveNode.NodeId), "customlocation")
+        Try cNode.Add(JSON.Decode(DomoZWave_GetNodeStatistics(iHomeId, cZWaveNode.NodeId), True), "statistics")
+
+        ' Add instance and values
+        aValue1 = New Collection[]
+        For Each oInstance In cZWaveNode.Instances
+          cValue1 = New JSONCollection
+          cValue1.Add(CInt(cZWaveNode.Instances.Key), "instance_id")
+
+          aValue2 = New Collection[]
+          For Each sValue In oInstance.Values
+            Try iTemp = CInt(oInstance.Values.Key) 
+            If Not Error Then
+              cValue2 = New JSONCollection
+              cValue2.Add(iTemp, "valuenum")
+              cValue2.Add(sValue, "value")
+              aValue2.Add(cValue2)
+            Endif
+          Next
+
+          cValue1.Add(aValue2, "values")
+          aValue1.Add(cValue1)
+        Next
+
+        ' Add the instance information to the nodeinfo
+        cNode.Add(aValue1, "instances")
+
+        ' Add config items
+        aValue1 = New Collection[]
+        cValue1 = New JSONCollection
+
+        Try cValue1 = JSON.Decode(DomoZWave_GetNodeConfig(iHomeId, cZWaveNode.NodeId), True)
+        If Not Error And If cValue1 Then
+          If cValue1.Exist("config") Then
+            aValue1 = cValue1["config"]
+
+            If aValue1.Count >= 1 Then
+              cNode.Add(aValue1, "config")
+            Endif
+          Endif
+        Endif
+
+        ' Add group items
+        aValue1 = New Collection[]
+        cValue1 = New JSONCollection
+
+        Try cValue1 = JSON.Decode(DomoZWave_GetNodeGroup(iHomeId, cZWaveNode.NodeId), True)
+        If Not Error And If cValue1 Then
+          If cValue1.Exist("group") Then
+            aValue1 = cValue1["group"]
+
+            If aValue1.Count >= 1 Then
+              cNode.Add(aValue1, "group")
+            Endif
+          Endif
+        Endif
+
+        ' Add wakeup timer
+        iCnt = GetNodeWakeUpInterval(cZWaveNode.NodeId)
+        If iCnt >= 1 Then
+          cNode.Add(iCnt, "wakeup_interval")
+        Endif
+
+        ' Add usercode items
+        aValue1 = New Collection[]
+        cValue1 = New JSONCollection
+
+        Try cValue1 = JSON.Decode(DomoZWave_GetNodeUserCode(iHomeId, cZWaveNode.NodeId), True)
+        If Not Error And If cValue1 Then
+          If cValue1.Exist("usercode") Then
+            aValue1 = cValue1["usercode"]
+
+            If aValue1.Count >= 1 Then
+              cNode.Add(aValue1, "usercode")
+            Endif
+          Endif
+        Endif
+
+
+        ' Add nodeinfo to an array
+        aNodes.Add(cNode)
+      Next
+
+      ' Update the end result, with the number of nodes and their information
+      cResult.Add(iZWaveCount, "count")
+      cResult.Add(aNodes, "nodeinfo")
+
+    Default
+      Return Null
+
+  End Select
+
+  Return cResult
+
+End
+

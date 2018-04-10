@@ -5,7 +5,7 @@
 ' Contains code for sending Pushover messages
 
 ' Development Status:
-' Works.
+' Finished
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -16,9 +16,8 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Pushover"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "Pushover"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "1.01"
 Public PluginAuthor As String = "Alexander Kuiper"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -33,7 +32,7 @@ Public ErrorWhere As String
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Priority and Sound definitions
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Priority_List As String[] = [("Normal (0)"), ("Low (-1)"), ("High (1)"), ("Emergency(2)")] 
+Public Priority_List As String[] = [("Normal (0)"), ("Lowest (-2)"), ("Low (-1)"), ("High (1)"), ("Emergency(2)")]
 Public Sound_List As String[] = [("pushover (default)"), ("bike"), ("bugle"), ("cashregister"), ("classical"), ("cosmic"), ("falling"), ("gamelan"), ("incoming"), ("intermission"), ("magic"), ("mechanical"), ("pianobar"), ("siren"), ("spacealarm"), ("tugboat"), ("alien"), ("climb"), ("persistent"), ("echo"), ("updown"), ("none")]
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -49,7 +48,7 @@ Public hPushoverMessage As HttpClient
 Public cPushoverData As New Collection
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -59,7 +58,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   KeyName = cPl.KeyName
   Instance = cPl.Instance
   If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
-  
+
   ' Copy configuration items locally
   $bEnabled = cPl.Settings["enabled"]
   $bDebug = cPl.Settings["debug"]
@@ -67,17 +66,15 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sUser = cPl.Settings["user"]
   $sDevice = cPl.Settings["device"]
 
-  ' Initialize 
+  ' Initialize
   IsRunning = True
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
-
-
 
 End
 
@@ -205,7 +202,6 @@ Public Sub PostPushover(sDevice As String, sMessage As String, sPriority As Stri
 
   ' Find free tag, between 1 and 99. Normally we should never go over 1 thread
   For Bucle = 1 To 100
-    If Bucle = 100 Then Break
     If Not cPushoverData.Exist(Bucle) Then Break
   Next
 

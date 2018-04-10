@@ -12,11 +12,10 @@
 
 ' Read file called COPYING for license details.
 
-Public rResult As Result
+Public rResultDevice As Result
 Public rResultType As Result
 Public rResultInterface As Result
 Public rResultInterfaces As Result
-Public rResultLocations As Result
 Public rResultLocation As Result
 Public rResultGroups As Result
 Public rResultDeviceTypes As Result
@@ -24,12 +23,30 @@ Public rResultFloorplan As Result
 Public bAddDevice As Boolean
 Private sCurrentDeviceName As String
 
+' device values editor
+Private iSortValuesColumn As Integer
+Private bSortValuesColumn As Boolean
+Private mDeviceValues As Menu
+
+' id of device to edit
+Private $iDeviceId As Integer
+
+Public Sub Run(Optional iId As Integer)
+
+  $iDeviceId = iId
+  If Not $iDeviceId Then bAddDevice = True
+  Me.Show()
+
+End
+
 Public Sub Form_Open()
 
   Me.Move(FMain.X + 50, FMain.Y + 70)
   cmbHouseCode.Hide
   spDeviceCode.Hide
   LoadDevice()
+  GetValueList()
+  CreateDeviceValuesMenu()
 
   ' Hide deviceid if this is an add and set "enabled" by default
   If bAddDevice Then
@@ -49,7 +66,7 @@ Public Sub LoadDevice()
   Dim cDeviceType As New Collection
   Dim sDeviceType As String
 
-  ' fill combo with available modules/devicetypes
+  ' fill combo with available devicetypes
   cmbModule.Add(" ")
   cmbDeviceType.Add(" ")
   Try rResultDeviceTypes = Main.hDB.Exec("SELECT * FROM devicetypes ORDER BY name")
@@ -58,9 +75,9 @@ Public Sub LoadDevice()
       For Each rResultDeviceTypes
         cmbModule.Add(rResultDeviceTypes!name)
         ' weed out double device types
-        If Len(rResultDeviceTypes!type)
-          If cDeviceType.Exist(rResultDeviceTypes!type) Then Continue
-          cDeviceType.Add(rResultDeviceTypes!type, rResultDeviceTypes!type)
+        If Len(rResultDeviceTypes!protocol)
+          If cDeviceType.Exist(rResultDeviceTypes!protocol) Then Continue
+          cDeviceType.Add(rResultDeviceTypes!protocol, rResultDeviceTypes!protocol)
         Endif
       Next
       For Each sDeviceType In cDeviceType
@@ -75,11 +92,11 @@ Public Sub LoadDevice()
 
   ' fill combo with available interfaces
   cmbInterface.Add(" ")
-  Try rResultInterfaces = Main.hDB.Exec("SELECT * FROM interfaces ORDER BY name")
+  Try rResultInterfaces = Main.hDB.Exec("SELECT * FROM plugins ORDER BY interface")
   If rResultInterfaces Then
     If rResultInterfaces.Count Then
       For Each rResultInterfaces
-        cmbInterface.Add(rResultInterfaces!name)
+        If rResultInterfaces!protocols Then cmbInterface.Add(rResultInterfaces!interface)
       Next
     Else
       Message(("No interfaces found!"))
@@ -90,31 +107,173 @@ Public Sub LoadDevice()
 
   ' fill available groups list
   rResultGroups = Main.hDB.Exec("SELECT * FROM groups ORDER BY name")
-  If rResultGroups Then
-    If rResultGroups.Count Then
-      For Each rResultGroups
-        Try lvGroupAvail.Add(rResultGroups!name, rResultGroups!name)
-      Next
-    Endif
+  If rResultGroups And If rResultGroups.Available Then
+    For Each rResultGroups
+      Try lvGroupAvail.Add(rResultGroups!name, rResultGroups!name)
+    Next
   Else
     Message(("No groups database table found!"))
   Endif
 
-  ' fill combo with available locations
-  cmbLocation.Add(" ")
-  rResultLocations = Main.hDB.Exec("SELECT * FROM locations ORDER BY name")
-  If rResultLocations Then
-    If rResultLocations.Count Then
-      For Each rResultLocations
-        cmbLocation.Add(rResultLocations!name)
-      Next
+  RefreshLocationsList()
+  RefreshFloorplansList()
+
+  If bAddDevice Then
+    tbX.Text = "0"
+    tbY.Text = "0"
+  Else
+    ' get selected device values
+    rResultDevice = Devices.GetDevicesAndValues(["device_id": $iDeviceId, "inc_device_values": False])
+    If rResultDevice And If rResultDevice.Available Then
+      tbDeviceId.Text = rResultDevice!device_id
+      tbName.Text = rResultDevice!device_name
+      FDeviceEditor.Title = "Editing Device: " & tbName.Text
+      sCurrentDeviceName = tbName.Text
+      ' cmbInstance.Index = rResult!device_instance_id
+      Try rResultType = Main.hDB.Exec("SELECT * FROM devicetypes WHERE id = &1", rResultDevice!device_devicetype_id)
+      If rResultType.Available Then
+        If rResultType.Count Then
+          cmbModule.Text = rResultType!name
+          cmbDeviceType.Text = rResultType!protocol
+          tbDeviceDescr.Text = rResultType!description
+          FillAddressFields(rResultType!protocol)
+          SelectAddressFields(rResultType!protocol, rResultType!addressformat)
+        Endif
+      Endif
+
+      ' load device picture if available
+      LoadDeviceImage()
+      ' select interface
+      Try rResultInterface = Main.hDB.Exec("SELECT * FROM plugins WHERE id = &1", rResultDevice!device_interface_id)
+      If rResultInterface And If rResultInterface.Count Then cmbInterface.Text = rResultInterface!interface
+
+      ' select location
+      Try rResultLocation = Main.hDB.Exec("SELECT * FROM locations WHERE id = &1", rResultDevice!device_location_id)
+      If rResultLocation And If rResultLocation.Count Then
+        Try cmbLocation.Text = rResultLocation!name
+      Else
+        cmbLocation.Text = ("Not Defined")
+      Endif
+
+      ' load instance list and value
+      RefreshInstancesList()
+      cmbInstance.Index = rResultDevice!device_instance_id - 1
+
+      ' put groups in selected or available groups list
+      rResultGroups = Main.hDB.Exec("SELECT * FROM groups")
+      If (rResultGroups.Count >= 1) Then
+        For Each rResultGroups
+          If InStr("|" & rResultDevice!device_groups & "|", "|" & rResultGroups!name & "|") Then
+            Try lvGroupActive.Add(rResultGroups!name, rResultGroups!name)
+            Try lvGroupAvail.Remove(rResultGroups!name)
+          Endif
+        Next
+      Endif
+
+      ' rest of fields
+      tbOnIcon.Text = rResultDevice!device_onicon
+      tbOffIcon.Text = rResultDevice!device_officon
+      tbDimIcon.Text = rResultDevice!device_dimicon
+      Try tbLastSeen.Text = Replace$(Str$(Format(rResultDevice!device_lastseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
+      Try tbFirstSeen.Text = Replace$(Str$(Format(rResultDevice!device_firstseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
+      Try tbLastChanged.Text = Replace$(Str$(Format(rResultDevice!device_lastchanged, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
+
+      DisplayIcons()
+
+      Try chkEnabled.Value = rResultDevice!device_enabled
+      Try chkHide.Value = rResultDevice!device_hide
+      Try chkSwitchable.Value = rResultDevice!device_switchable
+      Try chkDimable.Value = rResultDevice!device_dimable
+      Try chkExtended.Value = rResultDevice!device_extcode
+      Try chkRepeat.Value = rResultDevice!device_repeatstate
+      Try chkDisabledOpenZWavePoll.Value = rResultDevice!device_poll
+      vbRepeatPeriod.Value = rResultDevice!device_repeatperiod
+      vbRepeatPeriod.Enabled = chkRepeat.Value
+      Try chkReset.Value = rResultDevice!device_reset
+      vbResetPeriod.Value = rResultDevice!device_resetperiod
+      vbResetPeriod.Enabled = chkReset.Value
+      tbResetValue.Text = rResultDevice!device_resetvalue
+      tbResetValue.Enabled = chkReset.Value
+
+      tbComments.Text = rResultDevice!device_comments
+      tbBatt.Text = rResultDevice!device_batterystatus
+
+      ' floorplan values
+      tbX.Text = rResultDevice!device_x
+      tbY.Text = rResultDevice!device_y
+
+      ' select floorplan
+      rResultFloorplan = Main.hDB.Exec("SELECT * FROM floors WHERE floor = &1", rResultDevice!device_floorplan_id)
+      If rResultFloorplan.Count Then
+        cmbFloorplan.Text = rResultFloorplan!name
+      Else
+        cmbFloorplan.Text = ("Not Defined")
+      Endif
+    Else
+      Message(("Couldn't load device record!"))
+      Me.Close
     Endif
+  Endif
+
+End
+
+Public Sub RefreshInstancesList()
+
+  Dim rResultInterfaceSelected As Result
+  Dim iMax As Integer = 1
+  Dim iInstance As Integer
+
+  Try rResultInterfaceSelected = Main.hDB.Exec("SELECT name FROM plugins WHERE interface = &1", cmbInterface.Text)
+  If rResultInterfaceSelected.Available Then
+    iMax = GetMaxInstanceforPlugin(LCase(rResultInterfaceSelected!name))
+  Endif
+
+  cmbInstance.Clear
+  If iMax Then
+    For iInstance = 1 To iMax
+      cmbInstance.Add("Instance #" & iInstance)
+    Next
+  Endif
+
+End
+
+Private Sub GetMaxInstanceforPlugin(sPluginName As String) As Integer
+
+  Dim iMaxInstance As Integer
+
+  If Main.bServer Then
+    iMaxInstance = Plugin.GetPluginMaxInstances(sPluginName)
+  Else
+    ' FIXME: We are running in client/server mode - call json
+    iMaxInstance = 9
+  Endif
+
+  Return IIf(iMaxInstance, iMaxInstance, 1)
+
+End
+
+Public Sub RefreshLocationsList()
+
+  Dim rResult As Result
+
+  ' fill combo with available locations
+  cmbLocation.Clear
+  cmbLocation.Add("")
+  rResult = Main.hDB.Exec("SELECT * FROM locations ORDER BY name")
+  If rResult And If rResult.Available Then
+    For Each rResult
+      cmbLocation.Add(rResult!name)
+    Next
   Else
     Message(("No locations database table found!"))
   Endif
 
+End
+
+Public Sub RefreshFloorplansList()
+
   ' fill combo with available floorplans
-  cmbFloorplan.Add(" ")
+  cmbFloorplan.Clear
   rResultFloorplan = Main.hDB.Exec("SELECT * FROM floors ORDER BY name")
   If rResultFloorplan Then
     If rResultFloorplan.Count Then
@@ -126,92 +285,6 @@ Public Sub LoadDevice()
     Message(("No floorplans database table found!"))
   Endif
 
-  If Not bAddDevice Then
-    ' get selected device values
-    rResult = Devices.GetDevicesAndValues(["device_id": FDevices.tbvDevices[FDevices.iCurRow, 0].Text, "inc_device_values": False])
-    If rResult.Count >= 1 Then
-      tbDeviceId.Text = rResult!device_id
-      tbName.Text = rResult!device_name
-      FDeviceEditor.Title = "Edit Device: " & tbName.Text
-      sCurrentDeviceName = tbName.Text
-      Try rResultType = Main.hDB.Exec("SELECT * FROM devicetypes WHERE id = &1", rResult!device_module_id)
-      If rResultType.Count Then
-        cmbModule.Text = rResultType!name
-        cmbDeviceType.Text = rResultType!type
-        tbDeviceDescr.Text = rResultType!description
-        FillAddressFields(rResultType!type)
-        SelectAddressFields(rResultType!type, rResultType!addressformat)
-      Endif
-      ' load device picture if available
-      LoadDeviceImage()
-      ' select interface
-      Try rResultInterface = Main.hDB.Exec("SELECT * FROM interfaces WHERE id = &1", rResult!device_interface_id)
-      If rResultInterface.Count Then cmbInterface.Text = rResultInterface!name
-
-      ' select location
-      rResultLocation = Main.hDB.Exec("SELECT * FROM locations WHERE id = &1", rResult!device_location_id)
-      If rResultLocation.Count Then
-        Try cmbLocation.Text = rResultLocation!name
-      Else
-        cmbLocation.Text = ("Not Defined")
-      Endif
-
-      ' put groups in selected or available groups list
-      rResultGroups = Main.hDB.Exec("SELECT * FROM groups")
-      If (rResultGroups.Count >= 1) Then
-        For Each rResultGroups
-          If InStr("|" & rResult!device_groups & "|", "|" & rResultGroups!name & "|") Then
-            Try lvGroupActive.Add(rResultGroups!name, rResultGroups!name)
-            Try lvGroupAvail.Remove(rResultGroups!name)
-          Endif
-        Next
-      Endif
-
-      ' rest of fields
-      tbOnIcon.Text = rResult!device_onicon
-      tbOffIcon.Text = rResult!device_officon
-      tbDimIcon.Text = rResult!device_dimicon
-      Try tbLastSeen.Text = Replace$(Str$(Format(rResult!device_lastseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
-      Try tbFirstSeen.Text = Replace$(Str$(Format(rResult!device_firstseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
-      Try tbLastChanged.Text = Replace$(Str$(Format(rResult!device_lastchanged, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
-      
-      DisplayIcons()
-
-      Try chkEnabled.Value = rResult!device_enabled
-      Try chkHide.Value = rResult!device_hide
-      Try chkSwitchable.Value = rResult!device_switchable
-      Try chkDimable.Value = rResult!device_dimable
-      Try chkExtended.Value = rResult!device_extcode
-      Try chkRepeat.Value = rResult!device_repeatstate
-      Try chkDisabledOpenZWavePoll.Value = rResult!device_poll
-      vbRepeatPeriod.Value = rResult!device_repeatperiod
-      vbRepeatPeriod.Enabled = chkRepeat.Value
-      Try chkReset.Value = rResult!device_reset
-      vbResetPeriod.Value = rResult!device_resetperiod
-      vbResetPeriod.Enabled = chkReset.Value
-      tbResetValue.Text = rResult!device_resetvalue
-      tbResetValue.Enabled = chkReset.Value
-
-      tbComments.Text = rResult!device_comments
-      tbBatt.Text = rResult!device_batterystatus
-      ' floorplan values
-      tbX.Text = rResult!device_x
-      tbY.Text = rResult!device_y
-
-      ' select floorplan
-      rResultFloorplan = Main.hDB.Exec("SELECT * FROM floors WHERE floor = &1", rResult!device_floorplan)
-      If rResultFloorplan.Count Then
-        cmbFloorplan.Text = rResultFloorplan!name
-      Else
-        cmbFloorplan.Text = ("Not Defined")
-      Endif
-
-    Else
-      Message(("Couldn't load device record!"))
-      Me.Close
-    Endif
-  Endif
-
 End
 
 Public Sub RefreshDeviceType()
@@ -219,8 +292,8 @@ Public Sub RefreshDeviceType()
   rResultType = Main.hDB.Exec("SELECT * FROM devicetypes WHERE name = &1", cmbModule.Text)
   If rResultType.Count Then
     ' enable correct address fields
-    SelectAddressFields(rResultType!type, rResultType!addressformat)
-    cmbDeviceType.Text = rResultType!type
+    SelectAddressFields(rResultType!protocol, rResultType!addressformat)
+    cmbDeviceType.Text = rResultType!protocol
     tbDeviceDescr.Text = rResultType!description
   Endif
 
@@ -231,11 +304,11 @@ Public Sub DoesInterfaceDoDeviceType() As Boolean
   Dim rResultInt, rResultDevType As Result
   Dim sDevProtocol, sIntProtocol As String
 
-  rResultDevType = Main.hDB.Exec("SELECT type FROM devicetypes WHERE name = &1", cmbModule.Text)
-  sDevProtocol = rResultDevType!type
+  rResultDevType = Main.hDB.Exec("SELECT protocol FROM devicetypes WHERE name = &1", cmbModule.Text)
+  sDevProtocol = rResultDevType!protocol
 
-  rResultInt = Main.hDB.Exec("SELECT type FROM interfaces WHERE name = &1", cmbInterface.Text)
-  sIntProtocol = rResultInt!type
+  rResultInt = Main.hDB.Exec("SELECT protocols FROM plugins WHERE interface = &1", cmbInterface.Text)
+  sIntProtocol = rResultInt!protocols
 
   If InStr(sIntProtocol, sDevProtocol) Then
     Return True
@@ -254,7 +327,7 @@ End
 
 Public Sub GetInterface() As Integer
 
-  rResultInterface = Main.hDB.Exec("SELECT id FROM interfaces WHERE name = &1", cmbInterface.Text)
+  rResultInterface = Main.hDB.Exec("SELECT id FROM plugins WHERE interface = &1", cmbInterface.Text)
   Return rResultInterface!id
 
 End
@@ -297,14 +370,15 @@ Public Sub SelectAddressFields(sType As String, sAddressFormat As String)
       lblOther.Text = ("Zone Name")
     Case "Weeder"
       lblOther.Text = ("Output")
-    Case "X10", "KAKU", "ARC", "PLCBUS", "Harrison", "Koppla", "Flamingo", "Waveman", "Impuls", "HE105", "RTS10", "RisingSun", "PhilipsSBC", "EMW200", "AB400"
+    Case "X10", "KAKU", "ARC", "PLCBUS", "Harrison", "Koppla", "Flamingo", "Waveman", "Impuls", "HE105", "RTS10", "RisingSun", "PhilipsSBC", "EMW200", "AB400", "Energenie"
       cmbHouseCode.Show
       spDeviceCode.Show
       tbOtherAddress.Hide
       lblOther.Hide
       lblX10.Show
       cmbHouseCode.Enabled = True
-    Case "KNX/EIB"
+    Case "KNX"
+      lblOther.Text = ("Grp Addr.")
     Case "Z-Wave"
       lblOther.Text = ("Node ID")
       chkDisabledOpenZWavePoll.Enabled = True
@@ -314,6 +388,8 @@ Public Sub SelectAddressFields(sType As String, sAddressFormat As String)
       lblOther.Text = ("Addr.Str.")
     Case "K8055"
       lblOther.Text = ("Port")
+    Case "MQTT"
+      lblOther.Text = ("Topic")
     Case Else
       lblOther.Text = ("Address")
   End Select
@@ -324,18 +400,18 @@ End
 Public Sub FillAddressFields(sType As String)
 
   Select Case sType
-    Case "X10", "KAKU", "ARC", "PLCBUS", "Harrison", "Koppla", "Flamingo", "Waveman", "Impuls", "HE105", "RTS10", "RisingSun", "PhilipsSBC", "EMW200", "AB400"
+    Case "X10", "KAKU", "ARC", "PLCBUS", "Harrison", "Koppla", "Flamingo", "Waveman", "Impuls", "HE105", "RTS10", "RisingSun", "PhilipsSBC", "EMW200", "AB400", "Energenie"
       ' fill address fields
-      If rResult!device_address Then
-        cmbHouseCode.Text = Left$(rResult!device_address, 1)
-        Try spDeviceCode.Value = Right$(rResult!device_address, 2)
+      If rResultDevice!device_address Then
+        cmbHouseCode.Text = Left$(rResultDevice!device_address, 1)
+        Try spDeviceCode.Value = Right$(rResultDevice!device_address, 2)
         If Error Then
-          Try spDeviceCode.Value = Right$(rResult!device_address, 1)
+          Try spDeviceCode.Value = Right$(rResultDevice!device_address, 1)
         Endif
       Endif
     Case Else
-      If rResult!device_address Then
-        tbOtherAddress.Text = rResult!device_address
+      If rResultDevice!device_address Then
+        tbOtherAddress.Text = rResultDevice!device_address
       Endif
   End Select
 
@@ -360,6 +436,7 @@ End
 Public Sub cmbInterface_Click()
 
   btnSave.Enabled = True
+  RefreshInstancesList()
 
 End
 
@@ -450,7 +527,7 @@ Private Sub LoadDeviceImage()
     Try pbDevice.Picture = Picture.Load(sImage)
     If Error Then
       pbDevice.Hide
-      txtDeviceImage.Text = sName2 & ".jpg\n" & sName & ".jpg"
+      txtDeviceImage.Text = IIf(sName2, sName2 & ".jpg\n", "") & IIf(sName, sName & ".jpg", "")
       txtDeviceImage.Show
     Else
       pbDevice.Show
@@ -495,7 +572,7 @@ Public Sub btnDeleteDevice_Click()
 
   Select Message.Question(("Are you sure that you want to delete this device?"), ("Yes"), ("No"))
     Case 1
-      Devices.DeleteDevice(rResult!device_id)
+      Devices.DeleteDevice(rResultDevice!device_id)
       Me.Close
       FDevices.GetDeviceList()
   End Select
@@ -513,30 +590,32 @@ Private Sub DeviceNameExist(sName As String, Optional iDeviceId As Integer) As B
 
 End
 
-Private Sub DeviceAddressExist(sAddress As String, iInterface As Integer, Optional iDeviceId As Integer) As Boolean
+Private Sub DeviceAddressExist(sAddress As String, iInterface As Integer, iInstance As Integer, Optional iDeviceId As Integer) As Boolean
 
-  Dim rResultDevice As Result
+  Dim rResult As Result
 
   If Len(sAddress) = 0 Then Return True
 
-  rResultDevice = Main.hDB.Exec("SELECT id,address FROM devices WHERE interface = &1 AND enabled is TRUE", iInterface)
-  If rResultDevice Then
-    If rResultDevice.Count Then
-      For Each rResultDevice
-        If iDeviceId Then
-          If sAddress = rResultDevice!address And If rResultDevice!id <> iDeviceId Then Return True
-        Else
-          If sAddress = rResultDevice!address Then Return True
-        Endif
-      Next
-    Endif
+  rResult = Main.hDB.Exec("SELECT id, address FROM devices WHERE interface_id = &1 AND instance_id = &2", iInterface, iInstance)
+  If rResult And If rResult.Available Then
+    For Each rResult
+      If iDeviceId Then
+        If sAddress = rResult!address And If rResult!id <> iDeviceId Then Return True
+      Else
+        If sAddress = rResult!address Then Return True
+      Endif
+    Next
   Endif
+
   Return False
 
 End
 
 Public Sub btnNewDevice_Click()
 
+  Dim rResultUpdate As Result
+  Dim sSql, sAddress, sGroups As String
+  Dim iLocation, iInterface, iDeviceType, iFloorplan As Integer
 
   If Not tbName.Text Then
     Balloon(("Please enter a name for this device!"), tbName)
@@ -547,7 +626,7 @@ Public Sub btnNewDevice_Click()
     Return
   Endif
   If Len(cmbModule.Text) < 2 Then
-    Balloon(("Please select a device type for this device!"), cmbModule)
+    Balloon(("Please select a devicetype for this device!"), cmbModule)
     Return
   Endif
   If Len(cmbInterface.Text) < 2 Then
@@ -555,7 +634,11 @@ Public Sub btnNewDevice_Click()
     Return
   Endif
   If Not DoesInterfaceDoDeviceType() Then
-    Balloon(("Selected interface does not support this devicetype!"), cmbDeviceType)
+    Balloon(("Selected interface does not support this protocol!"), cmbDeviceType)
+    Return
+  Endif
+  If Len(cmbInstance.Text) < 2 Then
+    Balloon(("Please select an instance for this device!"), cmbInstance)
     Return
   Endif
   If chkEnabled.Value = False And bAddDevice Then
@@ -566,40 +649,34 @@ Public Sub btnNewDevice_Click()
         ' you want it
     End Select
   Endif
-  If chkEnabled.Value = True Then
-    If DeviceAddressExist(GetAddress(), GetInterface()) Then
+  If chkEnabled.Value Then
+    If DeviceAddressExist(GetAddress(), GetInterface(), cmbInstance.Index) Then
       Balloon(("Please enter a unique address for this device!"), Frame2)
       Return
     Endif
   Endif
 
-  Main.hDB.Begin()
-  rResult = Main.hDB.Create("devices")
-  rResult!name = tbName.Text
-  rResult!module = GetDeviceType()
-  rResult!interface = GetInterface()
-  rResult!address = GetAddress()
-  rResult!location = GetLocation()
-  rResult!groups = GetGroups()
-  rResult!onicon = tbOnIcon.Text
-  rResult!officon = tbOffIcon.Text
-  rResult!dimicon = tbDimIcon.Text
-  rResult!comments = tbComments.Text
-  rResult!enabled = chkEnabled.Value
-  rResult!hide = chkHide.Value
-  rResult!switchable = chkSwitchable.Value
-  rResult!dimable = chkDimable.Value
-  rResult!poll = chkDisabledOpenZWavePoll.Value
-  If tbX.Text Then rResult!x = tbX.Text
-  If tbY.Text Then rResult!y = tbY.Text
-  rResult!floorplan = GetFloorplan()
-  rResult!repeatstate = chkRepeat.Value
-  rResult!repeatperiod = vbRepeatPeriod.Value
-  rResult!reset = chkReset.Value
-  rResult!resetperiod = vbRepeatPeriod.Value
-  rResult!resetvalue = tbResetValue.Text
-  rResult.Update()
-  Main.hDB.Commit()
+  iDeviceType = GetDeviceType()
+  iInterface = GetInterface()
+  sAddress = GetAddress()
+  iLocation = GetLocation()
+  sGroups = GetGroups()
+  iFloorplan = GetFloorplan()
+
+  ' Insert new devices in the device database
+  sSql = "INSERT INTO devices SET name = &1, devicetype_id = &2, interface_id = &3, address = &4, location_id = &5,"
+  sSql &= "officon = &{6}, onicon = &{7}, batterystatus = &{8}, comments = &{9}, enabled = &{10}, groups = &{11},"
+  sSql &= "hide = &{12}, switchable = &{13}, dimable = &{14},"
+  sSql &= "x = &{15}, y = &{16}, floorplan_id = &{17}, dimicon = &{18}, extcode = &{19},"
+  sSql &= "repeatstate = &{20}, repeatperiod = &{21}, reset = &{22}, resetperiod = &{23}, resetvalue = &{24}, poll = &{25}, instance_id = &{26}"
+
+  rResultUpdate = Main.hDB.Exec(sSql, tbName.Text, rResultType!id, iInterface, sAddress, iLocation, tbOffIcon.Text, tbOnIcon.Text, tbBatt.Text, tbComments.Text, chkEnabled.Value, sGroups, chkHide.Value, chkSwitchable.Value, chkDimable.Value, tbX.Text, tbY.Text, iFloorplan, tbDimIcon.Text, chkExtended.Value, chkRepeat.Value, vbRepeatPeriod.Value, chkReset.Value, vbResetPeriod.Value, tbResetValue.Text, chkDisabledOpenZWavePoll.Value, cmbInstance.Index + 1)
+
+  ' try to get id of created device and create empty value 1
+  Try rResultDevice = Main.hDB.Exec("SELECT MAX(id) AS lastid FROM devices")
+  If Not Devices.CreateValue(rResultDevice!lastid, 1, "") Then
+    Balloon("Couldn't autocreate device value1 !", btnSave)
+  Endif
   FDevices.GetDeviceList()
   If FControl.Visible Then FControl.ReloadPage()
   bAddDevice = False
@@ -608,12 +685,72 @@ Public Sub btnNewDevice_Click()
 
 End
 
+Public Sub CreateDeviceValuesMenu()
+
+  Dim mDelete As Menu
+
+  mDeviceValues = New Menu(FDeviceEditor)
+  mDelete = New Menu(mDeviceValues)
+  mDelete.Text = "Delete"
+  mDelete.Action = "delete"
+  mDeviceValues.Hide
+
+End
+
+Public Sub tbvDeviceValues_Menu()
+
+  If Main.bUserisAdmin Or Not Main.bAuthEnabled Then mDeviceValues.Popup()
+
+End
+
+Public Sub Action_Activate(sKey As String) As Boolean
+
+  Dim iValNum, iSelect, iRow As Integer
+  Dim sValues As String
+
+  If tbvDeviceValues.Row = -1 Then Return
+  iRow = tbvDeviceValues.Row
+  ' one row selected
+  If tbvDeviceValues.Rows.Selection.Count = 1 Then
+    iValNum = tbvDeviceValues[iRow, 1].Text
+    If iValNum Then
+      Select Case key
+        Case "delete"
+          Select Message.Question(("Are you sure that you want to delete 'Value" & tbvDeviceValues[iRow, 1].Text & "' from this device?"), ("Yes"), ("No"))
+            Case "1"
+              Devices.DeleteDeviceValue(rResultDevice!device_id, iValNum)
+              GetValueList()
+          End Select
+      End Select
+    Endif
+  ' more than one row selected
+  Else If tbvDeviceValues.Rows.Selection.Count > 1 Then
+    Select Case sKey
+      Case "delete"
+        For Each iSelect In tbvDeviceValues.Rows.Selection
+          sValues &= "'Value" & tbvDeviceValues[iSelect, 1].Text & "'\n"
+        Next
+        Select Message.Question(("Are you sure that you want to delete these values from this device?\n" & sValues), ("Yes"), ("No"))
+          Case "1"
+            For Each iSelect In tbvDeviceValues.Rows.Selection
+              iValNum = tbvDeviceValues[iSelect, 1].Text
+              Devices.DeleteDeviceValue(rResultDevice!device_id, iValNum)
+            Next
+            GetValueList()
+        End Select
+    End Select
+
+  Endif
+
+End
+
 Public Sub btnSave_Click()
+
   Dim rResultUpdate As Result
   Dim sSql, sAddress, sGroups As String
   Dim iLocation, iInterface, iDeviceType, iFloorplan As Integer
 
- If bAddDevice Then
+  If bAddDevice Then
     btnNewDevice_Click()
     Return
   Endif
@@ -621,7 +758,7 @@ Public Sub btnSave_Click()
     Balloon(("Please enter a name for this device!"), tbName)
     Return
   Endif
-  If DeviceNameExist(tbName.Text, rResult!device_id) Then
+  If DeviceNameExist(tbName.Text, rResultDevice!device_id) Then
     Balloon(("Please enter a unique name for this device!"), tbName)
     Return
   Endif
@@ -633,11 +770,14 @@ Public Sub btnSave_Click()
     Balloon(("Please select an interface for this device!"), cmbInterface)
     Return
   Endif
+  If Len(cmbInstance.Text) < 2 Then
+    Balloon(("Please select an instance for this device!"), cmbInstance)
+    Return
+  Endif
   If Not DoesInterfaceDoDeviceType() Then
     Balloon(("Selected interface does not support this devicetype!"), cmbDeviceType)
     Return
   Endif
-
 
   If chkEnabled.Value = False And chkHide.Value = False And bAddDevice = True Then
     Select Message.Question(("You haven't enabled this device, shall I enabled it?"), ("Yes"), ("No"))
@@ -648,11 +788,12 @@ Public Sub btnSave_Click()
     End Select
   Endif
   If chkEnabled.Value = True Then
-    If DeviceAddressExist(GetAddress(), GetInterface(), rResult!device_id) Then
+    If DeviceAddressExist(GetAddress(), GetInterface(), cmbInstance.Index + 1, rResultDevice!device_id) Then
       Balloon(("Please enter a unique address for this device!"), Frame2)
       Return
     Endif
   Endif
+
   iDeviceType = GetDeviceType()
   iInterface = GetInterface()
   sAddress = GetAddress()
@@ -661,13 +802,13 @@ Public Sub btnSave_Click()
   iFloorplan = GetFloorplan()
 
   ' save new device settings
-  sSql = "UPDATE devices SET name = &1, module = &2, interface = &3, address = &4, location = &5,"
+  sSql = "UPDATE devices SET name = &1, devicetype_id = &2, interface_id = &3, address = &4, location_id = &5,"
   sSql &= "officon = &{6}, onicon = &{7}, batterystatus = &{8}, comments = &{9}, enabled = &{10}, groups = &{11},"
   sSql &= "hide = &{12}, switchable = &{13}, dimable = &{14},"
-  sSql &= "x = &{15}, y = &{16}, floorplan = &{17}, dimicon = &{18}, extcode = &{19},"
-  sSql &= "repeatstate = &{20}, repeatperiod = &{21}, reset = &{22}, resetperiod = &{23}, resetvalue = &{24}, poll = &{25} WHERE id = &{26}"
+  sSql &= "x = &{15}, y = &{16}, floorplan_id = &{17}, dimicon = &{18}, extcode = &{19},"
+  sSql &= "repeatstate = &{20}, repeatperiod = &{21}, reset = &{22}, resetperiod = &{23}, resetvalue = &{24}, poll = &{25}, instance_id = &{26} WHERE id = &{27}"
 
-  rResultUpdate = Main.hDB.Exec(sSql, tbName.Text, rResultType!id, iInterface, sAddress, iLocation, tbOffIcon.Text, tbOnIcon.Text, tbBatt.Text, tbComments.Text, chkEnabled.Value, sGroups, chkHide.Value, chkSwitchable.Value, chkDimable.Value, tbX.Text, tbY.Text, iFloorplan, tbDimIcon.Text, chkExtended.Value, chkRepeat.Value, vbRepeatPeriod.Value, chkReset.Value, vbResetPeriod.Value, tbResetValue.Text, chkDisabledOpenZWavePoll.Value, rResult!device_id)
+  rResultUpdate = Main.hDB.Exec(sSql, tbName.Text, rResultType!id, iInterface, sAddress, iLocation, tbOffIcon.Text, tbOnIcon.Text, tbBatt.Text, tbComments.Text, chkEnabled.Value, sGroups, chkHide.Value, chkSwitchable.Value, chkDimable.Value, tbX.Text, tbY.Text, iFloorplan, tbDimIcon.Text, chkExtended.Value, chkRepeat.Value, vbRepeatPeriod.Value, chkReset.Value, vbResetPeriod.Value, tbResetValue.Text, chkDisabledOpenZWavePoll.Value, cmbInstance.Index + 1, rResultDevice!device_id)
 
   FDevices.GetDeviceList()
   If FControl.Visible Then FControl.ReloadPage()
@@ -742,7 +883,16 @@ End
 
 Public Sub btnIconOn_Click()
 
-  tbOnIcon.Text = FSelectImage.Run(Main.sBaseDir &/ "icons" &/ tbOnIcon.Text, "icons")
+  Dim sIconName As String
+
+  sIconName = FSelectFile.Run(Main.sBaseDir &/ "icons" &/ tbOnIcon.Text, ["*.png;*.jpg;*.jpeg;*.xpm;*.gif", "Picture files"], Main.sBaseDir &/ "icons", True, "Select an icon")
+  If Len(sIconName) Then
+    If CheckIfIcon(sIconName) Then
+      tbOnIcon.Text = sIconName
+    Else
+      Message.Info("Image doesn't seem to be an icon, preferred size is 16x16 pixels.")
+    Endif
+  Endif
   btnSave.Enabled = True
   DisplayIcons()
 
@@ -750,7 +900,16 @@ End
 
 Public Sub btnIconOff_Click()
 
-  tbOffIcon.Text = FSelectImage.Run(Main.sBaseDir &/ "icons" &/ tbOffIcon.Text, "icons")
+  Dim sIconName As String
+
+  sIconName = FSelectFile.Run(Main.sBaseDir &/ "icons" &/ tbOnIcon.Text, ["*.png;*.jpg;*.jpeg;*.xpm;*.gif", "Picture files"], Main.sBaseDir &/ "icons", True, "Select an icon")
+  If Len(sIconName) Then
+    If CheckIfIcon(sIconName) Then
+      tbOffIcon.Text = sIconName
+    Else
+      Message.Info("Image doesn't seem to be an icon, preferred size is 16x16 pixels.")
+    Endif
+  Endif
   btnSave.Enabled = True
   DisplayIcons()
 
@@ -758,16 +917,35 @@ End
 
 Public Sub btnIconDim_Click()
 
-  tbDimIcon.Text = FSelectImage.Run(Main.sBaseDir &/ "icons" &/ tbDimIcon.Text, "icons")
+  Dim sIconName As String
+
+  sIconName = FSelectFile.Run(Main.sBaseDir &/ "icons" &/ tbOnIcon.Text, ["*.png;*.jpg;*.jpeg;*.xpm;*.gif", "Picture files"], Main.sBaseDir &/ "icons", True, "Select an icon")
+  If Len(sIconName) Then
+    If CheckIfIcon(sIconName) Then
+      tbDimIcon.Text = sIconName
+    Else
+      Message.Info("Image doesn't seem to be an icon, preferred size is 16x16 pixels.")
+    Endif
+  Endif
   btnSave.Enabled = True
   DisplayIcons()
 
 End
 
-Public Sub btnEditor_Click()
+Public Sub CheckIfIcon(sIconName As String) As Boolean
+
+  With ImageStat(Main.sBaseDir &/ "icons" &/ sIconName)
+    If .Width <= 16 And If .Height <= 16 Then Return True
+  End With
+  Return False
+
+End
+
+Public Sub btnEditFloorplan_Click()
 
   ' only start editor if location/floorplan is chosen
   If cmbFloorplan.Text And cmbFloorplan.Text <> " " Then
+    FFloorplanEditor.iIdNotShow = $iDeviceId
     FFloorplanEditor.pbIcon.Picture = Picture[Main.sBaseDir &/ "icons" &/ tbOnIcon.Text]
     FFloorplanEditor.txtX.Text = tbX.Text
     FFloorplanEditor.txtY.Text = tbY.Text
@@ -815,11 +993,11 @@ Public Sub DisplayIcons()
       mbIconOff.Refresh
     Endif
   Else
-    Main.WriteDebugLog(("Error: Cannot find " & Main.sBaseDir &/ "icons" & " directory!"))
+    Main.WriteDebugLog(("ERROR: Cannot find " & Main.sBaseDir &/ "icons" & " directory!"))
   Endif
 
 Catch ' some errors
-  Main.WriteDebugLog(("Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+  Main.WriteDebugLog("[DeviceEditor] ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -862,53 +1040,57 @@ End
 
 Public Sub RefreshModuleList()
 
-  Dim rResultDeviceTypes2 As Result
+  Dim rResult As Result
   Dim sPattern As String = cmbDeviceType.Text
 
+  cmbModule.Clear()
+
   If (Len(cmbDeviceType.Text) < 2) Then sPattern = "%"
-  ' fill module combo with modules/devicetypes of sType
-  Try rResultDeviceTypes2 = Main.hDB.Exec("SELECT name FROM devicetypes WHERE type LIKE &1 ORDER BY name", sPattern)
+  ' fill devicetype combo with devicetypes of sType
+  Try rResult = Main.hDB.Exec("SELECT name FROM devicetypes WHERE protocol LIKE &1 ORDER BY name", sPattern)
   If Not Error Then
-    If rResultDeviceTypes2 Then
-      If rResultDeviceTypes2.Count Then
-        cmbModule.Clear
-        cmbModule.Refresh
-        For Each rResultDeviceTypes2
-          cmbModule.Add(rResultDeviceTypes2!name)
-        Next
-      Endif
-    Else
-      Message(("No devicetypes database table found!"))
+    If rResult And If rResult.Available Then
+      For Each rResult
+        cmbModule.Add(rResult!name)
+      Next
     Endif
+  Else
+    Message(("No devicetypes database table found!"))
   Endif
+
+   cmbModule.Refresh()
+
   Try cmbModule.Text = rResultType!name
   LoadDeviceImage()
   If bAddDevice Then RefreshInterfaceList()
   RefreshDeviceType()
+  RefreshInstancesList()
 
 End
 
 Public Sub RefreshInterfaceList()
 
-  Dim rResultInterface2 As Result
-  Dim sPattern As String = "%" & cmbDeviceType.Text & "%"
+  Dim sType As String = cmbDeviceType.Text
+  Dim rResult As Result
 
-  If (Len(cmbDeviceType.Text) < 2) Then sPattern = "%"
+  cmbInterface.Clear()
+
+  ' If unknown, then show all interfaces
+  If sType = "Unknown" Then sType = "%"
+
   ' fill interfaces combo with interfaces which support sType
-  Try rResultInterface2 = Main.hDB.Exec("SELECT name FROM interfaces WHERE type LIKE &1 ORDER BY name", sPattern)
+  Try rResult = Main.hDB.Exec("SELECT interface FROM plugins WHERE protocols LIKE '" & sType & "' OR protocols LIKE '" & sType & " %' OR protocols LIKE '% " & sType & "' OR protocols LIKE '% " & sType & " %' ORDER BY interface")
   If Not Error Then
-    If rResultInterface2 Then
-      If rResultInterface2.Count Then
-        cmbInterface.Clear
-        cmbInterface.Refresh
-        For Each rResultInterface2
-          cmbInterface.Add(rResultInterface2!name)
-        Next
-      Endif
-    Else
-      Message(("No interfaces database table found!"))
+    If rResult And If rResult.Available Then
+      For Each rResult
+        cmbInterface.Add(rResult!interface)
+      Next
     Endif
+  Else
+    Message(("No plugins database table found!"))
   Endif
+
+  cmbInterface.Refresh()
 
 End
 
@@ -931,5 +1113,170 @@ Public Sub chkRepeat_Click()
 
   vbRepeatPeriod.Enabled = chkRepeat.Value
   btnSave.Enabled = True
+
+End
+
+Public Sub btnDeviceValuesEditor_Click()
+
+  FDeviceValues.Show
+
+End
+
+Public Sub GetValueList()
+
+  Dim iCount As Integer
+  Dim rResultValues As Result
+
+  Application.Busy = True
+
+  rResultValues = Devices.GetDevicesAndValues(["enabled": Not chkDisabled.Value, "hide": chkHidden.Value, "sortOrder": "valuenum", "device_id": rResultDevice!device_id])
+
+  If Not rResultValues Then
+    Message.Info(("Error: table 'device values' not found!"))
+    Return
+  Endif
+
+  With tbvDeviceValues
+    .Font.Size = "9"
+    .Columns.Count = 7
+    .Rows.Count = rResultValues.Count
+    .Columns[0].Title = ("Id")
+    .Columns[0].Width = 35
+    .Columns[1].Title = ("Num")
+    .Columns[1].Width = 35
+    .Columns[2].Title = ("Value")
+    .Columns[2].Width = 110
+    .Columns[3].Title = ("Control")
+    .Columns[3].Width = 50
+    .Columns[4].Title = ("Feedback")
+    .Columns[4].Width = 62
+    .Columns[5].Title = ("Log")
+    .Columns[5].Width = 35
+    .Columns[6].Title = ("Last Seen")
+  End With
+
+  For iCount = 0 To rResultValues.Max
+    tbvDeviceValues[iCount, 0].Text = rResultValues!device_value_id
+    tbvDeviceValues[iCount, 1].Text = rResultValues!device_value_valuenum
+    tbvDeviceValues[iCount, 2].Text = Devices.CorrectValue(rResultValues!device_value_value, rResultValues!device_value_correction, rResultValues!device_id) & IIf(rResultValues!device_value_units, " " & rResultValues!device_value_units, "")
+    tbvDeviceValues[iCount, 3].Text = Main.DisplayBool(rResultValues!device_value_control)
+    tbvDeviceValues[iCount, 4].Text = Main.DisplayBool(rResultValues!device_value_feedback)
+    tbvDeviceValues[iCount, 5].Text = Main.DisplayBool(rResultValues!device_value_log)
+    If rResultValues!device_value_lastseen Then
+      tbvDeviceValues[iCount, 6].Text = Replace$(Str$(Format(rResultValues!device_value_lastseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
+    Else
+      tbvDeviceValues[iCount, 6].Text = ""
+    Endif
+
+    ' Expand column size
+    If tbvDeviceValues.Font.TextWidth(tbvDeviceValues[iCount, 1].Text) > tbvDeviceValues.Columns[1].Width Then
+      tbvDeviceValues.Columns[1].Width = tbvDeviceValues.Font.TextWidth(tbvDeviceValues[iCount, 1].Text)
+    Endif
+
+    rResultValues.MoveNext
+  Next
+
+Finally
+  Application.Busy = False
+
+End
+
+Public Sub btnRefresh_Click()
+
+  GetValueList()
+
+End
+
+Public Sub tbvDeviceValues_ColumnClick(Column As Integer)
+
+  If iSortValuesColumn = Column Then
+    bSortValuesColumn = Not bSortValuesColumn
+  Else
+    bSortValuesColumn = True
+  Endif
+
+  iSortValuesColumn = Column
+  FMain.SortTableView(tbvDeviceValues, Column, bSortValuesColumn)
+
+End
+
+Public Sub tbvDeviceValues_DblClick()
+
+  ' only continue if Row <> -1, which normally happens when DblClick on column and gambas3
+  If tbvDeviceValues.Row = -1 Then Return
+
+  ' open value editor window
+  If Main.bUserisAdmin Or Not Main.bAuthEnabled Then
+    FDeviceValueEditor.Edit(rResultDevice!device_id, tbvDeviceValues[tbvDeviceValues.Row, 1].Text)
+  Else
+    Message(("Sorry, editing device values is not enabled for users.\nLogin as an admin."))
+  Endif
+
+End
+
+Public Sub chkHidden_Click()
+
+  GetValueList()
+
+End
+
+Public Sub chkDisabled_Click()
+
+  GetValueList()
+
+End
+
+Public Sub btnAddValue_Click()
+
+  If Not rResultDevice Then
+    Message(("First save the new device before adding values"))
+    Return
+  Endif
+
+  If Main.bUserisAdmin Or Not Main.bAuthEnabled Then
+    FDeviceValueEditor.Edit(rResultDevice!device_id, -1)
+  Else
+    Message(("Sorry, adding device values is not enabled for users.\nLogin as an admin."))
+  Endif
+
+End
+
+Public Sub btnDeleteValue_Click()
+
+  Dim iCurRow As Integer = tbvDeviceValues.Row
+
+  If iCurRow = -1 Then Return
+
+  Select Message.Question(("Are you sure that you want to delete 'value") & tbvDeviceValues[iCurRow, 1].Text & ("' from this device?"), ("Yes"), ("No"))
+    Case "1"
+      Devices.DeleteDeviceValue(rResultDevice!device_id, tbvDeviceValues[iCurRow, 1].Text)
+      GetValueList()
+  End Select
+
+End
+
+Public Sub btnEditLocations_Click()
+
+  Try FEditDeviceTypesGroups.TabPanelAll.Index = 3
+  FEditDeviceTypesGroups.Show
+
+End
+
+Public Sub btnRefreshLocations_Click()
+
+  RefreshLocationsList()
+
+End
+
+Public Sub btnRefreshFloorplans_Click()
+
+  RefreshFloorplansList()
+
+End
+
+Public Sub btnEditFloorplans_Click()
+
+  Try FEditDeviceTypesGroups.TabPanelAll.Index = 4
+  FEditDeviceTypesGroups.Show
 
 End

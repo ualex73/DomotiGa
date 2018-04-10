@@ -29,7 +29,7 @@ End
 Public Sub GetVarList()
 
   Dim iCount As Integer
-  Dim vValue As Variant
+  Dim cGV As CGlobalVarEntry
 
   With tbvGlobalVar
     .Columns.Count = 2
@@ -40,14 +40,12 @@ Public Sub GetVarList()
     .Columns[1].Width = 150
   End With
 
-  For Each vValue In Main.GlobalVar
-    ' Get the vValue via the GetGlobalVar, else empty values are incorrectly displayed
-    vValue = Main.GetGlobalVar(Main.GlobalVar.Key)
+  For Each cGV In Main.GlobalVar
     tbvGlobalVar[iCount, 0].Text = Main.GlobalVar.Key
-    If gb.Boolean = TypeOf(vValue) Then
-      tbvGlobalVar[iCount, 1].Text = Main.DisplayBool(vValue)
+    If TypeOf(cGV.Value) = gb.Boolean Then
+      tbvGlobalVar[iCount, 1].Text = Main.DisplayBool(cGV.Value)
     Else
-      tbvGlobalVar[iCount, 1].Text = vValue
+      tbvGlobalVar[iCount, 1].Text = cGV.Value
     Endif
     iCount = iCount + 1
   Next
@@ -134,40 +132,61 @@ End
 
 Public Sub btnFanSpd1_Click()
 
+  Dim iDeviceId As Integer
+
+  Try iDeviceId = Devices.FindIdForDevice("House Ventilation")
+  If Error And Not iDeviceId Then Return
+
   If Main.bServer Then
-    Devices.SetDevice("House Ventilation", "1")
+    Devices.SetDevice(iDeviceId, "1")
   Else
-    Client.DeviceSetDevice("House Ventilation", "1")
+    Client.DeviceSetDevice(iDeviceId, "1")
   Endif
 
 End
 
 Public Sub btnFanSpd2_Click()
 
+  Dim iDeviceId As Integer
+
+  Try iDeviceId = Devices.FindIdForDevice("House Ventilation")
+  If Error And Not iDeviceId Then Return
+
   If Main.bServer Then
-    Devices.SetDevice("House Ventilation", "2")
+    Devices.SetDevice(iDeviceId, "2")
   Else
-    Client.DeviceSetDevice("House Ventilation", "2")
+    Client.DeviceSetDevice(iDeviceId, "2")
   Endif
 
 End
 
 Public Sub btnFanSpd3_Click()
 
+  Dim iDeviceId As Integer
+
+  Try iDeviceId = Devices.FindIdForDevice("House Ventilation")
+  If Error And Not iDeviceId Then Return
+
+
   If Main.bServer Then
-    Devices.SetDevice("House Ventilation", "3")
+    Devices.SetDevice(iDeviceId, "3")
   Else
-    Client.DeviceSetDevice("House Ventilation", "3")
+    Client.DeviceSetDevice(iDeviceId, "3")
   Endif
 
 End
 
 Public Sub btnFanTimer_Click()
 
+  Dim iDeviceId As Integer
+
+  Try iDeviceId = Devices.FindIdForDevice("House Ventilation")
+  If Error And Not iDeviceId Then Return
+
   If Main.bServer Then
-    Devices.SetDevice("House Ventilation", "T")
+    Devices.SetDevice(iDeviceId, "T")
   Else
-    Client.DeviceSetDevice("House Ventilation", "T")
+    Client.DeviceSetDevice(iDeviceId, "T")
   Endif
 
 End

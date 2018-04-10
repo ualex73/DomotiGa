@@ -19,28 +19,31 @@ Public hReadJson As HttpClient
 Public hPostJson As HttpClient
 Public cJsonData As New Collection
 
+Private oSoftDimmingTimers As New Object[]
+Public tSoftDimmingTimer As CTimerSoftDimming
+
 ' trigger database table
-' description        | type | param1   | param2  | param3  | param4 | param5  | param6 | param7
-' time now           |   1  | crontab
-' globalvar change   |   2  | variable | operand | value
-' device change      |   3  | id       | fieldno | operand | value
-' ir remote received |   4  | remote   | button  | repeat
-' iviewer remote     |   5  | remote   | join    | value
-' multi-trigger      |   6  |
-' manually           |   7  | 
-' device lastseen    |   8  |  id      | operand | value
+' description          | type | param1   | param2  | param3  | param4 | param5  | param6 | param7
+' time now             |   1  | crontab
+' globalvar change     |   2  | variable | operand | value
+' device change        |   3  | id       | fieldno | operand | value
+' ir remote received   |   4  | remote   | button  | repeat
+' iviewer remote       |   5  | remote   | join    | value
+' multi-trigger        |   6  |
+' scene, manual trigger|   7  |
+' device lastseen      |   8  |  id      | operand | value
 
 ' condition database table
-' description        | type | param1   | param2  | param3  | param4 | param5  | param6 | param7
-' time now           |   1  | crontab
-' globalvar value    |   2  | variable | operand | value
-' device value       |   3  | id       | fieldno | operand | value
+' description          | type | param1   | param2  | param3  | param4 | param5  | param6 | param7
+' time now             |   1  | crontab
+' globalvar value      |   2  | variable | operand | value
+' device value         |   3  | id       | fieldno | operand | value
 
 ' called every new minute from EventLoop.Run()
 Public Sub CheckTimeNowEvents()
 
   Dim rResult As Result
-  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 1 AND events.enabled"
+  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger_id = triggers.id AND triggers.type = 1 AND events.enabled is TRUE"
   Dim aCron As String[]
   Dim iCnt As Integer
 
@@ -54,7 +57,7 @@ Public Sub CheckTimeNowEvents()
     Endif
   Endif
 
-  sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 6 AND events.enabled AND triggers.param1 REGEXP '[[:<:]]TimeCron(.*)[[:>:]]'"
+  sSql = "SELECT * FROM events, triggers WHERE events.trigger_id = triggers.id AND triggers.type = 6 AND events.enabled is TRUE AND triggers.param1 REGEXP '[[:<:]]TimeCron(.*)[[:>:]]'"
   If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running TimeNow query '") & sSql & "'")
   rResult = Main.hDB.Exec(sSql)
   If rResult Then
@@ -80,8 +83,8 @@ End
 Public Sub CheckDeviceChangeEvents(iId As Integer, iValueNum As Integer, sValue As String)
 
   Dim rResult As Result
-  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 3 AND events.enabled AND triggers.param1 = &1 AND triggers.param2 = &2"
- 
+  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger_id = triggers.id AND ((triggers.type = 3 AND triggers.param1 = &1 AND triggers.param2 = &2) OR (triggers.type = 6 AND triggers.param1 REGEXP '[[:<:]]Dev_" & iId & "_Value" & iValueNum & "[[:>:]]')) AND events.enabled is TRUE"
+
   If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running DeviceChange query '") & Subst(sSql, iId, iValueNum) & "'")
   rResult = Main.hDB.Exec(sSql, iId, iValueNum)
   If rResult Then
@@ -95,46 +98,16 @@ Public Sub CheckDeviceChangeEvents(iId As Integer, iValueNum As Integer, sValue 
     Return
   Endif
 
-  sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 6 AND events.enabled AND triggers.param1 REGEXP '[[:<:]]Dev_" & iId & "_Value" & iValueNum & "[[:>:]]'"
-  
-  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running DeviceChange query '") & sSql & "'")
-  rResult = Main.hDB.Exec(sSql)
-  If rResult Then
-    If rResult.Count Then
-      DoEvent(rResult, sValue)
-    Else
-      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1b. No result."))
-    Endif
-  Else
-    Main.WriteDebugLog(("[Events] Error while running CheckDeviceChangeEvents query!"))
-    Return
-  Endif
-
 End
-
 
 ' called when a lastseen of a device is updated
 ' iID = id of device, sValue = the new value it's set to
 Public Sub CheckDeviceLastseenChangeEvents(iId As Integer, sValue As String)
 
   Dim rResult As Result
-  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 8 AND events.enabled AND triggers.param1 = &1"
+  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger_id = triggers.id AND ((triggers.type = 8 AND triggers.param1 = &1) OR (triggers.type = 6 AND triggers.param1 REGEXP '[[:<:]]Dev_" & iId & "_LastSeen[[:>:]]')) AND events.enabled is TRUE"
 
   If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running DeviceLastseenChange query '") & Subst(sSql, iId) & "'")
-  rResult = Main.hDB.Exec(sSql, iId)
-  If rResult Then
-    If rResult.Count Then
-      DoEvent(rResult, sValue)
-    Else
-      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1b. No result."))
-    Endif
-  Else
-    Main.WriteDebugLog(("[Events] Error while running CheckDeviceLastseenChangeEvents query!"))
-    Return
-  Endif
-
-  sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 6 AND events.enabled AND triggers.param1 REGEXP '[[:<:]]Dev_" & iId & "_LastSeen[[:>:]]'"
-  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running DeviceLastseenChange query '") & sSql & "'")
   rResult = Main.hDB.Exec(sSql, iId)
   If rResult Then
     If rResult.Count Then
@@ -153,7 +126,7 @@ End
 Public Sub CheckIRRemoteEvents(sRemote As String, sButton As String)
 
   Dim rResult As Result
-  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 4 AND events.enabled AND triggers.param1 = &1 AND triggers.param2 = &2"
+  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger_id = triggers.id AND triggers.type = 4 AND events.enabled is TRUE AND triggers.param1 = &1 AND triggers.param2 = &2"
 
   If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running IRRemote query '") & Subst(sSql, sRemote, sButton) & "'")
   rResult = Main.hDB.Exec(sSql, sRemote, sButton)
@@ -174,7 +147,7 @@ End
 Public Sub CheckIViewerRemoteEvents(sRemote As String, sJoin As String, sValue As String)
 
   Dim rResult As Result
-  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 5 AND events.enabled AND triggers.param2 = &1 AND triggers.param3 = &2"
+  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger_id = triggers.id AND triggers.type = 5 AND events.enabled is TRUE AND triggers.param2 = &1 AND triggers.param3 = &2"
 
   If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running IViewerRemote query '") & Subst(sSql, sJoin, sValue) & "'")
   rResult = Main.hDB.Exec(sSql, sJoin, sValue)
@@ -195,24 +168,9 @@ End
 Public Sub CheckGlobalVarEvents(sVar As String, vValue As Variant)
 
   Dim rResult As Result
-  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 2 AND events.enabled AND triggers.param1 = &1"
+  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger_id = triggers.id AND ((triggers.type = 2 AND triggers.param1 = &1) OR (triggers.type = 6 AND triggers.param1 REGEXP '[[:<:]]Var_" & sVar & "[[:>:]]')) AND events.enabled is TRUE"
 
   If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running GlobalVar query '") & Subst(sSql, sVar) & "'")
-  rResult = Main.hDB.Exec(sSql, sVar)
-  If rResult Then
-    If rResult.Count Then
-      DoEvent(rResult, vValue)
-    Else
-      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1b. No result."))
-    Endif
-  Else
-    Main.WriteDebugLog(("[Events] Error while running CheckGlobalVarEvents query!"))
-    Return
-  Endif
-
-  sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 6 AND events.enabled AND triggers.param1 REGEXP '[[:<:]]Var_" & sVar & "[[:>:]]'"
-
-  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running GlobalVar query '") & sSql & "'")
   rResult = Main.hDB.Exec(sSql, sVar)
   If rResult Then
     If rResult.Count Then
@@ -264,9 +222,9 @@ Private Sub DoEvent(rResult As Result, Optional sValue As Variant)
         Case 5
           ' iviewer trigger
           If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2c. IViewerRemote trigger on event id ") & rResult!id & (" named '") & rResult!name & ("' with Remote name '") & rResult["triggers.param1"] & "' with Join '" & rResult["triggers.param2"] & " and Value " & rResult["triggers.param3"] & "'")
-        Case 7 
+        Case 7
           ' manually trigger
-        Case 8 
+        Case 8
           ' device lastseen
           If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2c. Device Lastseen trigger on event id ") & rResult!id & (" named '") & rResult!name & ("' with trigger condition '") & sValue & " " & rResult["triggers.param2"] & " " & rResult["triggers.param3"])
         Case Else
@@ -274,7 +232,7 @@ Private Sub DoEvent(rResult As Result, Optional sValue As Variant)
       End Select
 
       ' check optional conditions
-      If CheckConditions(rResult!condition1, rResult!condition2, rResult!operand) = True Then
+      If CheckConditions(rResult!condition1_id, rResult!condition2_id, rResult!operand) = True Then
         ' run action(s)
         If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2f. Event id " & rResult!id & " named '") & rResult["events.name"] & ("' is validated, running action(s)."))
         RunActions(rResult!id)
@@ -298,7 +256,7 @@ Private Sub DoTimeEvent(rResult As Result, Optional sValue As Variant)
   Endif
 
   ' check optional conditions
-  If CheckConditions(rResult!condition1, rResult!condition2, rResult!operand) = True Then
+  If CheckConditions(rResult!condition1_id, rResult!condition2_id, rResult!operand) = True Then
     ' run action(s)
     If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2f. Event id " & rResult!id & " named '") & rResult["events.name"] & ("' is validated, running action(s)."))
     If Main.bEventsDebug Then Main.WriteDebugLog("Running '" & rResult!name & "' event")
@@ -342,30 +300,28 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub AddVariablesToContext(cContext As Collection)
 
-  Dim vValue As Variant
+  Dim cGV As CGlobalVarEntry
 
-  For Each vValue In Main.GlobalVar
-    cContext["Var_" & Main.GlobalVar.Key] = vValue
+  For Each cGV In Main.GlobalVar
+    cContext["Var_" & Main.GlobalVar.Key] = cGV.Value
   Next
 
 End
 
 Private Sub AddDevicesToContext(cContext As Collection)
 
-  Dim iCount As Integer
   Dim rResult As Result
 
- rResult = Devices.GetDevicesAndValues(["sortOrder": "name"])
-  
+  rResult = Devices.GetDevicesAndValues(["sortOrder": "name"])
   If Not rResult Then Return
 
   For Each rResult
-    cContext["Dev_" & rResult!device_id & "_Value" & rResult!device_value_valuenum] = rResult!device_value_value 
+    cContext["Dev_" & rResult!device_id & "_Value" & rResult!device_value_valuenum & "_LastChanged"] = rResult!device_value_lastchanged
+    cContext["Dev_" & rResult!device_id & "_Value" & rResult!device_value_valuenum] = rResult!device_value_value
     cContext["Dev_" & rResult!device_id & "_LastChanged"] = rResult!device_lastchanged
     cContext["Dev_" & rResult!device_id & "_LastSeen"] = rResult!device_lastseen
     cContext["Dev_" & rResult!device_id & "_BatteryStatus"] = rResult!device_batterystatus
   Next
-  
 
 End
 
@@ -388,7 +344,7 @@ End
 
 Public Function EvalFormula(sFormula As String) As String
 
-  Dim sToEval, sResult As String 
+  Dim sToEval, sResult As String
   Dim cContext As New Collection
   Dim vResult As Variant
 
@@ -403,6 +359,7 @@ Public Function EvalFormula(sFormula As String) As String
   Try vResult = Eval(sToEval, cContext)
   If Error Then
     sResult = ("Error: ") & Error.Text
+    If Main.bEventsDebug Then Main.WriteDebugLog("[Events] Formula evaluation failed. sFormula = " & sToEval & ".Message = " & sResult)
   Else If TypeOf(vResult) = gb.Boolean Then
     sResult = Main.DisplayBool(vResult)
   Else
@@ -463,27 +420,15 @@ Private Sub CheckConditions(iCondition1 As Integer, iCondition2 As Integer, sOpe
 
 End
 
-' run all configured actions for this event
-Public Sub RunActions(iEventId As Integer, Optional iFrom As Integer) As Boolean
-
-  Dim rActions As Result
-
-  UpdateEvent(iEventId)
-  rActions = Main.hDB.Exec("SELECT * FROM events_actions WHERE event = &1 ORDER BY events_actions.order", iEventId)
-  If rActions Then
-    For Each rActions
-      If rActions!order < iFrom Then Continue
-      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3a. Running action with id ") & rActions!action & (" for event with id ") & iEventId)
-      If RunAction(rActions!action, rActions!order, iEventId) Then Return True
-    Next
-  Endif
-  Return False
-
-End
-
 Private Sub CheckReRunCondition(dDate As Date, sPeriod As String, iValue As Integer) As Boolean
 
-  If DateDiff(dDate, Now(), Eval(sPeriod)) > iValue Then
+  Dim iResult As Integer
+
+  Try iResult = DateDiff(dDate, Now(), Eval(sPeriod))
+  If Error Then
+    If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] Event Rerun condition failed. Error message: ") & Error.Text)
+    Return False
+  Else If iResult > iValue Then
     Return True
   Else
     If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] Event Rerun condition ") & iValue & " " & sPeriod & (" is false."))
@@ -493,238 +438,289 @@ Private Sub CheckReRunCondition(dDate As Date, sPeriod As String, iValue As Inte
 End
 
 ' action database table
-' description       | rResultAction!type | rResultAction!param1      | rResultAction!param2 | rResultAction!param3 | rResultAction!param4 | rResultAction!param5
-' set device value  | 1                  | deviceid                  | value fieldname      | value
-' set globalvar     | 2                  | globalvar name            | value
-' send e-mail       | 3                  | to address                | subject              | body
-' speak text        | 4                  | voice or 'female', 'male' | text
-' execute command   | 5                  | shell command to run
-' send tweet        | 6                  | tweet message to send
-' send SMS message  | 7                  | to SMS number             | message
-' send IRTrans IR   | 8                  | command string
-' play sound        | 9                  | sound file                | volume
-' write log entry   | 10                 | log text
-' display led msg   | 11                 | message to display        | display id           | color                | speed
-' av control        | 12                 | model                     | command              | value                | address
-' timer delay       | 13                 | delay in secs or rnd min  | random max seconds   | mode fixed or random
-' notify-send       | 14                 | title                     | text
-' script            | 15                 | script
-' JSON              | 16                 | deviceid                  | post/get             | url
-' send Prowl        | 17                 | Prowl message to send
-' send NMA          | 18                 | Notify My Android message to send
-' send Pushover     | 19                 | Pushover message to send  | Optional Priority    | Optional Sound
+' description          | rResultAction!type | rResultAction!param1      | rResultAction!param2 | rResultAction!param3 | rResultAction!param4 | rResultAction!param5
+' set device value     | 1                  | deviceid                  | value fieldname      | value
+' set globalvar        | 2                  | globalvar name            | value
+' send e-mail          | 3                  | to address                | subject              | body
+' speak text           | 4                  | voice or 'female', 'male' | text
+' execute command      | 5                  | shell command to run
+' send tweet           | 6                  | tweet message to send
+' send SMS message     | 8                  | command string
+' play sound           | 9                  | sound file                | volume
+' write log entry      | 10                 | log text
+' display led msg      | 11                 | message to display        | display id           | color                | speed
+' av control           | 12                 | model                     | command              | value                | address
+' timer delay          | 13                 | delay in secs or rnd min  | random max seconds   | mode fixed or random
+' notify-send          | 14                 | title                     | text
+' script               | 15                 | script
+' JSON                 | 16                 | deviceid                  | post/get             | url
+' send Prowl           | 17                 | prowl message to send
+' send NMA             | 18                 | nma message to send
+' send Pushover        | 19                 | pushover message to send  | optional priority    | optional sound       | Devices list
+' send Pushbullet      | 20                 | pushbullet message to send| optional title (default 'DomotiGa') | optional deviceid ('all' for all devices)
+' soft dimming         | 21                 | deviceid                  | seconds              | value
+' send udp message     | 22                 | address                   | udp port             | message
+' publish mqtt message | 23                 | topic                     | message              | rawtopic boolean (use base topic string or not)
 
-Public Sub RunAction(iAction As Integer, iOrder As Integer, iEventId As Integer) As Boolean
+' Action to be run. If iAction=0 then cData has to be applied and it will be a "manual" action.
+' Returns action type and raises Error if something goes wrong
+Public Sub RunAction(iAction As Integer, iOrder As Integer, iEventId As Integer, Optional cData As JSONCollection) As Integer
 
   Dim rResultAction As Result
   Dim bOk As Boolean
-  Dim sDeviceName, sResult As String
+  Dim sResult, sName, sParam1, sParam2, sParam3, sParam4, sDev As String
+  Dim iType As Integer
+  Dim iValueNum As Integer
 
-  rResultAction = Main.hDB.Exec("SELECT * FROM actions WHERE id = &1 ", iAction)
-  If rResultAction.Available Then
-    Select rResultAction!type
-      Case 1 ' set device value
-        ' only changing field Value will trigger interface code, and Value2-Value4 will only set field value
-        If rResultAction!param1 And If rResultAction!param2 And If rResultAction!param3 Then
-          sDeviceName = Devices.FindNameForDevice(rResultAction!param1)
-          If Devices.CheckIfDeviceExists(rResultAction!param1) Then
-            Select Case rResultAction!param2
-              Case 1
-                bOk = Devices.SetDevice(rResultAction!param1, ParseText(rResultAction!param3))
-              Case 2
-                bOk = Devices.ValueUpdateExt(rResultAction!param1, 2, ParseText(rResultAction!param3))
-              Case 3
-                bOk = Devices.ValueUpdateExt(rResultAction!param1, 3, ParseText(rResultAction!param3))
-              Case 4
-                bOk = Devices.ValueUpdateExt(rResultAction!param1, 4, ParseText(rResultAction!param3))
-              Case Else
-                Main.WriteDebugLog(("[Events] 3b. Invalid value field given ") & rResultAction!param2 & "!")
-                bOk = False
-            End Select
-          Else
-            Main.WriteDebugLog(("[Events] 3b. Device with id ") & rResultAction!param1 & (" doesn't exists!"))
-            bOk = False
-          Endif
-        Endif
-      Case 2 ' set globalvar value
-        ' if globalvar doesn't exist it will be created
-        If rResultAction!param1 And If rResultAction!param2 Then
-          Try Main.SetGlobalVar(rResultAction!param1, ParseText(rResultAction!param2), True)
-          If Error Then
-            bOk = False
-          Else
-            bOk = True
-          Endif
-        Endif
-      Case 3 ' send e-mail
-        If Main.bEmailEnabled Then
-          Try Mail.SendMail(ParseText(rResultAction!param2), ParseText(rResultAction!param3), rResultAction!param1)
-          If Error Then
-            bOk = False
-          Else
-            bOk = True
-          Endif
-        Else
-          Main.WriteDebugLog(("[Events] 3b. e-mail support is disabled!"))
-        Endif
-      Case 4 ' speak text
-        If Main.bVoiceTextEnabled Then
-          Try VoiceText.Speak(ParseText(rResultAction!param2), rResultAction!param1)
-          If Error Then
-            bOk = False
-          Else
-            bOk = True
-          Endif
-        Else
-          Main.WriteDebugLog(("[Events] 3b. VoiceText support is disabled!"))
-        Endif
-      Case 5 ' execute command
-        Try Shell ParseText(rResultAction!param1)
-        If Error Then
-          bOk = False
-        Else
-          bOk = True
-        Endif
-      Case 6 ' send tweet
-        If Plugin.IsPluginEnabled("Twitter", 0) Then
-          Plugin.GetPluginObject("Twitter", 1).Interface.PostTweet(ParseText(rResultAction!param1))
-          If Error Then
-            bOk = False
-          Else
-            bOk = True
-          Endif
-        Else
-          Main.WriteDebugLog(("[Events] 3b. Twitter support is disabled!"))
-        Endif
-      Case 7 ' send SMS message
-        If Plugin.IsPluginEnabled("SMS", 0) Then
-          Try Plugin.GetPluginObject("SMS", 1).Interface.SendSMS(ParseText(rResultAction!param2), rResultAction!param1)
-          If Error Then
-            bOk = False
-          Else
-            bOk = True
-          Endif
-        Else
-          Main.WriteDebugLog(("[Events] 3b. SMS support is disabled!"))
-        Endif
-      Case 8 ' send IRTrans IR
-        If Plugin.IsPluginEnabled("IRTrans", 0) Then
-          Try Plugin.GetPluginObject("IRTrans", 1).Interface.SendIRCommand(rResultAction!param1)
-          If Error Then
-            bOk = False
-          Else
-            bOk = True
-          Endif
-        Else
-          Main.WriteDebugLog(("[Events] 3b. IRTrans support is disabled!"))
-        Endif
-      Case 9 ' play sound
-        If Main.bSoundEnabled Then
-          Try Sounds.PlaySnd(rResultAction!param1, rResultAction!param2)
-          If Error Then
-            bOk = False
-          Else
-            bOk = True
-          Endif
-        Else
-          Main.WriteDebugLog(("[Events] 3b. Sound support is disabled!"))
-        Endif
-      Case 10 ' write log entry
-        Try Main.WriteLog(ParseText(rResultAction!param1))
-        If Error Then
-          bOk = False
-        Else
-          bOk = True
-        Endif
-      Case 11 ' display message on led matrix display
-        If Plugin.IsPluginEnabled("LEDMatrix", 0) Then
-          Try Plugin.GetPluginObject("LEDMatrix", 1).Interface.DisplayMessage(rResultAction!param2, ParseText(rResultAction!param1), rResultAction!param3, rResultAction!param4)
-          If Error Then
-            bOk = False
-          Else
-            bOk = True
-          Endif
-        Else
-          Main.WriteDebugLog(("[Events] 3b. LED Matrix support is disabled!"))
-        Endif
-      Case 12 ' av control command
-        Try AVControl.Set(rResultAction!param1, rResultAction!param2, rResultAction!param3, rResultAction!param4)
-        If Error Then
-          bOk = False
-        Else
-          bOk = True
-        Endif
-      Case 13 ' timer delay
-        If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' is a delay timer!"))
-        StartDelayTimer(iEventId, iOrder + 1, rResultAction!param1, rResultAction!param2, rResultAction!param3)
-        Return True
-      Case 14 ' notify-send
-        Main.NotifySend(ParseText(rResultAction!param1), ParseText(rResultAction!param2))
-        bOk = True
-      Case 15 ' script
-        sResult = EvalFormula(rResultAction!param1)
-        If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' returned '") & sResult & "'")
-        bOk = True
-      Case 16 ' json
-        sDeviceName = Devices.FindNameForDevice(rResultAction!param1)
-        If Len(sDeviceName) Then
-          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" started JSON request '"))
-          ProcessJson(rResultAction!param1, rResultAction!param2, rResultAction!param3)     
-          bOk = True ' TODO
-        Else
-          Main.WriteDebugLog(("[Events] 3b. Device with id ") & rResultAction!param1 & (" doesn't exists!"))
-          bOk = False
-        Endif
-      Case 17 ' send Prowl
-        If Plugin.IsPluginEnabled("Prowl", 0) Then
-          Try Plugin.GetPluginObject("Prowl", 1).Interface.PostProwl("", "", ParseText(rResultAction!param1))
-          If Error Then
-            bOk = False
-          Else
-            bOk = True
-          Endif
-        Else
-          Main.WriteDebugLog(("[Events] 3b. Prowl support is disabled!"))
-        Endif
-      Case 18 ' send Notify My Android
-       ' TODO: Select instance
-        If Plugin.IsPluginEnabled("NMA", 0) Then
-          Try Plugin.GetPluginObject("NMA", 1).Interface.PostNMA("", "", ParseText(rResultAction!param1))
-          If Error Then
-            bOk = False
-          Else
-            bOk = True
-          Endif
-        Else
-          Main.WriteDebugLog(("[Events] 3b. Notify My Android support is disabled!"))
-        Endif
-      Case 19 ' send Pushover
-        ' TODO: Select instance
-        If Plugin.IsPluginEnabled("Pushover", 0) Then
-          Try Plugin.GetPluginObject("Pushover", 1).Interface.PostPushover("", ParseText(rResultAction!param1), rResultAction!param2, rResultAction!param3)
-          If Error Then
-            bOk = False
-          Else
-            bOk = True
-          Endif
-        Else
-          Main.WriteDebugLog(("[Events] 3b. Pushover support is disabled!"))
-        Endif
-
-      Case Else
-        bOk = False
-    End Select
-
-    If bOk Then
-      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' executed!"))
-      Return False
-    Else
-      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' failed to execute!"))
-      Return False
+  ' When action is zero, we get the type, param1, etc passed in the cData
+  If iAction = 0 Then
+    If Not cData Then
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. No action parameters supplied in manual mode!"))
+      Error.Raise("No action parameters supplied in manual mode!")
     Endif
+
+    If Not cData.Exist("type") Then
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. No action type supplied in manual mode!"))
+      Error.Raise("No action type supplied in manual mode!")
+    Endif
+
+    Try iType = cData["type"]
+    sParam1 = cData["param1"]
+    sParam2 = cData["param2"]
+    sParam3 = cData["param3"]
+    sParam4 = cData["param4"]
   Else
-    If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & iAction & (" not found!"))
+    rResultAction = Main.hDB.Exec("SELECT * FROM actions WHERE id = &1 ", iAction)
+    If Not rResultAction.Available Then
+      If Main.bEventsDebug Then Main.WriteDebugLog("[Events] 3b. Action with id " & iAction & " not found!")
+      Error.Raise("Action with id " & iAction & " not found!")
+    Endif
+
+    iType = rResultAction!type
+    sName = rResultAction!name
+    sParam1 = rResultAction!param1
+    sParam2 = rResultAction!param2
+    sParam3 = rResultAction!param3
+    sParam4 = rResultAction!param4
   Endif
+
+  ' TODO: Convert all functions called below to raise an Error when something is wrong, this way we also do not have to check if the plugin is enabled
+  Select iType
+    Case 1 ' set device value
+      ' only changing field Value will trigger interface code, and Value2-Value4 will only set field value
+      If sParam1 And If sParam2 And If sParam3 Then
+        If Devices.CheckIfDeviceExists(sParam1) Then
+          Try iValueNum = CInt(sParam2)
+          If Error Then Error.Raise("Invalid set device value field " & sParam2 & " given!")
+
+          If sParam2 = 1 Then
+            bOk = Devices.SetDevice(sParam1, ParseText(sParam3))
+          Else
+            bOk = Devices.ValueUpdate(sParam1, iValueNum, ParseText(sParam3))
+          Endif
+
+          If Not bOk Then
+            ' TODO: Would be good to change Devices.SetDevice and Devices.ValueUpdate to return an Error so we do not need this code
+            Error.Raise("SetDevice/ValueUpdate returned error!")
+          Endif
+        Else
+          Error.Raise("Device with id " & sParam1 & " doesn't exists!")
+        Endif
+      Endif
+    Case 2 ' set globalvar value
+      ' if globalvar doesn't exist it will be created
+      If sParam1 And If sParam2 Then
+        Main.SetGlobalVar(sParam1, ParseText(sParam2), True)
+      Else
+        Error.Raise("Missing GlobalVar name and/or value!")
+      Endif
+    Case 3 ' send e-mail
+      If Main.bEmailEnabled Then
+        Mail.SendMail(ParseText(sParam2), ParseText(sParam3), sParam1)
+      Else
+        Error.Raise("e-mail support is disabled!")
+      Endif
+    Case 4 ' speak text
+      If Main.bVoiceTextEnabled Then
+        VoiceText.Speak(ParseText(sParam2), sParam1)
+      Else
+        Error.Raise("VoiceText support is disabled!")
+      Endif
+    Case 5 ' execute command
+      Shell ParseText(sParam1)
+    Case 6 ' send tweet
+      If Plugin.IsPluginEnabled("Twitter", 0) Then
+        Plugin.GetPluginObject("Twitter", 1).Interface.PostTweet(ParseText(sParam1))
+      Else
+        Error.Raise("Twitter support is disabled!")
+      Endif
+    Case 7 ' send SMS message
+      If Plugin.IsPluginEnabled("SMS", 0) Then
+        Plugin.GetPluginObject("SMS", 1).Interface.SendSMS(ParseText(sParam2), sParam1)
+      Else
+        Error.Raise("SMS support is disabled!")
+      Endif
+    Case 8 ' send IRTrans IR
+      If Plugin.IsPluginEnabled("IRTrans", 0) Then
+        Plugin.GetPluginObject("IRTrans", 1).Interface.SendIRCommand(sParam1)
+      Else
+        Error.Raise("IRTrans support is disabled!")
+      Endif
+    Case 9 ' play sound
+      If Main.bSoundEnabled Then
+        Sounds.PlaySnd(sParam1, sParam2)
+      Else
+        Error.Raise("Sound support is disabled!")
+      Endif
+    Case 10 ' write log entry
+      Main.WriteLog(ParseText(sParam1))
+    Case 11 ' display message on led matrix display
+      If Plugin.IsPluginEnabled("LEDMatrix", 0) Then
+        Plugin.GetPluginObject("LEDMatrix", 1).Interface.DisplayMessage(sParam2, ParseText(sParam1), sParam3, sParam4)
+      Else
+        Error.Raise("LED Matrix support is disabled!")
+      Endif
+    Case 12 ' av control command
+      AVControl.Set(sParam1, sParam2, sParam3, sParam4)
+    Case 13 ' timer delay
+      If iAction >= 1 Then
+        If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & iAction & (" named '") & sName & ("' is a delay timer!"))
+        StartDelayTimer(iEventId, iOrder + 1, sParam1, sParam2, sParam3)
+      Else
+        Error.Raise("Delay action cannot be executed in manual mode!")
+      Endif
+    Case 14 ' notify-send
+      Main.NotifySend(ParseText(sParam1), ParseText(sParam2))
+    Case 15 ' script
+      sResult = EvalFormula(sParam1)
+      If iAction >= 1 Then
+        If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & iAction & (" named '") & sName & ("' returned '") & sResult & "'")
+      Else
+        If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Manual action ' returned '") & sResult & "'")
+      Endif
+    Case 16 ' json
+      If Devices.CheckIfDeviceExists(sParam1) Then
+        ProcessJson(sParam1, sParam2, sParam3)
+        If iAction >= 1 Then
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & iAction & (" started JSON request"))
+        Else
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Manual action started JSON request"))
+        Endif
+      Else
+        Error.Raise("Device with id " & sParam1 & " doesn't exists!")
+      Endif
+    Case 17 ' send Prowl
+      If Plugin.IsPluginEnabled("Prowl", 0) Then
+        Plugin.GetPluginObject("Prowl", 1).Interface.PostProwl("", "", ParseText(sParam1), sParam2)
+      Else
+        Error.Raise("Prowl support is disabled!")
+      Endif
+    Case 18 ' send Notify My Android
+     ' TODO: Select instance
+      If Plugin.IsPluginEnabled("NMA", 0) Then
+        Plugin.GetPluginObject("NMA", 1).Interface.PostNMA("", "", ParseText(sParam1), sParam2)
+      Else
+        Error.Raise("Notify My Android support is disabled!")
+      Endif
+    Case 19 ' send Pushover
+      ' TODO: Select instance
+      If Plugin.IsPluginEnabled("Pushover", 0) Then
+        If InStr(sParam4, ",")
+          For Each sDev In Split(sParam4, ",")
+            Plugin.GetPluginObject("Pushover", 1).Interface.PostPushover(LTrim(sDev), ParseText(sParam1), sParam2, sParam3)
+          Next
+        Else
+          Plugin.GetPluginObject("Pushover", 1).Interface.PostPushover(sParam4, ParseText(sParam1), sParam2, sParam3)
+        Endif
+      Else
+        Error.Raise("Pushover support is disabled!")
+      Endif
+    Case 20 ' send Pushbullet
+      ' TODO: Select instance
+      If Plugin.IsPluginEnabled("Pushbullet", 0) Then
+        Plugin.GetPluginObject("Pushbullet", 1).Interface.PostPushBullet(sParam3, ParseText(sParam1), sParam2)
+      Else
+        Error.Raise("Pushover support is disabled!")
+      Endif
+    Case 21 ' soft dimming
+       If Devices.CheckIfDeviceExists(sParam1) Then
+        SoftDimming(sParam1, sParam2, sParam3)
+        If iAction >= 1 Then
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & iAction & (" started soft dimming"))
+        Else
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Manual action started soft dimming"))
+        Endif
+      Else
+        Error.Raise("Device with id " & sParam1 & " doesn't exists!")
+      Endif
+    Case 22 ' send udp message
+      Try Main.SendUDP(sParam1, sParam2, ParseText(sParam3))
+      If Error Then Error.Raise("Send UDP message failed!")
+    Case 23 ' publish mqtt message
+      If Plugin.IsPluginEnabled("MQTT", 0) Then
+        Plugin.GetPluginObject("MQTT", 1).Interface.PublishMsg(sParam1, ParseText(sParam2), Val(sParam3))
+      Else
+        Error.Raise("MQTT support is disabled!")
+      Endif
+    Case Else
+      Error.Raise("Unsupported action type " & iType & "!")
+  End Select
+
+  ' This code will only be executed if there was no error
+  If Main.bEventsDebug Then
+    If iAction >= 1 Then
+      Main.WriteDebugLog("[Events] 3b. Action with id " & iAction & " named '" & sName & "' executed!")
+    Else
+      Main.WriteDebugLog("[Events] 3b. Manual action executed!")
+    Endif
+  Endif
+
+  Return iType
+
+  Catch
+    ' This code is executed if there is an error raised
+    If iAction >= 1 Then
+      Main.WriteDebugLog("[Events] 3b. Action with id " & iAction & " named '" & sName & "' failed to execute: '" & Error.Text & "' at '" & Error.Where & "'")
+    Else
+      Main.WriteDebugLog("[Events] 3b. Manual action failed to execute: '" & Error.Text & "' at '" & Error.Where & "'")
+    Endif
+    Error.Propagate()
+
+End
+
+' run all configured actions for this event
+Public Sub RunActions(iEventId As Integer, Optional iFrom As Integer) As Boolean
+
+  Dim rActions As Result
+  Dim iActionType As Integer
+
+  UpdateEvent(iEventId)
+  rActions = Main.hDB.Exec("SELECT * FROM events_actions WHERE event = &1 ORDER BY events_actions.order", iEventId)
+  If rActions Then
+     If Main.bEventsDebug Then
+       Main.WriteDebugLog("[Events] 3d. Action count: " & rActions.Count)
+       Main.WriteDebugLog("[Events] 3d. Action run from: " & iFrom)
+     Endif
+
+    For Each rActions
+      If Main.bEventsDebug Then
+        Main.WriteDebugLog("[Events] 3d. Action id: " & rActions!action & " order: " & rActions!order)
+      Endif
+      If rActions!order < iFrom Then Continue
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3a. Running action with id ") & rActions!action & (" for event with id ") & iEventId)
+      Try iActionType = RunAction(rActions!action, rActions!order, iEventId)
+      If iActionType = 13 Then
+        'delay action, remaining actions will be executed when the timer goes off
+        If Main.bEventsDebug Then
+          Main.WriteDebugLog("[Events] 3d. Action id: " & rActions!action & " pause further execution, timer started to resume further execution")
+        Endif
+        Break
+      Endif
+    Next
+    Return True
+  Endif
+
+  Return False
 
 End
 
@@ -747,78 +743,92 @@ End
 
 ' replace templates with their values in text
 ' <%global var%> - insert globalvar value
-' <#device name|field#> - insert value field number 'field' from device with name 'device name'
 ' <$device id|field$> - insert value field number 'field' from device with 'device id'
 Private Sub ParseText(sText As String) As String
 
-  Dim iPos1, iPos2, iPos3 As Integer
   Dim sTag As String
+  Dim sReplace As String
+  Dim rMatch As New RegExp
+  Dim iLimit As Integer = 10
 
-  If InStr(stext, "<") And If InStr(stext, ">") Then
-    iPos1 = InStr(sText, "<")
-    Do While iPos1 > 0
-      iPos2 = InStr(sText, ">", iPos1 + 1)
-      If iPos2 > 0 Then ' tags found
-        sTag = Mid(sText, iPos1 + 1, iPos2 - iPos1 - 1)
-        If Left(sTag, 1) = "%" And If Right(sTag, 1) = "%" Then ' globalvar tag
-          sText = Replace(sText, "<" & sTag & ">", InsertGlobalVar(sTag))
-        Endif
-        If Left(sTag, 1) = "#" And If Right(sTag, 1) = "#" Then ' devicename tag
-          sText = Replace(sText, "<" & sTag & ">", InsertDeviceValue(sTag))
-        Endif
-        If Left(sTag, 1) = "$" And If Right(sTag, 1) = "$" Then ' deviceid tag
-          sText = Replace(sText, "<" & sTag & ">", InsertDeviceValue(sTag, True))
-        Endif
+  ' Replace global vars
+  rMatch.Compile("<%([^>]+)%>")
+  Do While True
+    rMatch.Exec(sText)
+    If rMatch.Count > 0 Then
+
+      ' If the RegEx did match check for global var
+      sTag = rMatch[1].Text
+      Try sReplace = Main.GetGlobalVar(sTag)
+      If IsNull(sReplace) Then
+        If Main.bEventsDebug Then Main.WriteLog("[Events] ERROR: Could not find global variable for <%" & sTag & "%>")
+        sReplace = "<Unknown global var " & sTag & ">"
       Endif
-      iPos3 = InStr(sText, "<")
-      If iPos3 <= iPos1 Then
-        Break
+
+      ' Replace the template; rMatch[0] is the whole match
+      sText = Left(sText, rMatch[0].Offset) & sReplace & Mid(sText, rMatch[0].Offset + Len(rMatch[0].Text) + 1)
+    Else
+      ' No Match
+      Break
+    Endif
+
+    ' Should never happen but better check instead of hang
+    iLimit -= 1
+    If iLimit <= 0 Then
+      Main.WriteDebugLog("ERROR: Broke loop in Events.ParseText parsing '" & sText & "'")
+      Break
+    Endif
+  Loop
+
+  Return ReplaceDeviceVar(sText)
+
+End
+
+Private Sub ReplaceDeviceVar(sText As String) As String
+
+  Dim sTag As String
+  Dim iDeviceId As Integer
+  Dim sReplace As String
+  Dim rMatch As New RegExp
+  Dim sElt As String[]
+  Dim iLimit As Integer = 999
+
+  ' Replace device values
+  rMatch.Compile("<\\$([^>]+)\\$>")
+  Do While True
+    rMatch.Exec(sText)
+    If rMatch.Count > 0 Then
+      sTag = rMatch[1].Text
+      If RegExp.Match(sTag, "^(\\d+)|(.*)$") Then
+        ' <$67|1$>, <$5|lastseen$> etc.
+        sElt = Split(sTag, "|")
+        iDeviceId = CInt(sElt[0])
+        sReplace = Devices.GetValueForDevice(iDeviceId, sElt[1])
       Else
-        iPos1 = iPos3
+        ' <$17$> etc.
+        iDeviceId = CInt(sTag)
+        sReplace = Devices.GetCurrentValueForDevice(iDeviceId, 1)
       Endif
-    Loop
-  Endif
+
+      ' Replace the template; rMatch[0] is the whole match
+      sText = Left(sText, rMatch[0].Offset) & sReplace & Mid(sText, rMatch[0].Offset + Len(rMatch[0].Text) + 1)
+    Else
+      ' No match
+      Break
+    Endif
+
+    ' Should never happen but better check instead of hang
+    iLimit -= 1
+    If iLimit <= 0 Then
+      Main.WriteDebugLog("ERROR: Broke loop in Events.ReplaceDeviceVar parsing '" & sText & "'")
+      Break
+    Endif
+  Loop
+
   Return sText
 
-End
-
-' return value of %global var%
-Private Sub InsertGlobalVar(sTag As String) As String
-
-  Try Return Main.GetGlobalVar(Mid(sTag, 2, Len(sTag) - 2))
-  If Error Then Return ("ERROR!")
-
-End
-
-' return value of <#device name|field#> or <$device id|field$>
-Private Sub InsertDeviceValue(sTag As String, Optional bUseId As Boolean) As String
-
-  Dim aScan As String[]
-  Dim sValue As String
-  Dim iDeviceId As Integer
-
-  If InStr(sTag, "|") Then
-    If bUseId Then
-      aScan = Scan(sTag, "$*|*$")
-    Else
-      aScan = Scan(sTag, "#*|*#")
-    Endif
-    If aScan.Count = 2 Then
-
-      iDeviceId = Devices.FindDeviceId(aScan[0], "events insert device value")
-      If Not iDeviceId Then Return
-
-      sValue = Devices.GetValueForDevice(iDeviceId, aScan[1])
-    Endif
-  Else
-    iDeviceId = Devices.FindDeviceId(Mid(sTag, 2, Len(sTag) - 2), "events insert device value")
-    If Not iDeviceId Then Return
-    sValue = Devices.GetCurrentValueForDevice(iDeviceId, 1)
-  Endif
-  Return sValue
-
 Catch
-  Return ("ERROR: Tag '" & sTag & "' is invalid!")
+  If Main.bEventsDebug Then Main.WriteLog("[Events] ERROR: Could not find device value variable for <$" & sTag & "$>")
 
 End
 
@@ -841,6 +851,7 @@ Public Function TimeCron(sTimeDate As String) As Boolean
   ' | +----------- hour (0 - 23)
   ' +------------- min(0 - 59)
 
+  'sTimeDate = Regexp.Replace(sTimeDate, "[0]{1}([0-9]{1})", "&1")
   aCron = Split(sTimeDate, " ")
 
   If aCron.Count <> 5 Then
@@ -983,37 +994,31 @@ End
 ' disable an event
 Public Sub ChangeEventState(iId As Integer, bStatus As Boolean) As Boolean
 
-  Dim rResult As Result
-
-  rResult = Main.hDB.Exec("SELECT * FROM events where id = &1", iId)
-  If rResult.Available Then
-    If rResult.Count = 1 Then
-      If bStatus = True Then
-        rResult = Main.hDB.Exec("UPDATE events SET enabled = &1 WHERE id = &2", -1, iId)
-      Else
-        rResult = Main.hDB.Exec("UPDATE events SET enabled = &1 WHERE id = &2", 0, iId)
-      Endif
-    Endif
-  Endif
+  Try Main.hDB.Exec("UPDATE events SET enabled = &1 WHERE id = &2", bStatus, iId)
   Return True
+
+Catch
+  Return False
 
 End
 
 Public Function ProcessJson(deviceId As Integer, methodeName As String, linkUrl As String) As String
+
  Dim cContent, cValueContent As Collection
  Dim aValuesContent As Collection[]
  Dim rResult As Result
- 
+
   If methodeName And If linkUrl Then
     Select Case methodeName
       Case "Post"
-        
+
         rResult = Devices.GetValues(["device_id": deviceId])
         aValuesContent = New Collection[]
         For Each rResult
           cValueContent = New Collection
+
           cValueContent.Add(rResult!valuenum, "valuenum")
-          cValueContent.Add(rResult!value, "value")
+          cValueContent.Add(Devices.CorrectValue(rResult!value, rResult!correction, deviceId), "value")
           aValuesContent.Add(cValueContent)
         Next
 
@@ -1027,7 +1032,7 @@ Public Function ProcessJson(deviceId As Integer, methodeName As String, linkUrl 
         hPostJson.TimeOut = 10
         hPostJson.Async = True
         hPostJson.Post("application/json", JSON.Encode(cContent))
-        
+
       Case "Get"
         hReadJson = New HttpClient As "hReadJson"
         hReadJson.URL = linkUrl
@@ -1035,12 +1040,11 @@ Public Function ProcessJson(deviceId As Integer, methodeName As String, linkUrl 
         hReadJson.TimeOut = 8
         hReadJson.Async = True
         hReadJson.Get()
-        If Main.bEventsDebug Then Main.WriteDebugLog("[Event] Fetching reverse JSON data with " & linkUrl)      
+        If Main.bEventsDebug Then Main.WriteDebugLog("[Events] Fetching reverse JSON data with " & linkUrl)
       Case Else
         Main.WriteDebugLog(("[Events] 3b. Invalid JSON methode given ") & methodeName & "!")
-      End Select      
+      End Select
    Endif
-
 
 End
 
@@ -1074,31 +1078,30 @@ Public Sub hReadJson_Finished()
   Select Last.Code
     Case 200
       deviceId = Last.Tag
-      sBuffer = cJsonData[deviceId] 
+      sBuffer = cJsonData[deviceId]
       cJsonData.Remove(deviceId)
       If Len(sBuffer) Then
         Try cData = JSON.Decode(sBuffer)
-        If Error And If Main.bEventsDebug Then Main.WriteLog(("Unknown error occured while trying to get JSON data!"))
+        If Error And If Main.bEventsDebug Then Main.WriteLog("[Events] " & ("Unknown error occured while trying to get JSON data!"))
         If cData.Exist("values") Then
           For Each cValue In cData["values"]
             If cValue.Exist("valuenum") And If cValue.Exist("value") Then
-              Devices.ValueUpdateExt(deviceId, cValue["valuenum"], cValue["value"])
+              Devices.ValueUpdate(deviceId, cValue["valuenum"], cValue["value"])
             Endif
           Next
         Else
-          If Main.bEventsDebug Then Main.WriteLog(("No values in JSON data!"))
+          If Main.bEventsDebug Then Main.WriteLog("[Events] " & ("No values in JSON data!"))
         Endif
       Endif
     Case Else
-      If Main.bEventsDebug Then Main.WriteLog(("Unknown error occured while trying to get JSON data!"))
+      If Main.bEventsDebug Then Main.WriteLog("[Events] " & ("Unknown error occured while trying to get JSON data!"))
   End Select
   Last.Close
-
 
 End
 
 Public Sub hReadJson_Error()
-  If Main.bEventsDebug Then Main.WriteDebugLog(("[Event] Error fetching JSON data: ") & Last.Status)
+  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] Error fetching JSON data: ") & Last.Status)
    Last.Close
 End
 
@@ -1109,9 +1112,9 @@ Public Sub hPostJson_Finished()
 
   Select Last.Code
     Case 200
-      If Main.bEventsDebug Then Main.WriteLog(("[Event] JSON data posted!"))
+      If Main.bEventsDebug Then Main.WriteLog("[Events] " & ("JSON data posted!"))
     Case Else
-      If Main.bEventsDebug Then Main.WriteLog(("Unknown error occured while trying to get JSON data!"))
+      If Main.bEventsDebug Then Main.WriteLog("[Events] " & ("Unknown error occured while trying to get JSON data!"))
   End Select
   Last.Close
 
@@ -1119,7 +1122,7 @@ End
 
 Public Sub hPostJson_Error()
 
-  If Main.bEventsDebug Then Main.WriteDebugLog(("[Event] Error fetching JSON data: ") & Last.Status)
+  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] Error fetching JSON data: ") & Last.Status)
 
 End
 
@@ -1132,7 +1135,7 @@ Public Sub GetEventList() As Result
 
   Try rEvent = Main.hDB.Exec("SELECT * FROM events")
   If Error Then
-    Main.WriteDebugLog("[Events] ERROR: '" & Error.Text & "' at " & Error.Where)
+    Main.WriteDebugLog("[Events] ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   Endif
 
   Return rEvent
@@ -1148,7 +1151,7 @@ Public Sub GetEventActionList(iEvent As Integer) As Result
 
   Try rEventAction = Main.hDB.Exec("SELECT * FROM events_actions WHERE event = &1 ORDER BY events_actions.order", iEvent)
   If Error Then
-    Main.WriteDebugLog("[Events] ERROR: '" & Error.Text & "' at " & Error.Where)
+    Main.WriteDebugLog("[Events] ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   Endif
 
   Return rEventAction
@@ -1164,10 +1167,105 @@ Public Sub GetActionList() As Result
 
   Try rAction = Main.hDB.Exec("SELECT * FROM actions")
   If Error Then
-    Main.WriteDebugLog("[Events] ERROR: '" & Error.Text & "' at " & Error.Where)
+    Main.WriteDebugLog("[Events] ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   Endif
 
   Return rAction
 
 End
 
+Public Function SoftDimming(iDeviceId As Integer, iSeconds As Integer, iResultValue As Integer) As String
+
+  Dim oObject As Object
+
+  If Not Devices.CheckIfDimable(iDeviceId) Then
+     If Main.bEventsDebug Then Main.WriteDebugLog("[Events] 3b. soft dimming, device is not dimable!")
+     Return
+  Endif
+
+  If iSeconds <= 0 Then
+     If Main.bEventsDebug Then Main.WriteDebugLog("[Events] 3b. soft dimming, amount of seconds is invalid!")
+     Return
+  Endif
+
+  For Each oObject In oSoftDimmingTimers
+    If oObject.DeviceId = iDeviceId Then
+      If Main.bEventsDebug Then Main.WriteDebugLog("[Events] 3b. Soft dimming timer for device id " & iDeviceId & ", canceling previous one.")
+      oObject.Stop
+      oSoftDimmingTimers.Remove(oSoftDimmingTimers.Find(oObject))
+      Break
+    Endif
+  Next
+
+  tSoftDimmingTimer = New CTimerSoftDimming As "tSoftDimmerTimer"
+  oSoftDimmingTimers.Add(tSoftDimmingTimer)
+  tSoftDimmingTimer.Delay = 1000
+  tSoftDimmingTimer.DeviceId = iDeviceId
+  tSoftDimmingTimer.ResultValue = iResultValue
+  tSoftDimmingTimer.Ended = DateAdd(Now(), gb.Second, iSeconds)
+  tSoftDimmingTimer.Start
+
+  If Main.bEventsDebug Then Main.WriteDebugLog("[Events] 3b. soft dimming, started!")
+
+End
+
+' timer is finished, run next soft dim step
+Public Sub tSoftDimmerTimer_Timer()
+
+  Dim stepValue As Integer = 1
+  Dim sValue As String
+  Dim iDim, iDiff, iDeviceId, iResultValue, iSecondsLeft, iDelay As Integer
+  Dim aDim As String[]
+  Dim dEnded As Date
+
+  iDeviceId = Last.DeviceId
+  iResultValue = Last.ResultValue
+  dEnded = Last.Ended
+  Last.Stop
+
+  sValue = Devices.GetCurrentValueForDevice(iDeviceId, 1)
+  sValue = UCase(sValue)
+  If InStr(sValue, "DIM ") Then
+    aDim = Split(sValue, " ")
+    If aDim.Count = 2 Then
+      iDim = Val(aDim[1])
+    Endif
+  Else If InStr(sValue, "ON") Then
+    iDim = 100
+  Else
+    iDim = 0
+  Endif
+
+  ' Calculate next step
+  iDiff = Abs(iResultValue - iDim)
+  iSecondsLeft = DateDiff(Now(), dEnded, gb.Second)
+
+  If iDiff <= 0 Or If iSecondsLeft <= 0 Then
+    Devices.SetDevice(iDeviceId, "Dim " & iResultValue)
+    oSoftDimmingTimers.Remove(oSoftDimmingTimers.Find(Last))
+    Return
+  Endif
+
+  If iSecondsLeft > iDiff Then
+    iDelay = (iSecondsLeft / iDiff) * 1000
+  Else
+    iDelay = 1000
+    stepValue = iDiff / iSecondsLeft
+  Endif
+
+  If iDim < iResultValue Then
+    iDim += stepValue
+    If iDim > iResultValue Then iDim = iResultValue
+  Else
+    iDim -= stepValue
+    If iDim < iResultValue Then iDim = iResultValue
+  Endif
+
+  Devices.SetDevice(iDeviceId, "Dim " & iDim)
+
+  If Not (iDim = iResultValue) Then
+    Last.Delay = iDelay
+    Last.Start
+  Endif
+
+End

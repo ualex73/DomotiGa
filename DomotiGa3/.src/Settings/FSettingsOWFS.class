@@ -32,15 +32,13 @@ Public Sub btnSave_Click()
 
   Dim rResult As Result
 
-  If Not FMain.MinValue(Me.vbPollTime, 60) Then Return
-
   ' save new OWFS settings
   rResult = Main.hDB.Exec("UPDATE settings_owfs SET debug = &1, enabled = &2, polltime = &3, cached = &4, basedir = &5 WHERE id = 1", chkDebug.Value, chkEnabled.Value, vbPollTime.Value, chkCached.Value, txtBaseDir.Text)
 
   If Main.bServer Then
     Plugin.Restart("OWFS", 1)
   Else
-    Client.ModuleRestart("OWFS")
+    Client.Plugin_Restart("OWFS")
   Endif
 
   Me.Close
@@ -73,7 +71,7 @@ Public Sub btnDefaults_Click()
 
 End
 
-Public Sub vbPollTime_Change()
+Public Sub vbPollTime_KeyPress()
 
   btnSave.Enabled = True
 

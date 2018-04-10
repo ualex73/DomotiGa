@@ -1,0 +1,242 @@
+# Gambas Form File 3.0
+
+{ Form Form
+  MoveScaled(0,0,90,73)
+  Background = Color.TextBackground
+  Text = ("Edit Modules, Groups, Etc.")
+  Icon = Picture["icon:/small/view-icon"]
+  Resizable = False
+  { btnClose Button
+    MoveScaled(76,67,12,4)
+    Text = ("Close")
+  }
+  { TabPanelAll TabPanel
+    MoveScaled(1,1,88,65)
+    Expand = True
+    Count = 6
+    Index = 0
+    Text = ("DeviceTypes")
+    { Frame1 Frame
+      MoveScaled(1,1,87,60)
+      { DataSourceDeviceTypes DataSource
+        MoveScaled(0,0,86,59)
+        Table = "devicetypes"
+        { DataBrowserDeviceTypes DataBrowser
+          MoveScaled(1,1,84,35)
+          Columns = ["id", "name", "description", "protocol"]
+          Grid = True
+        }
+        { TextLabel1 TextLabel
+          MoveScaled(2,38,15,4)
+          Text = ("Name")
+          Alignment = Align.Normal
+        }
+        { DataControlM1 DataControl
+          MoveScaled(19,38,44,4)
+          Field = "name"
+        }
+        { DataControlM2 DataControl
+          MoveScaled(19,43,44,4)
+          Field = "description"
+        }
+        { TextLabel2 TextLabel
+          MoveScaled(2,43,15,4)
+          Text = ("Description")
+          Alignment = Align.Normal
+        }
+        { TextLabel3 TextLabel
+          MoveScaled(2,48,15,4)
+          Text = ("Protocol")
+          Alignment = Align.Normal
+        }
+        { DataControlM3 DataControl
+          MoveScaled(19,48,22,4)
+          Field = "protocol"
+        }
+        { DataControlM4 DataControl
+          MoveScaled(19,53,47,4)
+          Field = "addressformat"
+        }
+        { TextLabel11 TextLabel
+          MoveScaled(2,53,15,4)
+          Text = ("Address Format")
+          Alignment = Align.Normal
+        }
+      }
+    }
+    Index = 1
+    Text = ("DeviceValueTypes")
+    { DataSourceDeviceValueTypes DataSource
+      MoveScaled(1,1,86,59)
+      Table = "device_valuetypes"
+      { DataBrowserDeviceValueTypes DataBrowser
+        MoveScaled(1,1,84,35)
+        Columns = ["id", "type", "units", "control", "description"]
+        Grid = True
+      }
+      { TextLabel12 TextLabel
+        MoveScaled(2,38,15,4)
+        Text = ("Type")
+        Alignment = Align.Normal
+      }
+      { DataControlM5 DataControl
+        MoveScaled(19,38,16,4)
+        Field = "type"
+      }
+      { DataControlM6 DataControl
+        MoveScaled(19,43,8,4)
+        Field = "units"
+      }
+      { TextLabel13 TextLabel
+        MoveScaled(2,43,15,4)
+        Text = ("Units")
+        Alignment = Align.Normal
+      }
+      { TextLabel14 TextLabel
+        MoveScaled(2,48,15,4)
+        Text = ("Controllable")
+        Alignment = Align.Normal
+      }
+      { DataControlM7 DataControl
+        MoveScaled(19,48,8,4)
+        Field = "control"
+      }
+      { DataControlM8 DataControl
+        MoveScaled(19,53,47,4)
+        Field = "description"
+      }
+      { TextLabel15 TextLabel
+        MoveScaled(2,53,15,4)
+        Text = ("Description")
+        Alignment = Align.Normal
+      }
+    }
+    Index = 2
+    Text = ("Groups")
+    { Frame2 Frame
+      MoveScaled(1,1,86,59)
+      { DataSourceGroups DataSource
+        MoveScaled(0,0,86,58)
+        Table = "groups"
+        { DataBrowserGroups DataBrowser
+          MoveScaled(1,1,84,46)
+          Columns = ["id", "name"]
+          Grid = True
+        }
+        { DataControlG4 DataControl
+          MoveScaled(15,50,22,4)
+          Field = "name"
+        }
+        { TextLabel4 TextLabel
+          MoveScaled(3,50,11,4)
+          Text = ("Group")
+          Alignment = Align.Normal
+        }
+      }
+    }
+    Index = 3
+    Text = ("Locations")
+    { Frame3 Frame
+      MoveScaled(1,1,86,59)
+      { DataSourceLocations DataSource
+        MoveScaled(0,0,86,57)
+        Table = "locations"
+        { TextLabel5 TextLabel
+          MoveScaled(3,50,11,4)
+          Text = ("Location")
+          Alignment = Align.Normal
+        }
+        { DataBrowserLocations DataBrowser
+          MoveScaled(1,1,84,46)
+          Columns = ["id", "name"]
+          Grid = True
+        }
+        { DataControlL5 DataControl
+          MoveScaled(15,50,22,4)
+          Field = "name"
+        }
+      }
+    }
+    Index = 4
+    Text = ("Floorplans")
+    { Frame4 Frame
+      MoveScaled(1,1,86,58)
+      { DataSource3 DataSource
+        MoveScaled(0,0,86,57)
+        Table = "floors"
+        { TextLabel6 TextLabel
+          MoveScaled(2,46,12,4)
+          Text = ("Floorplan")
+          Alignment = Align.Normal
+        }
+        { DataBrowserFloorplans DataBrowser
+          MoveScaled(1,1,84,43)
+          Columns = ["floor", "name", "image"]
+          Grid = True
+        }
+        { DataControlF1 DataControl
+          MoveScaled(15,46,23,4)
+          Field = "name"
+        }
+        { DataControlF2 DataControl
+          MoveScaled(15,51,19,4)
+          Field = "image"
+        }
+        { TextLabel7 TextLabel
+          MoveScaled(2,51,12,4)
+          Text = ("Image")
+          Alignment = Align.Normal
+        }
+        { btnImageFloor Button
+          MoveScaled(34,51,4,4)
+          Picture = Picture["images/points.png"]
+        }
+      }
+    }
+    Index = 5
+    Text = ("Blacklist")
+    { Frame5 Frame
+      MoveScaled(0,1,87,59)
+      { DataSourceBlacklist DataSource
+        MoveScaled(1,0,86,58)
+        Table = "deviceblacklist"
+        { TextLabel8 TextLabel
+          MoveScaled(2,46,12,4)
+          Text = ("Address")
+          Alignment = Align.Normal
+        }
+        { DataBrowserBlacklist DataBrowser
+          MoveScaled(1,1,84,43)
+          Columns = ["blid", "address", "id", "comments"]
+          Grid = True
+        }
+        { DataControlB1 DataControl
+          MoveScaled(15,46,15,4)
+          Field = "address"
+        }
+        { DataComboB1 DataCombo
+          MoveScaled(42,46,25,4)
+          ReadOnly = True
+          Field = "id"
+          Table = "plugins"
+          Display = "interface"
+        }
+        { DataControlB2 DataControl
+          MoveScaled(15,51,52,4)
+          Field = "comments"
+        }
+        { TextLabel9 TextLabel
+          MoveScaled(2,51,12,4)
+          Text = ("Comments")
+          Alignment = Align.Normal
+        }
+        { TextLabel10 TextLabel
+          MoveScaled(31,46,10,4)
+          Text = ("Interface")
+          Alignment = Align.Normal
+        }
+      }
+    }
+    Index = 0
+  }
+}

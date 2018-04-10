@@ -45,7 +45,7 @@ Public Sub btnSave_Click()
   Main.bCallerIDDebug = rResult!debug
 
   If Not Main.bServer Then
-    Client.ModuleRestart("Main")
+    Client.Plugin_Restart("Main")
   Endif
 
   Me.Close
@@ -145,4 +145,3 @@ Private Sub EnableDisableSettings()
   chkAutoCreateContacts.Enabled = chkEnabled.Value
 
 End
-

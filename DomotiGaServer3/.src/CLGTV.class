@@ -16,7 +16,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "LGTV"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "LG TV Receiver"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -36,7 +35,7 @@ Public ErrorWhere As String
 Private $bEnabled As Boolean
 Private $sTCPHost As String
 Private $iTCPPort As Integer
-Private $bLGTVDebug As Boolean
+Private $bDebug As Boolean
 Private $sInterface As String
 Private $sSerPort As String
 Private $sBaud As String
@@ -47,7 +46,7 @@ Public hLGTVSer As New SerialPort
 Public sBuffer As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -65,7 +64,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sInterface = cPl.Settings["type"]
   $sSerPort = cPl.Settings["serialport"]
   $sBaud = cPl.Settings["baudrate"]
-  $bLGTVDebug = cPl.Settings["debug"]
+  $bDebug = cPl.Settings["debug"]
  
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
@@ -77,7 +76,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -98,7 +97,7 @@ Public Function ConnectTCP() As Boolean
   hLGTV.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
 
@@ -106,7 +105,7 @@ Public Function ConnectTCP() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -137,14 +136,14 @@ Public Function ConnectSerial() As Boolean
   End With
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -169,7 +168,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub LGTV_Closed()
 
-  Main.WriteLog(LogLabel & "Receiver TCP socket closed.")
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
 
 End
 
@@ -183,7 +182,7 @@ Public Function Disconnect() As Boolean
   Try hLGTVSer.Close
 
   If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
   Else
     Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
   Endif
@@ -231,7 +230,7 @@ Private Sub SendCmd(sCmd As String)
     Try Print #hLGTVSer, sStr
     If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the serial port! -> " & Error.Text)
   Endif
-  If $bLGTVDebug Then Main.WriteDebugLog(LogLabel & "> " & sCmd)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sCmd)
 
 End
 
@@ -241,23 +240,25 @@ End
 Public Sub SendCommand(sAddress As String, sValue As String)
 
   ' ignore sAddress, only fixed ID 1
+  sAddress = sAddress
   Select Case LCase(sValue)
     Case "on"
       SendCmd("ka 01 01")
     Case "off"
       SendCmd("ka 01 00")
     Case Else
-      If $bLGTVDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sValue)
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sValue)
   End Select
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' to control from xmlrpc or music page buttons
+' to control from json-rpc or music page buttons
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
 
   ' ignore sAddress, only fixed ID 1
+  sAddress = sAddress
   Select Case LCase(sCmd)
     Case "power"
       ' 00 - Off, 01 - On
@@ -307,19 +308,21 @@ Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
     Case "cli"
       SendCmd(sValue)
     Case Else
-      If $bLGTVDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sCmd & " " & sValue)
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sCmd & " " & sValue)
   End Select
 
 End
 
 Public Sub GetCommand(sCmd As String, sAddress As String) As String
 
+  sAddress = sAddress
+  sCmd = sCmd
   ' ' ignore sAddress, only fixed unit 1
   ' SELECT CASE LCase(sCmd)
   '   CASE "power"
   '     SendCmd("ka 01 FF")
   '   CASE ELSE
-  '     IF $bLGTVDebug THEN Main.WriteDebugLog(LogLabel & "Unsupported get value received: ") & sCmd)
+  '     IF $bDebug THEN Main.WriteDebugLog(LogLabel & "Unsupported get value received: ") & sCmd)
   ' END SELECT
 
 End
@@ -373,7 +376,7 @@ Private Sub ParseLine(sBuf As String)
 
   Dim sStr, sCat, sItem, sValue As String
 
-  If $bLGTVDebug Then Main.WriteDebugLog(LogLabel & "< " & sBuf)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sBuf)
 
   ' a 00 OK01x
   ' a 00 NG01x
@@ -397,7 +400,7 @@ End
 Private Sub LGTVSetValue(sItem As String, vValue As Variant)
 
   Main.SetGlobalVar("LGTV_" & sItem, vValue)
-  If $bLGTVDebug Then Main.WriteDebugLog(LogLabel & "Received Item: " & sItem & " Value: " & vValue)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received Item: " & sItem & " Value: " & vValue)
 
 End
 

@@ -5,7 +5,7 @@
 ' Built-in XML-RPC server.
 
 ' Development Status:
-' Just started.
+' Finished, but DEPRECATED
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -16,7 +16,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "XMLRPC"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "XML-RPC"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -31,25 +30,18 @@ Public ErrorText As String
 Public ErrorWhere As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Public variables - will be removed in the future
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Property HTTPPort As Integer
-Property MaxConn As Integer
-Property XMLRPCDebug As Boolean
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Private Variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private $bEnabled As Boolean
 Private $iHTTPPort As Integer
 Private $iMaxConn As Integer
-Private $bXMLRPCDebug As Boolean
+Private $bDebug As Boolean
 
 Public hXMLRPC As RpcServer
 Private APIVersion As String = "0.18"
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -64,7 +56,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bEnabled = cPl.Settings["enabled"]
   $iMaxConn = cPl.Settings["maxconn"]
   $iHTTPPort = cPl.Settings["httpport"]
-  $bXMLRPCDebug = cPl.Settings["debug"]
+  $bDebug = cPl.Settings["debug"]
  
   ' Connect/Initialize connection
   Connect()
@@ -72,7 +64,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -151,13 +143,13 @@ Public Function Connect() As Boolean
   hRpcFunc = New RpcFunction("device.listdim", Null, XmlRpc.xStruct)
   hRpcFunc.Help = ("returns a list of devices which can be dimmed.")
   hXMLRPC.Register(hRpcFunc)
-  hRpcFunc = New RpcFunction("device.setdevice", [XmlRpc.xString, XmlRpc.xString], XmlRpc.xBoolean)
+  hRpcFunc = New RpcFunction("device.setdevice", [XmlRpc.xInteger, XmlRpc.xString], XmlRpc.xBoolean)
   hRpcFunc.Help = ("set device param1 with value param2.")
   hXMLRPC.Register(hRpcFunc)
-  hRpcFunc = New RpcFunction("device.updatedevice", [XmlRpc.xString, XmlRpc.xString, XmlRpc.xString], XmlRpc.xBoolean)
+  hRpcFunc = New RpcFunction("device.updatedevice", [XmlRpc.xInteger, XmlRpc.xString, XmlRpc.xString], XmlRpc.xBoolean)
   hRpcFunc.Help = ("update device param1 in value field param2 with value param3")
   hXMLRPC.Register(hRpcFunc)
-  hRpcFunc = New RpcFunction("device.getstate", [XmlRpc.xString, XmlRpc.xString], XmlRpc.xString)
+  hRpcFunc = New RpcFunction("device.getstate", [XmlRpc.xInteger, XmlRpc.xString], XmlRpc.xString)
   hRpcFunc.Help = ("get device state from device with name param1.")
   hXMLRPC.Register(hRpcFunc)
   hRpcFunc = New RpcFunction("location.list", Null, XmlRpc.xStruct)
@@ -193,8 +185,8 @@ Public Function Connect() As Boolean
   hRpcFunc = New RpcFunction("display.ledmessage", [XmlRpc.xString, XmlRpc.xString], XmlRpc.xBoolean)
   hRpcFunc.Help = ("display message param2 on display with id param1.")
   hXMLRPC.Register(hRpcFunc)
-  hRpcFunc = New RpcFunction("pachube.list", Null, XmlRpc.xString)
-  hRpcFunc.Help = ("get pachube device list in eeml.")
+  hRpcFunc = New RpcFunction("xively.list", Null, XmlRpc.xString)
+  hRpcFunc.Help = ("get xively device list in eeml.")
   hXMLRPC.Register(hRpcFunc)
   hRpcFunc = New RpcFunction("serverstats.updategraphs", [XmlRpc.xString], XmlRpc.xBoolean)
   hRpcFunc.Help = ("update serverstats graph images for range param1.")
@@ -383,15 +375,15 @@ End
 
 Public Sub hXMLRPC_RemoteCall(sName As String, sData As Variant[])
 
-  Dim vValue As Variant
   Dim aArray As New RpcArray
   Dim sParam As String
   Dim iParam As Integer
+  Dim cGV As CGlobalVarEntry
 
-  If $bXMLRPCDebug Then
+  If $bDebug Then
     Main.WriteDebugLog(LogLabel & "Got a RemoteCall for method '" & sName & "'")
     For Each sParam In sData
-      Main.WriteDebugLog(LogLabel & "Param[" & iParam & "] = '" & Main.HtmlDecode(sParam) & "'")
+      Main.WriteDebugLog(LogLabel & "Param[" & iParam & "] = '" & HtmlDecode(sParam) & "'")
       Inc iParam
     Next
   Endif
@@ -399,7 +391,7 @@ Public Sub hXMLRPC_RemoteCall(sName As String, sData As Variant[])
   Select Case sName
     ' system methods
     Case "system.program_uptime"
-      hXMLRPC.SetReply(Main.HtmlEncode(Main.GetGlobalVar("Program_Uptime")))
+      hXMLRPC.SetReply(HtmlEncode(Main.GetGlobalVar("Program_Uptime")))
     Case "system.program_version"
       hXMLRPC.SetReply(Main.sProgramVersion)
     Case "system.pid"
@@ -411,17 +403,17 @@ Public Sub hXMLRPC_RemoteCall(sName As String, sData As Variant[])
       hXMLRPC.SetReply(APIVersion)
     ' modes
     Case "mode.get_housemode"
-      hXMLRPC.SetReply(Main.HtmlEncode(Main.GetGlobalVar("House_Mode")))
+      hXMLRPC.SetReply(HtmlEncode(Main.GetGlobalVar("House_Mode")))
     Case "mode.get_mutemode"
-      hXMLRPC.SetReply(Main.HtmlEncode(Main.GetGlobalVar("Mute")))
+      hXMLRPC.SetReply(HtmlEncode(Main.GetGlobalVar("Mute")))
     Case "set.housemode"
       SetHouseMode(sData)
     Case "set.mutemode"
       SetMuteMode(sData)
     ' globalvar
     Case "globalvar.list"
-      For Each vValue In Main.GlobalVar
-        aArray.Add(Main.HtmlEncode(Main.GlobalVar.Key), XmlRpc.xString)
+      For Each cGV In Main.GlobalVar
+        aArray.Add(HtmlEncode(Main.GlobalVar.Key), XmlRpc.xString)
       Next
       hXMLRPC.SetReply(aArray)
     Case "globalvar.get"
@@ -434,8 +426,8 @@ Public Sub hXMLRPC_RemoteCall(sName As String, sData As Variant[])
       DelGlobalVar(sData)
     ' misc methods
     Case "data.sunmoon"
-      aArray.Add(Main.HtmlEncode(Main.GetGlobalVar("Sunrise")), XmlRpc.xString)
-      aArray.Add(Main.HtmlEncode(Main.GetGlobalVar("Sunset")), XmlRpc.xString)
+      aArray.Add(HtmlEncode(Main.GetGlobalVar("Sunrise")), XmlRpc.xString)
+      aArray.Add(HtmlEncode(Main.GetGlobalVar("Sunset")), XmlRpc.xString)
       hXMLRPC.SetReply(aArray)
     Case "data.newmessages"
       aArray.Add(Main.iNewMails, XmlRpc.xString)
@@ -475,8 +467,8 @@ Public Sub hXMLRPC_RemoteCall(sName As String, sData As Variant[])
       PlaySound(sData)
     Case "voicetext.speak"
       VoiceTextSpeak(sData)
-    Case "pachube.list"
-      Try Plugin.GetPluginObject("Pachube", 1).interface.CreatePachubeData()
+    Case "xively.list"
+      Try Plugin.GetPluginObject("Xively", 1).interface.CreateXivelyData()
       If Not Error Then
         hXMLRPC.SetReply(True)
       Else
@@ -517,11 +509,11 @@ Public Sub hXMLRPC_RemoteCall(sName As String, sData As Variant[])
       PLCBUSTXcommand(sData)
     ' thermostat
     Case "thermostat.listscenario"
-      ThermostatListScenarii(sData)
+      ThermostatListScenarii()
     Case "thermostat.getscenario"
-      ThermostatGetScenario(sData)
+      ThermostatGetScenario()
     Case "thermostat.getscenarios"
-      ThermostatGetScenarios(sData)
+      ThermostatGetScenarios()
     Case "thermostat.getheating"
       ThermostatGetHeating(sData)
     Case "thermostat.setscenario"
@@ -545,9 +537,9 @@ Public Sub hXMLRPC_RemoteCall(sName As String, sData As Variant[])
       EventsChangeState(sData)
     ' calendar
     Case "calendar.setplanning"
-      Calendar.SetPlanning(sData)
+      hXMLRPC.SetReply(Calendar.SetPlanning(sData))
     Case "calendar.getplanning"
-      Calendar.GetPlanning()
+      hXMLRPC.SetReply(Calendar.GetPlanning())
     ' squeezebox
     Case "squeezebox.setvolumeplayer"
       SqueezeboxSetVolumePlayer(sData)
@@ -607,15 +599,10 @@ Private Sub ReturnDeviceListDimSwitch(sType As String)
   For iCnt = 0 To rResult.Max
     If Not rResult!hide Then
       If (sType = "switchable" And rResult!switchable) Or (sType = "dimable" And rResult!dimable) Then
+        Try sValue = Devices.GetCurrentValueForDevice(rResult!id, 1)
+        If Not sValue Then sValue = " "
         ' status icon
-        If Not IsNull(rResult!onicon) Or Not IsNull(rResult!officon) Then
-          Try sValue = Devices.GetCurrentValueForDevice(rResult!id, 1)
-          If UCase$(sValue) = "ON" Or UCase$(sValue) = "OPEN" Or UCase$(sValue) = "MOTION" Then
-            sStatusIcon = rResult!onicon
-          Else
-            sStatusIcon = rResult!officon
-          Endif
-        Endif
+        sStatusIcon = Devices.GetStatusIcon(sValue, rResult!onicon, rResult!officon, rResult!dimicon)
         sString[iCnt] = rResult!id & ";;" & sStatusIcon & ";;" & rResult!name & ";;" & sValue
         sList.Add(rResult!name, sString[iCnt], XmlRpc.xString)
       Endif
@@ -773,8 +760,8 @@ Private Sub DeviceSetDevice(sParams As Variant[])
   Dim iDeviceId As Integer
   
   If sParams.Count = 2 Then
-    iDeviceId = Devices.FindDeviceId(sParams[0])
-    If Not Error And If iDeviceId And If Devices.SetDevice(sParams[0], sParams[1]) Then
+    Try iDeviceId = CInt(sParams[0])
+    If Not Error And If iDeviceId And If Devices.SetDevice(iDeviceId, sParams[1]) Then
       hXMLRPC.SetReply(True)
       Return
     Endif
@@ -786,15 +773,15 @@ Private Sub DeviceSetDevice(sParams As Variant[])
 End
 
 Private Sub DeviceUpdateDevice(sParams As Variant[])
-  Dim sParam As String
+
   Dim iDeviceId, iValuenum As Integer
   Dim vValue As Variant
-  
+
   If sParams.Count = 3 Then
-    iDeviceId = Devices.FindDeviceId(sParams[0])
+    Try iDeviceId = CInt(sParams[0])
     Try iValuenum = CInt(sParams[1])
     vValue = sParams[2]
-    If Not Error And If iDeviceId And If Devices.ValueUpdateExt(iDeviceId, iValuenum, vValue) Then
+    If Not Error And If iDeviceId And If Devices.ValueUpdate(iDeviceId, iValuenum, vValue) Then
       hXMLRPC.SetReply(True)
       Return
     Endif
@@ -810,7 +797,7 @@ Private Sub DeviceGetState(sParams As Variant[])
   Dim sValue As String
 
   If sParams.Count = 1 Then
-    Try iDeviceId = Devices.FindDeviceId(sParams[0])
+    Try iDeviceId = CInt(sParams[0])
     Try sValue = Devices.GetCurrentValueForDevice(iDeviceId, 1)
     If Error Then
       Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "' when getting device state!")
@@ -819,7 +806,7 @@ Private Sub DeviceGetState(sParams As Variant[])
       hXMLRPC.SetReply(sValue)
     Endif
   Else If sParams.Count = 2 Then
-    Try iDeviceId = Devices.FindDeviceId(sParams[0])
+    Try iDeviceId = CInt(sParams[0])
     Try sValue = Devices.GetValueForDevice(iDeviceId, sParams[1])
     If Error Then
       Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "' when getting device state!")
@@ -853,7 +840,7 @@ Private Sub ReturnDeviceList()
   For iCnt = 0 To rResult.Max
     If Not rResult!hide Then
       ' location
-      Try rResult3 = Main.hDB.Exec("SELECT * FROM locations WHERE id = &1", rResult!location)
+      Try rResult3 = Main.hDB.Exec("SELECT * FROM locations WHERE id = &1", rResult!location_id)
       If Error Then
         sLocation = ""
       Else If rResult3.Available Then
@@ -869,25 +856,15 @@ Private Sub ReturnDeviceList()
       Try sValue2 = Devices.GetCurrentValueForDevice(rResult!id, 2)
       Try sValue3 = Devices.GetCurrentValueForDevice(rResult!id, 3)
       Try sValue4 = Devices.GetCurrentValueForDevice(rResult!id, 4)
-      
+
       Try sLabel = Devices.GetCurrentUnitsForDevice(rResult!id, 1)
       Try sLabel2 = Devices.GetCurrentUnitsForDevice(rResult!id, 2)
       Try sLabel3 = Devices.GetCurrentUnitsForDevice(rResult!id, 3)
-      Try sLabel4 = Devices.GetCurrentUnitsForDevice(rResult!id, 4)      
+      Try sLabel4 = Devices.GetCurrentUnitsForDevice(rResult!id, 4)
 
       ' status icon
-      If Not IsNull(rResult!onicon) Or Not IsNull(rResult!officon) Then
-        If UCase$(sValue) = "ON" Or UCase$(sValue) = "OPEN" Or UCase$(sValue) = "MOTION" Then
-          sStatusIcon = rResult!onicon
-        Else
-          sStatusIcon = rResult!officon
-        Endif
-      Else
-        sStatusIcon = ""
-      Endif
-      
-
-      sString[iCnt] = rResult!id & ";;" & sStatusIcon & ";;" & rResult!name & ";;" & sLocation & ";;" & Main.HtmlEncode(sValue, True) & ";;" & sLabel & ";;" & Main.HtmlEncode(sValue2, True) & ";;" & sLabel2 & ";;" & Main.HtmlEncode(sValue3, True) & ";;" & sLabel3 & ";;" & Main.HtmlEncode(sValue4, True) & ";;" & sLabel4 & ";;" & sLastSeen & ";;" & rResult!dimable & ";;" & rResult!switchable & ";;" & rResult!batterystatus
+      sStatusIcon = Devices.GetStatusIcon(sValue, rResult!onicon, rResult!officon, rResult!dimicon)
+      sString[iCnt] = rResult!id & ";;" & sStatusIcon & ";;" & rResult!name & ";;" & sLocation & ";;" & HtmlEncode(sValue, True) & ";;" & sLabel & ";;" & HtmlEncode(sValue2, True) & ";;" & sLabel2 & ";;" & HtmlEncode(sValue3, True) & ";;" & sLabel3 & ";;" & HtmlEncode(sValue4, True) & ";;" & sLabel4 & ";;" & sLastSeen & ";;" & rResult!dimable & ";;" & rResult!switchable & ";;" & rResult!batterystatus
       sList.Add(rResult!name, sString[iCnt], XmlRpc.xString)
     Endif
     rResult.MoveNext
@@ -1084,12 +1061,19 @@ Private Sub GetGlobalVars()
 
   Dim vValue As Variant
   Dim aArray As New RpcArray
+  Dim cGV As CGlobalVarEntry
 
-  For Each vValue In Main.GlobalVar
-    aArray.Add(Main.HtmlEncode(Main.GlobalVar.Key), XmlRpc.xString)
+  For Each cGV In Main.GlobalVar
+    aArray.Add(HtmlEncode(Main.GlobalVar.Key), XmlRpc.xString)
+    vValue = cGV.Value
+
     ' convert booleans to strings
     If TypeOf(vValue) = gb.Boolean Then vValue = IIf(vValue = True, "True", "False")
-    aArray.Add(Main.HtmlEncode(vValue), XmlRpc.xString)
+
+    ' Set the value to <empty>, "" isn't supported by XML-RPC
+    If vValue = Null Then vValue = "<EMPTY>"
+
+    aArray.Add(HtmlEncode(vValue), XmlRpc.xString)
   Next
   hXMLRPC.SetReply(aArray)
 
@@ -1097,20 +1081,24 @@ End
 
 Private Sub SetGlobalVar(sParams As Variant[])
 
+  Dim sVar As String
+
   If sParams.Count = 2 Then
 
+    sVar = HtmlDecode(sParams[0])
+
     ' Check if somebody wants to set a ReadOnly variable
-    If Main.GlobalVar_System.Exist(Main.HtmlDecode(sParams[0])) Then
-      If Main.GlobalVar_System[Main.HtmlDecode(sParams[0])] = 1 Then
-        Main.WriteDebugLog(LogLabel & "ERROR: Trying to set a read-only variable '" & Main.HtmlDecode(sParams[0]) & "'!")
+    If Main.GlobalVar.Exist(sVar) Then
+      If Main.GlobalVar[sVar].ReadOnly Then
+        Main.WriteDebugLog(LogLabel & "ERROR: Trying to set a read-only variable '" & sVar & "'!")
         hXMLRPC.SetReply(False)
         Return
       Endif
     Endif
 
-    Try Main.SetGlobalVar(Main.HtmlDecode(sParams[0]), PrepareValue(Main.HtmlDecode(sParams[1])), False)
+    Try Main.SetGlobalVar(sVar, PrepareValue(HtmlDecode(sParams[1])), False)
     If Error Then
-      Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' when setting globalvar!")
+      Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' when setting globalvar '" & sVar & "'!")
       hXMLRPC.SetReply(False)
     Else
       hXMLRPC.SetReply(True)
@@ -1201,7 +1189,7 @@ Private Sub PLCBUSTXcommand(sParams As Variant[])
 
 End
 
-Private Sub ThermostatListScenarii(sParams As Variant[])
+Private Sub ThermostatListScenarii()
 
   Dim rResultScenarii As Result
   Dim sString As New Collection
@@ -1223,7 +1211,7 @@ End
 ' return the heatings from the scenario with param = id scenario
 Private Sub ThermostatGetHeating(sParams As Variant[])
 
-  Dim rResultScenarii, rResultHeatings As Result
+  Dim rResultHeatings As Result
   Dim sString As New Collection
   Dim sList As New RpcStruct
   Dim iCnt As Integer
@@ -1231,14 +1219,14 @@ Private Sub ThermostatGetHeating(sParams As Variant[])
   Dim fTemp As Float
 
   ' param 0 = scenario id
-  rResultHeatings = Main.hDB.Exec("SELECT * FROM thermostat_schedule, thermostat_heating where heating=id and scenario=&1", Val(sParams[0]))
+  rResultHeatings = Main.hDB.Exec("SELECT * FROM thermostat_schedule, thermostat_heating where heating_id=id and scenario_id=&1", Val(sParams[0]))
   If rResultHeatings.Count > 0 Then
     iCnt = 0
     For Each rResultHeatings
       Inc iCnt
       sCurrTemp = Devices.GetCurrentValueForDevice(rResultHeatings!sensor, 1)
       fTemp = Thermostat.GetDerogateHeating(rResultHeatings!id)
-      If fTemp = Thermostat.NO_TEMP Then fTemp = Thermostat.GetRequestedTempForHeating(rResultHeatings!scenario, rResultHeatings!id)
+      If fTemp = Thermostat.NO_TEMP Then fTemp = Thermostat.GetRequestedTempForHeating(rResultHeatings!scenario_id, rResultHeatings!id)
       sReqTemp = fTemp
       sString[iCnt] = rResultHeatings!id & ";;" & rResultHeatings!name & ";;" & sCurrTemp & ";;" & sReqTemp
       sList.Add(rResultHeatings!name, sString[iCnt], XmlRpc.xString)
@@ -1248,7 +1236,7 @@ Private Sub ThermostatGetHeating(sParams As Variant[])
 
 End
 
-Private Sub ThermostatGetScenario(sParams As Variant[])
+Private Sub ThermostatGetScenario()
 
   Dim rResultScenarii, rResultHeatings As Result
   Dim sString As New Collection
@@ -1263,12 +1251,12 @@ Private Sub ThermostatGetScenario(sParams As Variant[])
     sString[iCnt] = rResultScenarii!id & ";;" & rResultScenarii!name & ";;" & rResultScenarii!description
     sList.Add(rResultScenarii!name, sString[iCnt], XmlRpc.xString)
 
-    rResultHeatings = Main.hDB.Exec("SELECT * FROM thermostat_schedule, thermostat_heating where heating=id and scenario=&1 ORDER BY name", rResultScenarii!id)
+    rResultHeatings = Main.hDB.Exec("SELECT * FROM thermostat_schedule, thermostat_heating where heating_id=id and scenario_id=&1 ORDER BY name", rResultScenarii!id)
     For Each rResultHeatings
       Inc iCnt
       sCurrTemp = Devices.GetCurrentValueForDevice(rResultHeatings!sensor, 1)
       fTemp = Thermostat.GetDerogateHeating(rResultHeatings!id)
-      If fTemp = Thermostat.NO_TEMP Then fTemp = Thermostat.GetRequestedTempForHeating(rResultHeatings!scenario, rResultHeatings!id)
+      If fTemp = Thermostat.NO_TEMP Then fTemp = Thermostat.GetRequestedTempForHeating(rResultHeatings!scenario_id, rResultHeatings!id)
       sReqTemp = fTemp
       sString[iCnt] = rResultHeatings!id & ";;" & rResultHeatings!name & ";;" & sCurrTemp & ";;" & sReqTemp
       sList.Add(rResultHeatings!name, sString[iCnt], XmlRpc.xString)
@@ -1279,7 +1267,7 @@ Private Sub ThermostatGetScenario(sParams As Variant[])
 End
 
 ' return all the scenarios and the heatings
-Private Sub ThermostatGetScenarios(sParams As Variant[])
+Private Sub ThermostatGetScenarios()
 
   Dim rResultScenarii, rResultHeatings As Result
   Dim sString As New Collection
@@ -1296,12 +1284,12 @@ Private Sub ThermostatGetScenarios(sParams As Variant[])
   sString[iCnt] = rResultScenarii!id & ";;" & rResultScenarii!name & ";;" & rResultScenarii!description
   sList.Add("", sString[iCnt], XmlRpc.xString)
 
-  rResultHeatings = Main.hDB.Exec("SELECT * FROM thermostat_schedule, thermostat_heating where heating=id and scenario=&1", rResultScenarii!id)
+  rResultHeatings = Main.hDB.Exec("SELECT * FROM thermostat_schedule, thermostat_heating where heating_id=id and scenario_id=&1", rResultScenarii!id)
     For Each rResultHeatings
       Inc iCnt
       sCurrTemp = Devices.GetCurrentValueForDevice(rResultHeatings!sensor, 1)
       fTemp = Thermostat.GetDerogateHeating(rResultHeatings!id)
-      If fTemp = Thermostat.NO_TEMP Then fTemp = Thermostat.GetRequestedTempForHeating(rResultHeatings!scenario, rResultHeatings!id)
+      If fTemp = Thermostat.NO_TEMP Then fTemp = Thermostat.GetRequestedTempForHeating(rResultHeatings!scenario_id, rResultHeatings!id)
       sReqTemp = fTemp
       sString[iCnt] = rResultHeatings!id & ";;" & rResultHeatings!name & ";;" & sCurrTemp & ";;" & sReqTemp
       sList.Add("", sString[iCnt], XmlRpc.xString)
@@ -1388,7 +1376,7 @@ End
 ' param 0 : heating id
 Private Sub ThermostatGetDerogateHeating(sParams As Variant[])
 
-  Dim fNewVal, fVal, fDerVal As Float
+  Dim fDerVal As Float
   Dim heatingId As Integer
 
   heatingId = CInt(sParams[0])
@@ -1754,7 +1742,7 @@ Private Sub EventsGetList()
       If Error Then
         sLastrun = "Never"
       Endif
-      sString[iCnt] = rResult!id & ";;" & sEnabled & ";;" & rResult!name & ";;" & rResult!log & ";;" & rResult!firstrun & ";;" & sLastrun & ";;" & rResult!comments & ";;" & rResult!trigger1 & ";;" & rResult!condition1 & ";;" & rResult!operand & ";;" & rResult!condition2 & ";;" & rResult!rerunenabled & ";;" & rResult!rerunvalue & ";;" & rResult!reruntype & ";;" & rResult!category
+      sString[iCnt] = rResult!id & ";;" & sEnabled & ";;" & rResult!name & ";;" & rResult!log & ";;" & rResult!firstrun & ";;" & sLastrun & ";;" & rResult!comments & ";;" & rResult!trigger_id & ";;" & rResult!condition1_id & ";;" & rResult!operand & ";;" & rResult!condition2_id & ";;" & rResult!rerunenabled & ";;" & rResult!rerunvalue & ";;" & rResult!reruntype & ";;" & rResult!category_id
       sList.Add(rResult!name, sString[iCnt], XmlRpc.xString)
       rResult.MoveNext
   Next
@@ -1782,18 +1770,24 @@ End
 
 Private Sub DelGlobalVar(sParams As Variant[])
 
+  Dim sVar As String
+
   If sParams.Count = 1 Then
 
-    ' Check if somebody wants to delete a system variable
-    If Main.GlobalVar_System.Exist(Main.HtmlDecode(sParams[0])) Then
-      Main.WriteDebugLog(LogLabel & "ERROR: Trying to delete a system variable '" & Main.HtmlDecode(sParams[0]) & "'!")
-      hXMLRPC.SetReply(False)
-      Return
+    sVar = HtmlDecode(sParams[0])
+
+    ' Check if somebody wants to set a ReadOnly variable
+    If Main.GlobalVar.Exist(sVar) Then
+      If Main.GlobalVar[sVar].SystemVar Then
+        Main.WriteDebugLog(LogLabel & "ERROR: Trying to set a system variable '" & sVar & "'!")
+        hXMLRPC.SetReply(False)
+        Return
+      Endif
     Endif
 
-    Try Main.DelGlobalVar(Main.HtmlDecode(sParams[0]))
+    Try Main.DelGlobalVar(sVar)
     If Error Then
-      Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' when deleting globalvar!")
+      Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' when deleting globalvar '" & sVar & "'!")
       hXMLRPC.SetReply(False)
     Else
       hXMLRPC.SetReply(True)
@@ -1817,40 +1811,47 @@ Private Sub PrepareValue(sText As String) As Variant
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Properties
+' Encode String as Html, normally to be used with XML-RPC
+' We support XML 1.0 Fith Edition and XML 1.1
+' http://en.wikipedia.org/wiki/XML#Characters_and_escaping
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Function HTTPPort_Read() As Integer
+Public Sub HtmlEncode(sStr As String, Optional sOnlyFirstLine As Boolean = False) As String
 
-  Return $iHTTPPort
+  ' In certain scenarios we only want the first line in the Html string and remove the rest
+  If sOnlyFirstLine Then
+    ' Remove &H0A - line feed
+    If String.InStr(sStr, Chr(10)) > 0 Then
+      sStr = String.Left(sStr, String.InStr(sStr, Chr(10)) - 1)
+    Endif
 
-End
+    ' Remove &H0D - carriage return
+    If String.InStr(sStr, Chr(13)) > 0 Then
+      sStr = String.Left(sStr, String.InStr(sStr, Chr(13)) - 1)
+    Endif
+  Endif
 
-Private Sub HTTPPort_Write(Value As Integer)
+  sStr = Replace(sStr, "&", "&amp;")
+  sStr = Replace(sStr, "<", "&lt;")
+  sStr = Replace(sStr, ">", "&gt;")
+  sStr = Replace(sStr, "'", "&apos;")
+  sStr = Replace(sStr, "\"", "&quot;")
 
-  $iHTTPPort = Value
-
-End
-
-Private Function MaxConn_Read() As Integer
-
-  Return $iMaxConn
-
-End
-
-Private Sub MaxConn_Write(Value As Integer)
-
-  $iMaxConn = Value
-
-End
-
-Private Function XMLRPCDebug_Read() As Boolean
-
-  Return $bXMLRPCDebug
+  Return sStr
 
 End
 
-Private Sub XMLRPCDebug_Write(Value As Boolean)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Decode String as Html, normally to be used with XML-RPC
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub HtmlDecode(sStr As String) As String
 
-  $bXMLRPCDebug = Value
+  sStr = Replace(sStr, "&amp;", "&")
+  sStr = Replace(sStr, "&lt;", "<")
+  sStr = Replace(sStr, "&gt;", ">")
+  sStr = Replace(sStr, "&apos;", "'")
+  sStr = Replace(sStr, "&quot;", "\"")
+
+  Return sStr
 
 End
+

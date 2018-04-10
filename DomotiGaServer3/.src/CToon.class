@@ -1,0 +1,916 @@
+' Gambas class file
+
+' Description:
+' CToon.class
+' Contains code for supporting Eneco's Toon thermostat.
+
+' Development Status:
+' Working
+
+' Links:
+' https://github.com/rvdm/toon/
+' https://toonopafstand.eneco.nl
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+' void uuid_generate(uuid_t out);
+Extern UUID_Gen(op As Pointer) In "libuuid:1" Exec "uuid_generate"
+' void uuid_unparse(uuid_t uu, char *out)
+Extern UUID_ToStr(ip As Pointer, op As Pointer) In "libuuid:1" Exec "uuid_unparse"
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "Toon"
+Public PluginFriendlyName As String = "Toon"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[Toon] "
+Public InterfaceId As Integer
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $bDebug As Boolean
+Private $sUser As String
+Private $sPassword As String
+Private $iPolltime As Integer
+
+Public tToon As Timer
+Public hToon As HttpClient
+
+Private $sBuffer As String
+Private $sStateBuffer As String
+Private $sSetPlugBuffer As String
+Private $sSetAllOnOffPlugBuffer As String
+Private $sThermostatBuffer As String
+Private $sClientId As String
+Private $sClientIdChecksum As String
+Private $bAuthenticated As Boolean
+Private cState As Collection
+
+Private cStateThermostatInfo As Collection
+Private cStateThermostatStates As Collection
+Private cStateGasUsage As Collection
+Private cStatePowerUsage As Collection
+Private cStateDeviceStatusInfo As Collection
+Private cStateDevice As Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $bDebug = cPl.Settings["debug"]
+  $sUser = cPl.Settings["user"]
+  $sPassword = cPl.Settings["password"]
+  $iPolltime = cPl.Settings["polltime"]
+
+  InterfaceId = Devices.FindInterface("Toon Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Initialize
+  Run()
+  IsRunning = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try tToon.Stop
+  If $bAuthenticated Then ToonLogout()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Run()
+
+  ' start poll timer for Toon
+  tToon = New Timer As "tToon"
+  tToon.Delay = $iPollTime * 1000 ' multiply for seconds
+  tToon.Start
+
+  If Not $bAuthenticated Then ToonLogin()
+  ToonGetState()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tToon_Timer()
+
+  If Not $bAuthenticated Then ToonLogin()
+  ToonGetState()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a login request and returns a JSON collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonLogin()
+
+  Dim sURL As String = "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/login" & "?username=" & $sUser & "&password=" & $sPassword
+  Dim sBuffer As String
+  Dim cLogin As Collection
+
+  If $sUser = "" And If $sPassword = "" Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Need a username and password for the toonopafstand portal!")
+    Return
+  Endif
+
+  hToon = New HttpClient As "hToonLogin"
+  hToon.URL = sURL
+  hToon.Async = False
+  hToon.TimeOut = 5
+  hToon.Get
+
+  If hToon.Status < 0 Then
+    ' Failure fetching clientid
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Error fetching clientId/clientIdChecksum from portal, Code=" & hToon.Status & " HTTP=" & hToon.Code)
+    Return
+  Else
+    ' Success or error - read the data
+    If Lof(hToon) Then sBuffer = Read #hToon, Lof(hToon)
+    Select hToon.Code
+      Case 200
+        cLogin = JSON.Decode(sBuffer)
+        Try $bAuthenticated = cLogin["success"]
+        If $bAuthenticated = False Then
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Login request unsuccessful, received data '" & sBuffer & "'.")
+          Return
+        Endif
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Login request successful, received data '" & sBuffer & "'.")
+        ToonAuth(cLogin)
+      Case 400
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Could not authenticate successfully with given credentials!")
+      Case Else
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown error while login: " & hToon.Code)
+    End Select
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a logout request
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonLogout()
+
+  Dim sURL As String = "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/logout" & "?clientId=" & $sClientId & "&clientIdChecksum=" & $sClientIdChecksum & "&random=" & GenerateUUID()
+
+  Dim sBuffer As String
+  Dim cLogout As Collection
+
+  If $sUser = "" And If $sPassword = "" Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Need a username and password for the toonopafstand portal!")
+    Return
+  Endif
+
+  hToon = New HttpClient As "hToonLogout"
+  hToon.URL = sURL
+  hToon.Async = False
+  hToon.TimeOut = 5
+  hToon.Get
+
+  If hToon.Status < 0 Then
+    ' Failure
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Error with logout request from portal, Code=" & hToon.Status & " HTTP=" & hToon.Code)
+    Return
+  Else
+    ' Success or error - read the data
+    If Lof(hToon) Then sBuffer = Read #hToon, Lof(hToon)
+    Select hToon.Code
+      Case 200
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Logout request successful, received data '" & sBuffer & "'.")
+        cLogout = JSON.Decode(sBuffer)
+        Try $bAuthenticated = cLogout["success"]
+        If Error Then $bAuthenticated = False
+        If $bAuthenticated Then $bAuthenticated = False
+      Case 500
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Could not logout successfully!")
+      Case Else
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown error while logout: " & hToon.Code)
+    End Select
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates an authentication request
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonAuth(cJSON As Collection)
+
+  Dim sURL, sAgreementId, sAgreementIdChecksum, sRandom As String
+  Dim cAuth As Collection
+  Dim sReason, sBuffer As String
+
+  sRandom = GenerateUUID()
+
+  ' First check if we have everything we need
+  Try $sClientId = cJSON["clientId"]
+  If Error Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Error: JSON data not complete!")
+    Return
+  Else
+    $sClientIdChecksum = cJSON["clientIdChecksum"]
+    sAgreementId = cJSON["agreements"][0]["agreementId"]
+    sAgreementIdChecksum = cJSON["agreements"][0]["agreementIdChecksum"]
+  Endif
+
+  sURL = "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/start" & "?clientId=" & $sClientId & "&clientIdChecksum=" & $sClientIdChecksum & "&agreementId=" & sAgreementId & "&agreementIdChecksum=" & sAgreementIdChecksum & "&random=" & sRandom
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Authenticating using URL " & sURL)
+
+  hToon = New HttpClient As "hToonAuth"
+  hToon.URL = sURL
+  hToon.Async = False
+  hToon.TimeOut = 5
+  hToon.Get
+
+  If hToon.Status < 0 Then
+    ' Failure authenticating
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Error authenticating against toonopafstand portal, Code=" & hToon.Status & " HTTP=" & hToon.Code)
+    Return
+  Else
+    ' Success or error - read the data
+    If Lof(hToon) Then sBuffer = Read #hToon, Lof(hToon)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Authenticating request received data '" & sBuffer & "'.")
+    cAuth = JSON.Decode(sBuffer)
+    Try $bAuthenticated = cAuth["success"]
+    If Error Then $bAuthenticated = False
+    Try sReason = cAuth["reason"]
+    If $bDebug And If sReason Then Main.WriteDebugLog(LogLabel & "Reason: " & sReason)
+  Endif
+
+End
+
+Private Function GenerateUUID() As String
+
+  ' Credits to Jussi Lahtinen and Bruce
+
+  Dim sUUID As String    ' The result (UUID as a string)
+  Dim OP As Pointer = Alloc(SizeOf(gb.Byte), 16)   ' Pointer to the uuid returned by uuid_generate
+  Dim SP As Pointer = Alloc(SizeOf(gb.Byte), 37)   ' Pointer to the string returned by uuid_unparse
+
+  UUID_Gen(OP)
+  UUID_ToStr(OP, SP)
+  sUUID = String@(SP)
+
+  Free(OP)
+  Free(SP)
+
+  Return sUUID
+
+Catch
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Error while generating an UUID: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a set program state request
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonSetProgramState(iState As Integer)
+
+  Dim sURL As String = "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/schemeState?clientId=" & $sClientId & "&clientIdChecksum=" & $sClientIdChecksum & "&state=2&temperatureState=" & iState & "&random=" & GenerateUUID()
+
+  If Not $bAuthenticated Then
+     If $bDebug Then Main.WriteDebugLog(LogLabel & "Not logged in.")
+    Return
+  Endif
+
+  If $sClientId = "" And If $sClientIdChecksum = "" Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown clientId and clientIdChecksum, aborting.")
+    Return
+  Endif
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Setting program state with URL " & sURL)
+
+  hToon = New HttpClient As "ToonSetState"
+  hToon.URL = sURL
+  hToon.Async = True
+  hToon.TimeOut = 5
+  hToon.Get
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Gather data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonSetState_Read()
+
+  If Lof(Last) Then $sStateBuffer &= Read #Last, Lof(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonSetState_Finished()
+
+  Select Last.Code
+    Case 200
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Set state request received data '" & $sStateBuffer & "'.")
+      cState = JSON.Decode($sStateBuffer)
+    Case 400
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Error unknown state set, HTTP Error=" & hToon.Code)
+    Case 500
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Error too many connected clients, HTTP Error=" & hToon.Code)
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown Error while set program state: " & Last.Code)
+  End Select
+
+  Last.Close
+  $sStateBuffer = ""
+
+Catch
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Error while set Toon program state: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+Public Sub SetThermostat(iTemp As Integer)
+
+  If iTemp > 30.0 Or If iTemp < 6.0 Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Error only setpoints allowed between 6.0 and 30.0, got '" & iTemp & "'")
+  Else
+    ToonSetThermostat(iTemp)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a set thermostat request
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonSetThermostat(iTemp As Integer)
+
+  Dim sURL As String = "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/setPoint?clientId=" & $sClientId & "&clientIdChecksum=" & $sClientIdChecksum & "&value=" & (iTemp * 100) & "&random=" & GenerateUUID()
+
+  If Not $bAuthenticated Then
+     If $bDebug Then Main.WriteDebugLog(LogLabel & "Not logged in.")
+    Return
+  Endif
+
+  If $sClientId = "" And If $sClientIdChecksum = "" Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown clientId and clientIdChecksum, aborting.")
+    Return
+  Endif
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Setting thermostat with URL " & sURL)
+
+  hToon = New HttpClient As "ToonSetThermostat"
+  hToon.URL = sURL
+  hToon.Async = True
+  hToon.TimeOut = 5
+  hToon.Get
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Gather data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonSetThermostat_Read()
+
+  If Lof(Last) Then $sThermostatBuffer &= Read #Last, Lof(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonSetThermostat_Finished()
+
+  Select Last.Code
+    Case 200
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Set thermostat request received data '" & $sThermostatBuffer & "'.")
+      cState = JSON.Decode($sThermostatBuffer)
+    Case 500
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Error too many connected clients, HTTP Error=" & hToon.Code)
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown Error while set program state: " & Last.Code)
+  End Select
+
+  Last.Close
+  $sThermostatBuffer = ""
+
+Catch
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Error while set Toon thermostat: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+Public Sub SetState(sState As String)
+
+  Select UCase(sState)
+    Case "AWAY"
+      ToonSetProgramState(3)
+    Case "SLEEP"
+      ToonSetProgramState(2)
+    Case "HOME"
+      ToonSetProgramState(1)
+    Case "COMFORT"
+      ToonSetProgramState(0)
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Error unknown state command: '" & sState & "'")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a set plug state request
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonSetPlugState(sDevUuid As String, iState As Integer)
+
+  Dim sURL As String = "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/smartplug/setTarget" & "?clientId=" & $sClientId & "&clientIdChecksum=" & $sClientIdChecksum & "&devUuid=" & sDevUuid & "&state=" & iState & "&random=" & GenerateUUID()
+
+  If Not $bAuthenticated Then
+     If $bDebug Then Main.WriteDebugLog(LogLabel & "Not logged in.")
+    Return
+  Endif
+
+  If $sClientId = "" And If $sClientIdChecksum = "" Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown clientId and clientIdChecksum, aborting.")
+    Return
+  Endif
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Setting plug state with URL " & sURL)
+
+  hToon = New HttpClient As "ToonSetPlugState"
+  hToon.URL = sURL
+  hToon.Async = True
+  hToon.TimeOut = 5
+  hToon.Get
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Gather data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonSetPlugState_Read()
+
+  If Lof(Last) Then $sSetPlugBuffer &= Read #Last, Lof(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonSetPlugState_Finished()
+
+  Select Last.Code
+    Case 200
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Set plug state request received data '" & $sSetPlugBuffer & "'.")
+      cState = JSON.Decode($sSetPlugBuffer)
+    Case 400
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Error unknown state set, HTTP Error=" & hToon.Code)
+    Case 500
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Error too many connected clients, HTTP Error=" & hToon.Code)
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown Error while set program state: " & Last.Code)
+  End Select
+
+  Last.Close
+  $sSetplugBuffer = ""
+
+Catch
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Error while set Toon plug state: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a set all on/off plug state request
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonSetAllOnOffPlugState(iState As Integer)
+
+  Dim sURL As String = "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/smartplug/switchAll" & "?clientId=" & $sClientId & "&clientIdChecksum=" & $sClientIdChecksum & "&state=" & iState & "&random=" & GenerateUUID()
+
+  If Not $bAuthenticated Then
+     If $bDebug Then Main.WriteDebugLog(LogLabel & "Not logged in.")
+    Return
+  Endif
+
+  If $sClientId = "" And If $sClientIdChecksum = "" Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown clientId and clientIdChecksum, aborting.")
+    Return
+  Endif
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Setting all on/off plug state with URL " & sURL)
+
+  hToon = New HttpClient As "ToonSetAllOnOffPlugState"
+  hToon.URL = sURL
+  hToon.Async = True
+  hToon.TimeOut = 5
+  hToon.Get
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Gather data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonSetAllOnOffPlugState_Read()
+
+  If Lof(Last) Then $sSetAllOnOffPlugBuffer &= Read #Last, Lof(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonSetAllOnOffPlugState_Finished()
+
+  Select Last.Code
+    Case 200
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Set all on/off plug state request received data '" & $sSetAllOnOffPlugBuffer & "'.")
+      cState = JSON.Decode($sSetAllOnOffPlugBuffer)
+    Case 400
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Error unknown state set, HTTP Error=" & hToon.Code)
+    Case 500
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Error too many connected clients, HTTP Error=" & hToon.Code)
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown Error while set program state: " & Last.Code)
+  End Select
+
+  Last.Close
+  $sSetAllOnOffPlugBuffer = ""
+
+Catch
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Error while set Toon all on/off plug state: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a get state request
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonGetState()
+
+  Dim sURL As String = "https://toonopafstand.eneco.nl/toonMobileBackendWeb/client/auth/retrieveToonState" & "?clientId=" & $sClientId & "&clientIdChecksum=" & $sClientIdChecksum & "&random=" & GenerateUUID()
+
+  If Not $bAuthenticated Then
+     If $bDebug Then Main.WriteDebugLog(LogLabel & "Not logged in.")
+    Return
+  Endif
+
+  If $sClientId = "" And If $sClientIdChecksum = "" Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown clientId and clientIdChecksum, aborting.")
+    Return
+  Endif
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Getting state with URL " & sURL)
+
+  hToon = New HttpClient As "ToonGetState"
+  hToon.URL = sURL
+  hToon.Async = True
+  hToon.TimeOut = 5
+  hToon.Get
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Gather data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonGetState_Read()
+
+  If Lof(Last) Then $sBuffer &= Read #Last, Lof(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' called from devices module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Select UCase(sAddress)
+    Case "THERMOSTAT"
+      SetThermostat(sCmd)
+    Case "SCHEDULE"
+      SetState(sCmd)
+    Case Else
+      If InStr(sAddress, "smartplug") Then
+        ToonSetPlugState(sAddress, IIf(sCmd == "On", 1, 0))
+      Else If InStr(sAddress, "AllOnOff") Then
+        ToonSetAllOnOffPlugState(IIf(sCmd == "On", 1, 0))
+      Else
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Only Toon's Thermostat, Schedule device and Plugs are controllable!")
+      Endif
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' copy part of a collection in a new one
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CopyCollection(cSource As Collection) As Collection
+
+  Dim cDest As New Collection
+  Dim vVal As Variant
+
+  For Each vVal In cSource
+    cDest[cSource.Key] = vVal
+  Next
+  Return cDest
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ToonGetState_Finished()
+
+  Dim sProgramStates As Array = ["Comfort", "Home", "Sleep", "Away"]
+  Dim sBurnerStates As Array = ["Idle", "Heating", "Hot Water", "Pre-Heating"]
+  Dim fTemp, fTempSet, fGas, fPowerUsage, fGasTotal, fGasDayCost, fGasDayUsage, fPowerHigh, fPowerLow, fPowerProduced, fPowerDayCost As Float
+  Dim fPowerProducedDayCost, fPowerDayUsage, fPowerDayLowUsage, fStekkerUsage, fStekkerUsageDaily, fSwitchAllUsage, fSwitchAllUsageDaily, fSwitchAllUsageAvg As Float
+  Dim iAway, iHome, iSleep, iComfort, iActiveState, iNextState, iBurnerState, iModulationLevel, iDeviceId As Integer
+  Dim sThermostatState, sNextSetpoint, sStekkerDevUuid, sStekkerState, sStekkerNetworkHealth, sSwitchAllState As String
+
+  Select Last.Code
+    Case 200
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Get state request received data '" & $sBuffer & "'.")
+      cState = JSON.Decode($sBuffer)
+
+      ' save interesting data in seperate collections
+      If cState["thermostatInfo"] Then cStateThermostatInfo = CopyCollection(cState["thermostatInfo"])
+      If cState["thermostatStates"] Then cStateThermostatStates = CopyCollection(cState["thermostatStates"])
+      If cState["gasUsage"] Then cStateGasUsage = CopyCollection(cState["gasUsage"])
+      If cState["powerUsage"] Then cStatePowerUsage = CopyCollection(cState["powerUsage"])
+      If cState["deviceStatusInfo"] Then cStateDeviceStatusInfo = CopyCollection(cState["deviceStatusInfo"])
+
+      ' "thermostatInfo": {
+      '   "currentTemp": 1903,
+      '   "currentSetpoint": 1800,
+      '   "programState": 1,
+      '   "activeState": 1,
+      '   "nextProgram": 1,
+      '   "nextState": 0,
+      '   "nextTime": 1392483600,
+      '   "nextSetpoint": 2100,
+      '   "randomConfigId": 1804289381,
+      '   "errorFound": 255,
+      '   "zwaveOthermConnected": 0,
+      '   "burnerInfo": "0",
+      '   "otCommError": "0",
+      '   "currentModulationLevel": 0,
+      '   "haveOTBoiler": 1
+      ' },
+      Try fTemp = cStateThermostatInfo["currentTemp"] / 100
+      If Not Error Then
+        fTempSet = cStateThermostatInfo["currentSetpoint"] / 100
+        iBurnerState = cStateThermostatInfo["burnerInfo"]
+        iNextState = cStateThermostatInfo["nextProgram"]
+        sNextSetpoint = cStateThermostatInfo["nextSetpoint"]
+        iModulationLevel = cStateThermostatInfo["currentModulationLevel"]
+        iActiveState = cStateThermostatInfo["activeState"]
+
+        Select iActiveState
+          Case 0, 1, 2, 3
+            sThermostatState = sProgramStates[iActiveState]
+          Case -1
+            sThermostatState = "Manual"
+          Case Else
+            sThermostatState = "Unknown"
+        End Select
+        If iModulationLevel = 0 Then iBurnerState = 0
+        ' update thermostat device
+        ' value       value2        value3      value4              value5
+        ' setpoint C  currenttemp C burnerinfo  modulation level %  current program
+        iDeviceId = Devices.Find(Instance, "Thermostat", InterfaceId, "Toon Thermostat")
+        ' if found then update it's values
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, Format(fTempSet, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 2, Format(fTemp, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 3, sBurnerStates[iBurnerState])
+          Devices.ValueUpdate(iDeviceId, 4, iModulationLevel)
+          Devices.ValueUpdate(iDeviceId, 5, sThermostatState)
+        Endif
+      Endif
+      ' "thermostatStates": {
+      '   "state": [
+      '     {
+      '       "id": 0,
+      '       "tempValue": 2100,
+      '       "dhw": 1
+      '     },
+      '     {
+      '       "id": 1,
+      '       "tempValue": 1800,
+      '       "dhw": 1
+      '     },
+      '     {
+      '       "id": 2,
+      '       "tempValue": 1500,
+      '       "dhw": 1
+      '     },
+      '     {
+      '       "id": 3,
+      '       "tempValue": 1500,
+      '       "dhw": 1
+      '     },
+      '     {
+      '       "id": 4,
+      '       "tempValue": 600,
+      '       "dhw": 0
+      '     },
+      '     {
+      '       "id": 5,
+      '       "tempValue": 600,
+      '       "dhw": 1
+      '     }
+      '   ]
+      ' }
+      ' states
+      Try iAway = cStateThermostatStates["state"][3]["tempValue"] / 100
+      If Not Error Then
+        iSleep = cStateThermostatStates["state"][2]["tempValue"] / 100
+        iHome = cStateThermostatStates["state"][1]["tempValue"] / 100
+        iComfort = cStateThermostatStates["state"][0]["tempValue"] / 100
+
+        ' update schedule device
+        ' value   value2  value3  value4  value5
+        ' active  away    sleep   home    comfort
+        iDeviceId = Devices.Find(Instance, "Schedule", InterfaceId, "Toon Schedule")
+        ' if found then update it's values
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, sThermostatState)
+          Devices.ValueUpdate(iDeviceId, 2, Format(iAway, "##.00"))
+          Devices.ValueUpdate(iDeviceId, 3, Format(iSleep, "##.00"))
+          Devices.ValueUpdate(iDeviceId, 4, Format(iHome, "##.00"))
+          Devices.ValueUpdate(iDeviceId, 5, Format(iComfort, "##.00"))
+        Endif
+      Endif
+
+      ' "gasUsage": {
+      '   "value": 104,
+      '   "dayCost": 1.35,
+      '   "avgValue": 207.33,
+      '   "meterReading": 660061,
+      '   "avgDayValue": 4975.86,
+      '   "dayUsage": 1129,
+      '   "isSmart": 1
+      ' },
+      Try fGas = cStateGasUsage["value"] / 1000
+      If Not Error Then
+        fGasTotal = cStateGasUsage["meterReading"]
+        fGasDayCost = cStateGasUsage["dayCost"]
+        fGasDayUsage = cStateGasUsage["dayUsage"] / 1000
+
+        ' update gas usage device
+        ' value         value2      value3
+        ' dayusage m3   daycost eur total m3
+        iDeviceId = Devices.Find(Instance, "GasUsage", InterfaceId, "Toon Gas Usage")
+        ' if found then update it's values
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, Format(fGasDayUsage, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 2, Format(fGasDayCost, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 3, fGasTotal)
+        Endif
+      Endif
+
+      ' "powerUsage": {
+      '   "value": 340,
+      '   "dayCost": 1.80,
+      '   "valueProduced": "0",
+      '   "dayCostProduced": "0.00",
+      '   "avgValue": 656.40,
+      '   "meterReading": 1393473,
+      '   "meterReadingLow": 1160198,
+      '   "dayUsage": 0,
+      '   "dayLowUsage": 10598,
+      '   "isSmart": 1
+      ' },
+      Try fPowerUsage = cStatePowerUsage["value"]
+      If Not Error Then
+        fPowerLow = cStatePowerUsage["meterReadingLow"]
+        fPowerHigh = cStatePowerUsage["meterReading"]
+        fPowerDayCost = cStatePowerUsage["dayCost"]
+        fPowerProduced = cStatePowerUsage["valueProduced"]
+        fPowerProducedDayCost = cStatePowerUsage["dayCostProduced"]
+        fPowerDayUsage = cStatePowerUsage["dayUsage"]
+        fPowerDayLowUsage = cStatePowerUsage["dayLowUsage"]
+
+        ' update power usage device
+        ' value     value2      value3      value4
+        ' current W daycost eur readinglow  readinghigh
+        iDeviceId = Devices.Find(Instance, "PowerUsage", InterfaceId, "Toon Power Usage")
+        ' if found then update it's values
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, Format(fPowerUsage, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 2, Format(fPowerDayCost, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 3, fPowerLow)
+          Devices.ValueUpdate(iDeviceId, 4, fPowerHigh)
+          Devices.ValueUpdate(iDeviceId, 5, fPowerDayUsage)
+          Devices.ValueUpdate(iDeviceId, 6, fPowerDayLowUsage)
+        Endif
+        ' update power produced device
+        ' value     value2
+        ' produced  daycostproduced
+        iDeviceId = Devices.Find(Instance, "PowerProduced", InterfaceId, "Toon Power Produced")
+        ' if found then update it's values
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, Format(fPowerProduced, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 2, Format(fPowerProducedDayCost, "0.00"))
+        Endif
+      Endif
+      ' "deviceStatusInfo": {
+      '   "device": [
+      '     {
+      '       "devUUID": "o-001-002209:happ_smartplug_680D69C3ADD",
+      '       "name": "Koelkast",
+      '       "currentUsage": 238.3,
+      '       "dayUsage": 4610.0,
+      '       "avgUsage": 0.0,
+      '       "currentState": 1,
+      '       "isConnected": 1,
+      '       "networkHealthState": 10
+      '     }
+      '   ],
+      '   "inSwitchAllTotal": {
+      '     "currentState": 0,
+      '     "currentUsage": 0.0,
+      '     "dayUsage": 0.0,
+      '     "avgUsage": 0.0
+      '   }
+      ' },
+      If cStateDeviceStatusInfo["device"] Then
+        ' iterate through all plugs
+        For Each cStateDevice In cStateDeviceStatusInfo["device"]
+          sStekkerDevUuid = cStateDevice["devUUID"]
+          sStekkerState = IIf(cStateDevice["currentState"] = "1", "On", "Off")
+          fStekkerUsage = cStateDevice["currentUsage"]
+          fStekkerUsageDaily = cStateDevice["dayUsage"]
+          sStekkerNetworkHealth = cStateDevice["networkHealthState"]
+          ' update stekker device
+          ' value         value2        value3      value4
+          ' state on/off  current usage dayusage    network health
+          iDeviceId = Devices.Find(Instance, sStekkerDevUuid, InterfaceId, "Toon Stekker")
+          ' if found then update it's values
+          If iDeviceId Then
+            Devices.ValueUpdate(iDeviceId, 1, sStekkerState)
+            Devices.ValueUpdate(iDeviceId, 2, Format(fStekkerUsage, "0.00"))
+            Devices.ValueUpdate(iDeviceId, 3, Format(fStekkerUsageDaily, "0.00"))
+            Devices.ValueUpdate(iDeviceId, 4, sStekkerNetworkHealth)
+          Endif
+        Next
+      Endif
+      Try sSwitchAllState = IIf(cStateDeviceStatusInfo["inSwitchAllTotal"]["currentState"] = "1", "On", "Off")
+      If Not Error Then
+        fSwitchAllUsage = cStateDeviceStatusInfo["inSwitchAllTotal"]["currentUsage"]
+        fSwitchAllUsageDaily = cStateDeviceStatusInfo["inSwitchAllTotal"]["dayUsage"]
+        fSwitchAllUsageAvg = cStateDeviceStatusInfo["inSwitchAllTotal"]["avgUsage"]
+        ' update all on/off plugs
+        ' value         value2        value3      value4
+        ' state on/off  current usage daily usage   avg usage
+        iDeviceId = Devices.Find(Instance, "AllOnOff", InterfaceId, "Toon All On/Off")
+        ' if found then update it's values
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, sSwitchAllState)
+          Devices.ValueUpdate(iDeviceId, 2, Format(fSwitchAllUsage, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 3, Format(fSwitchAllUsageDaily, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 4, Format(fSwitchAllUsageAvg, "0.00"))
+        Endif
+      Endif
+    Case 500
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Error while getting state, received '" & $sBuffer & "'. HTTP Error=" & hToon.Code)
+      $bAuthenticated = False
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown Error while get state: " & Last.Code)
+  End Select
+  Last.Close
+  $sBuffer = ""
+
+Catch
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Error while get Toon state: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+Public Sub GetThermostatState() As Collection
+
+  Try Return cState
+
+End

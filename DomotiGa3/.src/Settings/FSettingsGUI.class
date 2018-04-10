@@ -21,8 +21,11 @@ Public Sub Form_Open()
   txtLogBuffer.Text = Main.iLogBuffer
   chkAuth.Value = Main.bAuthEnabled
   cmbStartPage.Text = Main.sStartpage
-  txtXMLRPCHost.Text = Main.sXMLRPCHost
-  txtXMLRPCPort.Text = Main.iXMLRPCPort
+
+  ' JSON-RPC
+  txtJSONRPCHost.Text = Main.sJSONRPCHost
+  vbJSONRPCPort.Text = Main.iJSONRPCPort
+
   txtGraphsUrl.Text = Main.sGraphsUrl
 
   If Main.bServerCurrent Then
@@ -30,7 +33,7 @@ Public Sub Form_Open()
   Else
     cmbProgramMode.Text = ("Client")
   Endif
-  EnableXMLRPCFields()
+
   Select Case Main.sLanguage
     Case "en_US.UTF-8"
       cmbLanguage.Text = ("English")
@@ -75,6 +78,7 @@ Public Sub btnDefaults_Click()
     chkAuth.Value = rResult!authentication
     cmbStartPage.Text = rResult!startpage
   Endif
+
   btnSave.Enabled = True
 
 End
@@ -85,21 +89,8 @@ Public Sub cmbStartPage_Click()
 
 End
 
-Public Sub EnableXMLRPCFields()
-
-  If cmbProgramMode.Index = 0 Then
-    txtXMLRPCHost.Enabled = False
-    txtXMLRPCPort.Enabled = False
-  Else
-    txtXMLRPCHost.Enabled = True
-    txtXMLRPCPort.Enabled = True
-  Endif
-
-End
-
 Public Sub cmbProgramMode_Click()
 
-  EnableXMLRPCFields()
   bRestartClicked = True
   btnSave.Enabled = True
 
@@ -146,21 +137,26 @@ Public Sub btnSave_Click()
       Main.sLanguage = "nb_NO.UTF-8"
       pbLanguage.Picture = Picture["icons/no.png"]
   End Select
-  Select Case cmbProgramMode.index
+
+  Select cmbProgramMode.index
     Case 0
       Main.bServerCurrent = True
     Case 1
       Main.bServerCurrent = False
   End Select
-  Main.sXMLRPCHost = txtXMLRPCHost.Text
-  Main.iXMLRPCPort = txtXMLRPCPort.Text
+
+  Main.sJSONRPCHost = txtJSONRPCHost.Text
+  Main.iJSONRPCPort = vbJSONRPCPort.Text
   Main.sGraphsUrl = txtGraphsUrl.Text
+
   Main.SetConfig()
+
   rResult = Main.GetSettingTable("main") ' reload settings
   Main.iLogBuffer = rResult!logbuffer
   Main.bAuthEnabled = rResult!authentication
   Main.sStartPage = rResult!startpage
   Main.GetConfig()
+
   If bRestartClicked Then Message.Info(("You need to restart DomotiGa to activate changes."))
 
   Me.Close
@@ -190,13 +186,13 @@ Public Sub cmbLanguage_Click()
 
 End
 
-Public Sub txtXMLRPCHost_KeyPress()
+Public Sub txtJSONRPCHost_KeyPress()
 
   btnSave.Enabled = True
 
 End
 
-Public Sub txtXMLRPCPort_KeyPress()
+Public Sub vbJSONRPCPort_KeyPress()
 
   btnSave.Enabled = True
 

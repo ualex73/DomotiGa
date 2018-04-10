@@ -1,0 +1,3561 @@
+' Gambas class file
+
+' Description:
+' CVelbus.class
+' Connect to Velbus interface via TCP socket or serial port.
+
+' Development Status:
+' Work in progress
+'
+' Code currently supports Velbus modules
+'
+'   VMB2BLE  - 2 channel blind module
+'   VMB4RY   - 4 Relay module
+'   VMB4RYNO - 4 channel relay module with normal open contacts
+'   VMB4RYLD - 4 channel relay module with direct load connections
+'   VMB4DC   - 0/1 - 10V dimmer controller
+'   VMB7IN   - 7 Channel input module
+'   VMB8PB   - 8 Push button module
+'   VMBDME   - Dimmer module
+'   VMBGPO   - Oled touch panel (Black or White)
+'   VMBDMI   - Velbus dimmer for resistive or inductive load
+
+'   VMB6PBN  - Push-button interface for 6-/4-fold niko® push-buttons
+'   VMB8PBU  - 8-channel push-button module
+'   VMBGP1   - one touch buttons
+'   VMBGP2   - two touch buttons
+'   VMBGP4   - four touch buttons
+'   VMBGPOD  - Touch panel with Oled display
+'   VMBPIRC  - Ceiling PIR detector module
+'   VMBPIRO  -
+
+' To add support for additional modules make these changes
+'
+'  1. Write a "<moduletype>_Receive" sub routine
+'  2. Write a "<moduletype>_Send" sub routine
+'  3. Add the <moduletype> to the "ProcessReceivedPacket" routine
+'  4. Add the <moduletype> to the "GetModuleType" routine
+'  5. Append in the "SendCommand" routine the calls to the "<moduletype>_Send" sub routine
+'
+' Credits: BreFra (Frank van Breugel)
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "Velbus"
+Public PluginFriendlyName As String = "Velleman Velbus"
+Public PluginVersion As String = "1.03"
+Public PluginAuthor As String = "BreFra"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[Velbus] "
+Public InterfaceId As Integer
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sInterface As String
+Private $sSerPort As String
+Private $sBaud As String
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $bRelayEnabled As Boolean
+Private $iRelayPort As Integer
+Private $bSyncClock As Boolean
+Private $bDebug As Boolean
+
+' Command buffer
+Private tVelbusBusy As Timer
+Private bBusBusy As Boolean
+Private cQueue As New Collection
+
+' Interface objects
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
+
+Public tVelbus As Timer
+Public hVelbusRelay As New ServerSocket
+Public hRelayVelbusClient As Object[]
+Public hRelayVBSocket As New Socket
+
+' Velbus package details
+Private $bMsgPrev As Byte
+Private $aMsgData As New Byte[]
+
+Private $sModuleType As String
+
+' Collection to store addresses of Velbus modules
+Private $aModuleList As New Collection
+
+' Velbus module types
+Const VMUNKNOWN As Byte = &H00
+Const VMB8PB As Byte = &H01
+Const VMB1RY As Byte = &H02
+Const VMB1BL As Byte = &H03
+Const VMB6IN As Byte = &H05
+Const VMB1DM As Byte = &H07
+Const VMB4RY As Byte = &H08
+Const VMB2BL As Byte = &H09
+Const VMB8IR As Byte = &H0A
+Const VMB4PD As Byte = &H0B
+Const VMB1TS As Byte = &H0C
+Const VMB1TH As Byte = &H0D
+Const VMB1TC As Byte = &H0E
+Const VMB1LED As Byte = &H0F
+Const VMB4RYLD As Byte = &H10
+Const VMB4RYNO As Byte = &H11
+Const VMB4DC As Byte = &H12
+Const VMBMPD As Byte = &H13 ' VMBLCDWB?
+Const VMBDME As Byte = &H14
+Const VMBDMI As Byte = &H15
+Const VMB8PBU As Byte = &H16
+Const VMB6PBN As Byte = &H17
+Const VMB2PBN As Byte = &H18
+Const VMB6PBB As Byte = &H19
+Const VMB4RF As Byte = &H1A
+Const VMB1RYNO As Byte = &H1B
+Const VMB1BLE As Byte = &H1C
+Const VMB2BLE As Byte = &H1D
+Const VMBGP1 As Byte = &H1E
+Const VMBGP2 As Byte = &H1F
+Const VMBGP4 As Byte = &H20
+Const VMBGPO As Byte = &H21
+Const VMB7IN As Byte = &H22
+Const VMBGPTC As Byte = &H25
+Const VMBGPOD As Byte = &H28
+Const VMB1RYNOS As Byte = &H29
+Const VMBPIRM As Byte = &H2A
+Const VMBPIRC As Byte = &H2B
+Const VMBPIRO As Byte = &H2C
+Const VMBPP4PIR As Byte = &H2D
+Const VMBDMIR As Byte = &H2E ' VMB1BLS?
+Const VMBRF8RXS As Byte = &H30
+
+' Velbus data packet
+Const VB_STX As Byte = &H0F     'Start of packet
+Const VB_ETX As Byte = &H04     'End of packet
+Const VB_HPRIO As Byte = &HF8   'High priority
+Const VB_LPRIO As Byte = &HFB   'Low priority
+
+' Velbus commands (source: http://forum.velleman.eu/viewtopic.php?f=26&t=1738&p=9254&hilit=command+codes#p9215)
+Const VB_STATUS As Byte = &H00
+Const VB_SWITCH_OFF As Byte = &H01
+Const VB_SWITCH_ON As Byte = &H02
+Const VB_RELAY_TIMER As Byte = &H03
+Const VB_BLIND_OFF As Byte = &H04
+Const VB_BLIND_UP As Byte = &H05
+Const VB_BLIND_DOWN As Byte = &H06
+Const VB_DIMMER_SET As Byte = &H07 ' COMMAND_SET_DIMVALUE
+Const VB_DIMMER_TIMER As Byte = &H08
+Const VB_BUS_OFF As Byte = &H09
+Const VB_BUS_ACTIVE As Byte = &H0A
+Const VB_RS232_BUFFER_FULL As Byte = &H0B
+Const VB_RS232_BUFFER_EMPTY As Byte = &H0C
+Const VB_REALY_TIMER_BLINK As Byte = &H0D
+Const VB_INTERFACE_STATUS As Byte = &H0E
+Const VB_SLIDER_STATUS As Byte = &H0F
+Const VB_LAST_SLIDER_STATUS As Byte = &H11
+Const VB_FORCED_OFF As Byte = &H12 ' COMMAND_FORCED_OFF
+Const VB_CANCEL_FORCED_OFF As Byte = &H13 ' COMMAND_CANCEL_FORCED_OFF
+Const VB_FORCED_ON As Byte = &H14 ' COMMAND_FORCED_ON
+Const VB_CANCEL_FORCED_ON As Byte = &H15 ' COMMAND_CANCEL_FORCED_ON
+Const VB_INHIBIT As Byte = &H16 ' COMMAND_INHIBIT
+Const VB_CANCEL_INHIBIT As Byte = &H17 ' COMMAND_CANCEL_INHIBIT
+Const VB_BLIND_SET As Byte = &H1C
+Const VB_FIRMWARE_UPDATE As Byte = &H60
+Const VB_FIRMWARE_INFO As Byte = &H61
+Const VB_FIRMWARE_UPGRADE_ENTER As Byte = &H62
+Const VB_FIRMWARE_UPGRADE_ABORT As Byte = &H63
+Const VB_FIRMWARE_UPGRADE_EXIT As Byte = &H64
+Const VB_FIRMWARE_UPGRADE_START As Byte = &H65
+Const VB_FIRMWARE_MEM_WRITE As Byte = &H66
+Const VB_FIRMWARE_MEM As Byte = &H67
+Const VB_FIRMWARE_MEM_WRITE_CONFIRM As Byte = &H68
+Const VB_FIRMWARE_MEM_READ As Byte = &H69
+Const VB_DAYLIGHT_SAVING As Byte = &HAF ' COMMAND_SET_DAYLIGHT_SAVING
+Const VB_SUBTYPE As Byte = &HB0 ' COMMAND_SUBTYPE
+Const VB_DISABLE_PROGRAM As Byte = &HB1 ' COMMAND_DISABLE_PROGRAM
+Const VB_ENABLE_PROGRAM As Byte = &HB2 ' COMMAND_ENABLE_PROGRAM
+Const VB_SELECT_PROGRAM As Byte = &HB3 ' COMMAND_SELECT_PROGRAM
+Const VB_CLR_LEARN_MODE As Byte = &HB5 ' COMMAND_SET_CLR_LEARN_CODE
+Const VB_RF_CODE_STATUS As Byte = &HB6 ' COMMAND_RF_CODE_STATUS
+Const VB_DATE As Byte = &HB7 ' COMMAND_DATE_STATUS / COMMAND_SET_REALTIME_DATE
+Const VB_DIMMER_CONTROLLER_STATUS As Byte = &HB8
+Const VB_ENERGY_COUNTER_STATUS As Byte = &HBD ' COMMAND_ENERGY_COUNTER_STATUS_RQ
+Const VB_ENERGY_COUNTER As Byte = &HBE
+Const VB_ALARM_CLOCK As Byte = &HC3 ' COMMAND_SET_ALARM_CLOCK
+Const VB_TEMP_SETTINGS_3 As Byte = &HC6
+Const VB_TEMP_SETTINGS_4 As Byte = &HB9
+Const VB_STATISTICS_REQUEST As Byte = &HC7
+Const VB_STATISTICS As Byte = &HC8
+Const VB_MEM_READ As Byte = &HC9 ' COMMAND_READ_MEMORY_BLOCK
+Const VB_MEM_WRITE As Byte = &HCA ' COMMAND_WRITE_MEMORY_BLOCK
+Const VB_MEM_DUMP As Byte = &HCB ' COMMAND_MEMORY_DUMP_REQUEST
+Const VB_MEM_BLOCK As Byte = &HCC ' COMMAND_MEMORY_DATA_BLOCK
+Const VB_LCD_1 As Byte = &HCD
+Const VB_LCD_2 As Byte = &HCE
+Const VB_LCD_3 As Byte = &HCF
+Const VB_LCD_REQUEST As Byte = &HD0
+Const VB_TIMER_ENABLE As Byte = &HD1
+Const VB_BACKLIGHT_RESET As Byte = &HD2
+Const VB_BACKLIGHT_BUTTON_RESET As Byte = &HD3
+Const VB_BACKLIGHT_BUTTON_SET As Byte = &HD4
+Const VB_BACKLIGHT_STATUS As Byte = &HD5
+Const VB_BACKLIGHT As Byte = &HD6
+Const VB_CLOCK_REQUEST As Byte = &HD7 ' COMMAND_REALTIME_CLOCK_STATUS_REQUEST
+Const VB_CLOCK As Byte = &HD8 ' COMMAND_REALTIME_CLOCK_STATUS
+Const VB_ERROR_COUNT_REQUEST As Byte = &HD9 ' COMMAND_BUS_ERROR_COUNTER_STATUS_REQUEST
+Const VB_ERROR_COUNT As Byte = &HDA ' COMMAND_BUSERROR_COUNTER_STATUS
+Const VB_TEMP_COMFORT As Byte = &HDB
+Const VB_TEMP_DAY As Byte = &HDC
+Const VB_TEMP_NIGHT As Byte = &HDD
+Const VB_TEMP_SAFE As Byte = &HDE
+Const VB_TEMP_COOLING As Byte = &HDF
+Const VB_TEMP_HEATING As Byte = &HE0
+Const VB_TEMP_LOCK As Byte = &HE1
+Const VB_TEMP_UNLOCK As Byte = &HE2
+Const VB_TIMER_SLEEP As Byte = &HE3
+Const VB_TEMP_SET As Byte = &HE4
+Const VB_TEMP_REQUEST As Byte = &HE5
+Const VB_TEMP As Byte = &HE6
+Const VB_TEMP_SETTINGS_REQUEST As Byte = &HE7
+Const VB_TEMP_SETTINGS_1 As Byte = &HE8
+Const VB_TEMP_SETTINGS_2 As Byte = &HE9
+Const VB_TEMP_STATUS As Byte = &HEA
+Const VB_IR_STATUS As Byte = &HEB
+Const VB_BLIND_STATUS As Byte = &HEC
+Const VB_INPUT_STATUS As Byte = &HED ' COMMAND_MODULE_STATUS
+Const VB_DIMMER_STATUS As Byte = &HEE
+Const VB_MODULE_NAME_REQUEST As Byte = &HEF ' COMMAND_CHANNEL_NAME_REQUEST / COMMAND_DIMMER_NAME_REQUEST
+Const VB_MODULE_NAME_1 As Byte = &HF0 ' COMMAND_CHANNEL_NAME_PART1 
+Const VB_MODULE_NAME_2 As Byte = &HF1 ' COMMAND_CHANNEL_NAME_PART2
+Const VB_MODULE_NAME_3 As Byte = &HF3 ' COMMAND_CHANNEL_NAME_PART3
+Const VB_BLACKLIGHT_SET As Byte = &HF3
+Const VB_LED_STATUS As Byte = &HF4 ' COMMAND_UPDATE_LED_STATUS
+Const VB_LED_CLEAR As Byte = &HF5 ' COMMAND_CLEAR_LED
+Const VB_LED_SET As Byte = &HF6 ' COMMAND_SET_LED
+Const VB_LED_BLINK_SLOW As Byte = &HF7 ' COMMAND_SLOW_BLINKING_LED
+Const VB_LED_BLINK_FAST As Byte = &HF8 ' COMMAND_FAST_BLINK_LED
+Const VB_LED_BLINK_VERY_FAST As Byte = &HF9 ' COMMAND_VERY_FAST_BLINK_LED
+Const VB_MODULE_STATUS As Byte = &HFA ' COMMAND_MODULE_STATUS_REQUEST / COMMAND_DIMMER_STATUS_REQUEST
+Const VB_RELAY_STATUS As Byte = &HFB
+Const VB_EEPROM_WRITE As Byte = &HFC ' COMMAND_WRITE_DATA_TO_MEMORY
+Const VB_EEPROM_READ As Byte = &HFD ' COMMAND_READ_DATA_FROM_MEMORY
+Const VB_EEPROM_STATUS As Byte = &HFE ' COMMAND_MEMORY_DATA
+Const VB_MODULE_TYPE As Byte = &HFF
+
+Private bMsgRelayStart As Boolean = False
+Private iMsgRelayPart As Integer
+Private bMsgRelaySize As Byte
+Private bMsgRelayData As New Byte[0]
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sInterface = cPl.Settings["type"]
+  $sSerPort = cPl.Settings["serialport"]
+  $sBaud = cPl.Settings["baudrate"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $bRelayEnabled = cPl.Settings["relayenabled"]
+  $iRelayPort = cPl.Settings["relayport"]
+  If cPl.Settings.Exist("syncclock") Then
+    $bSyncClock = cPl.Settings["syncclock"]
+  Else
+    $bSyncClock = True ' cPl.Settings["syncclock"]
+  Endif
+  $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("Velbus Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    WriteLog("ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Connect/Initialize connection
+  If InStr($sInterface, "tcp") Then
+    ConnectTCP()
+  Else
+    ConnectSerial()
+  Endif
+
+  ' Start Velbus Relaying
+  If $bRelayEnabled Then
+    If StartRelay() Then
+      WriteLog("Relay listening for client on port " & $iRelayPort)
+    Else
+      WriteLog("ERROR: Relay FAILED to listen on port " & $iRelayPort)
+    Endif
+  Else
+    WriteLog("Relay disabled.")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte ' Byte[]
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready
+  IsRunning = False
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ConnectSerial() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the port
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
+
+  ' get a new one - but store the retry counter between new instances
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = &HFF + gb.Byte ' Byte[]
+    .PortName = $sSerPort
+    .Speed = $sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .FlowControl = 0
+    .Open()
+    .RTS = 1
+    .DTR = 0
+  End With
+
+  ' write to main logfile we connected successfully
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
+  IsRunning = True
+
+  ' request current status of all connected velbus modules
+  Run()
+
+  ' all went ok
+  Return True
+
+Catch ' some errors
+  WriteLog("ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  WriteLog("ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the tcp host or serialport
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Disconnect() As Boolean
+
+  ' try to close the connection
+  Try hMySocket.Close
+  Try hMySerial.Close
+  Try hVelbusRelay.Close
+
+  StopTimers()
+
+  If InStr($sInterface, "tcp") Then
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
+  Else
+    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
+  Endif
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Stop Timers
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
+
+  Try tVelbusBusy.Stop
+  Try tVelbus.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  ' define timer for Interface busy
+  tVelbusBusy = New Timer As "tVelbusBusy"
+  tVelbusBusy.Stop
+
+  ' request current status of all connected velbus modules
+  GetModuleTypeStatusClock()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Socket closed by remote
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+  StopTimers()
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+  StopTimers()
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  Main.WriteDebugLog(LogLabel & "ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got data from serialport
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Start relay port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function StartRelay() As Boolean
+
+  hVelbusRelay = New ServerSocket As "VelbusRelay"
+  hVelbusRelay.Type = Net.Internet
+  hVelbusRelay.Port = $iRelayPort
+  ' we start listening for max 1 connection
+  hVelbusRelay.Listen(1)
+
+  If hVelbusRelay.Status = Net.Active Then
+    hRelayVelbusClient = New Object[]
+    ' all ok
+    Return True
+  Else
+    Return False
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Start relay port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub VelbusRelay_Connection(sHost As String)
+
+  hRelayVBSocket = New Socket As "RelayVBSocket"
+  ' accept client
+  If hVelbusRelay.Status <= Net.Inactive Then Return
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Relay connection request from client " & sHost)
+
+  hRelayVBSocket = hVelbusRelay.Accept()
+  hRelayVelbusClient.Add(hRelayVBSocket)
+  If $bDebug Then
+    If hRelayVBSocket.Status = Net.Connected Then WriteLog("Relay client connection from ip address " & hRelayVBSocket.RemoteHost & " (" & DNS.ResolveHost(hRelayVBSocket.RemoteHost) & ") accepted.")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' TCP relay socket error while client is connected/connecting
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub VelbusRelay_Error()
+
+  ' handle errors
+  Select hVelbusRelay.Status
+    Case Net.CannotCreateSocket
+      Main.WriteDebugLog(LogLabel & "Relay The system does not allow to create a socket.")
+    Case Net.CannotBindSocket
+      Main.WriteDebugLog(LogLabel & "Relay Cannot bind socket.")
+    Case Net.CannotListen
+      Main.WriteDebugLog(LogLabel & "Relay Cannot listen on port.")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Close relay socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub VelbusRelay_Closed()
+
+  Main.WriteLog(LogLabel & ("Velbus TCP relay socket closed."))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Receive data from TCP relay socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Socket_Read()
+
+  Dim bData, bDataPart As Byte
+  Dim sData As String
+  Dim aData As New Byte[]
+
+  If Last.Status <> Net.Connected Then Return
+
+  Do While Lof(Last) > 0
+    Try Read #Last, sData, 1
+    If Error Then
+      Main.WriteDebugLog(LogLabel & "Error reading data from relay client! -> " & Error.Text)
+      Return
+    Endif
+
+    bData = CByte(Asc(sData))
+
+    If (bData = VB_STX) And (bMsgRelayStart = False) Then
+      bMsgRelayStart = True
+      iMsgRelayPart = 0
+      bMsgRelayData.Clear
+    Endif
+    If bMsgRelayStart Then
+      bMsgRelayData.Add(bData)
+      Inc iMsgRelayPart 
+      If iMsgRelayPart = 4 Then
+        If (bData = &H40) Then
+          'Scan (Module Type) packet
+          bMsgRelaySize = &H00
+        Else
+          bMsgRelaySize = bData
+        Endif
+      Endif
+      If (iMsgRelayPart = (6 + CInt(bMsgRelaySize))) Then
+        bMsgRelayStart = False
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & Util.ByteToHex(bDataPart))
+
+        'create new array object to prevent the cQueue collection pointing to same reference for all items
+        aData.Clear
+        For Each bDataPart In bMsgRelayData
+          aData.Add(bDataPart)
+        Next 
+        QueueCommand(aData)
+        Return
+      Endif
+    Endif
+  Loop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Socket_Closed()
+
+  WriteLog("Relay client connection closed.")
+  hRelayVelbusClient.Remove(hRelayVelbusClient.Find(Last))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Get current type/status/clock of all known Velbus modules
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub GetModuleTypeStatusClock()
+
+  Dim rResult As Result
+  Dim bInList As Boolean
+  Dim aKnownModules As New String[]
+  Dim sAddress As String
+
+  ' Auto-Sync the date/clock/daylight
+  If $bSyncClock Then SendDateClockDaylight()
+
+  If $bDebug Then WriteDebugLog("Retrieving moduletype/status/clock from device(s)")
+
+  ' Get device list for this interface/instance - sorted on address
+  rResult = Devices.FindDevicesForInterface(InterfaceId, Instance, "address")
+
+  If rResult And If rResult.Available Then
+
+    For Each rResult
+
+      'check if scan is not already sent
+      bInList = False
+
+      If InStr(rResult!address, "|") Then
+        sAddress = UCase(Left(rResult!address, (InStr(rResult!address, "|") - 1)))
+      Else
+        sAddress = UCase(rResult!address)
+      Endif
+
+      If aKnownModules.Exist(sAddress) Then bInList = True
+
+      If Not bInList Then
+        If $bDebug Then WriteDebugLog("Device: " & rResult!address)
+
+        aKnownModules.Add(sAddress)
+
+        ' Request module_type in debug mode only
+        If $bDebug Then SendCommand(sAddress, "MODULETYPE")
+        SendCommand(sAddress, "STATUS", rResult!id)
+        SendCommand(sAddress, "CLOCK", rResult!id)
+        If $bDebug Then SendCommand(sAddress, "ERRORCOUNT", rResult!id)
+      Endif
+    Next
+  Endif
+
+  If $bDebug Then WriteDebugLog("List of device(s) Finished")
+
+Catch
+  WriteLog("ERROR: Get current state of modules: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Send the date, clock and daylight saving information to all devices
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub SendDateClockDaylight()
+
+  Dim aData As New Byte[]
+
+    If $bDebug Then WriteDebugLog("Sending current date/clock to device(s)")
+
+    ' Send current date
+    aData.Clear()
+    aData.Add(VB_DATE)
+    aData.Add(Day(Now()))
+    aData.Add(Month(Now()))
+    aData.Add(Floor(Year(Now) / 256))
+    aData.Add(Year(Now) Mod 256)
+
+    QueueCommand(CreateVelbusPackage(VB_LPRIO, &H00, aData, False))
+
+    ' Send current clock
+    aData.Clear()
+    aData.Add(VB_CLOCK)
+    Select WeekDay(Now())
+      Case gb.Monday
+        aData.Add(0)
+      Case gb.Tuesday
+        aData.Add(1)
+      Case gb.Wednesday
+        aData.Add(2)
+      Case gb.Thursday
+        aData.Add(3)
+      Case gb.Friday
+        aData.Add(4)
+      Case gb.Saturday
+        aData.Add(5)
+      Case gb.Sunday
+        aData.Add(6)
+      Case Else
+        aData.Add(0)
+    End Select
+
+    aData.Add(Hour(Now()))
+    aData.Add(Minute(Now()))
+
+    QueueCommand(CreateVelbusPackage(VB_LPRIO, &H00, aData, False))
+
+    ' Send current daylight saving
+    'aData.Clear()
+    'aData.Add(VB_DAYLIGHT_SAVING)
+    'aData.Add(0)
+
+    'QueueCommand(CreateVelbusPackage(VB_LPRIO, &H00, aData, False))
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub QueueCommand(bPacket As Byte[])
+
+  ' add command to queue
+  cQueue.Add(bPacket, Rnd)
+
+  ' if bus is Not busy process it
+  If bBusBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Process next item in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DoQueue()
+
+  Dim bPacket As Byte[]
+
+  For Each bPacket In cQueue
+    WriteCommand(bPacket, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Sent data to velbus
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteCommand(sData As Byte[], sKey As String)
+
+  If $bDebug Then
+    WriteDebugLog("> " & Util.ByteToHex(sData))
+    WriteDebugLog("  Address: " & IIf(sData[2], Hex(sData[2], 2), "Any"))
+    If sData.Count > 6 Then
+      WriteDebugLog("  Command: " & DisplayCommandType(sData[4]))
+    Else
+      WriteDebugLog("  Command: " & DisplayCommandType(sData[3]))
+    Endif
+    WriteDebugLog("  Queue Count: " & (cQueue.Count - 1))
+  Endif
+
+  ' Write the complete string - not byte-for-byte
+  If InStr($sInterface, "tcp") Then
+    hMySocket.Write(sData)
+  Else
+    hMySerial.Write(sData)
+  Endif
+
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  ' start timer to wait before sending next command
+  tVelbusBusy.Delay = 60 ' 60mS based on: http://forum.velleman.eu/viewtopic.php?f=26&t=8795#p33958
+  bBusBusy = True
+  tVelbusBusy.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Velbus busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tVelbusBusy_Timer()
+
+  tVelbusBusy.Stop
+
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
+    DoQueue()
+  Else
+    bBusBusy = False
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Assemble valid data package to be sent onto velbus
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function CreateVelbusPackage(bPriority As Byte, bAddress As Byte, bData As Byte[], Optional bScan As Byte) As Byte[]
+
+  Dim bPacket As New Byte[]
+  Dim iCnt As Integer
+  Dim bCRC As Byte
+
+  'STX
+  bPacket.Add(VB_STX)
+
+  'Priority
+  bPacket.Add(bPriority)
+
+  'Address
+  bPacket.Add(bAddress)
+
+  'RTR & Data Size
+  bPacket.Add(IIf(bScan, &H40, bData.Count))
+
+  'Data bytes
+  If Not bScan Then
+    For iCnt = 0 To bData.Count - 1
+      bPacket.Add(bData[iCnt])
+    Next
+  End If
+
+  'Calc checksum
+  bCRC = CalculateCRC(bPacket)
+  bPacket.Add(bCRC)
+
+  'ETX
+  bPacket.Add(VB_ETX)
+
+  Return bPacket
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Catch data received from velbus
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessReceivedChar(bTemp As Byte)
+
+  Dim iSize As Integer
+
+  'Example data packet
+  ' +---------------------------- STX,  Start of packet
+  ' |  +------------------------- PRIO, Priority, High=F8 / Low=FB
+  ' |  |  +---------------------- ADDR, Address (0 - 255)
+  ' |  |  |  +------------------- RTR,  Scan request (=4h)
+  ' |  |  |  |+------------------ SIZE, # data bytes
+  ' |  |  |  || +---------------- DATA, Data 1 (Command byte)
+  ' |  |  |  || |  +------------- DATA, Data 2
+  ' |  |  |  || |  |  +---------- DATA, Data 3
+  ' |  |  |  || |  |  |  +------- DATA, Data 4
+  ' |  |  |  || |  |  |  |  +---- CHK,  Checksum
+  ' |  |  |  || |  |  |  |  |  +- ETX,  End of packet
+  ' |  |  |  || |  |  |  |  |  |
+  ' 0F F8 00 04 01 02 03 04 XX 04
+
+  Main.ControlLed("Velbus", "On")
+
+  ' Relay incoming databyte to relay port
+  If $bRelayEnabled Then
+    If hRelayVBSocket.Status = Net.Connected Then Try Write #hRelayVBSocket, bTemp As Byte
+  Endif
+
+  If $aMsgData.Count >= 1 Then
+
+    $aMsgData.Add(bTemp)
+
+    Select $aMsgData.Count
+      Case 1 ' Do nothing
+      Case 2 ' Priority
+        If $aMsgData[1] <> VB_LPRIO And If $aMsgData[1] <> VB_HPRIO Then
+          ' Invalid priority
+          WriteDebugLog("< " & Util.ByteToHex($aMsgData) & " (INVALID PRIORITY)")
+          $aMsgData.Clear()
+          $bMsgPrev = bTemp
+          Return
+        Endif
+      Case 3 ' Address
+      Case 4 ' RTR / Size
+      Case Else ' check for length / checksum / EOL
+
+        iSize = ($aMsgData[3] And &H0F)
+        If iSize > 8 Then
+          WriteDebugLog("< " & Util.ByteToHex($aMsgData) & " (INVALID SIZE: RECEIVED '" & iSize & "', MAX IS '8')")
+          $aMsgData.Clear()
+          $bMsgPrev = bTemp
+        Endif
+
+        ' Check if we didn't receive too much data
+        If $aMsgData.Count > (iSize + 6) Then
+          WriteDebugLog("< " & Util.ByteToHex($aMsgData) & " (INVALID PACKET: NO EOL FOUND)")
+          $aMsgData.Clear()
+          $bMsgPrev = bTemp
+          Return
+          Return
+        Endif
+
+        ' Check if we received exact amount of bytes
+        If $aMsgData.Count = (iSize + 6) Then
+          ' Current byte needs to be VB_ETX
+          If bTemp = VB_ETX Then
+            ' Do checksum - includes VB_STX until CRC byte
+            If CalculateCRC($aMsgData.Copy(0, $aMsgData.Count - 2)) = $aMsgData[$aMsgData.Count - 2] Then
+              ' Parse data - if it is NOT a scan packet only
+
+              If $bDebug Then
+                WriteDebugLog("< " & Util.ByteToHex($aMsgData))
+                WriteDebugLog("  Priority: " & IIf($aMsgData[1] = VB_HPRIO, "HIGH", "LOW"))
+                WriteDebugLog("  Address: " & Hex($aMsgData[2], 2))
+                WriteDebugLog("  RTR: " & IIf(($aMsgData[3] And &HF40) = &HF40, "ON", "OFF"))
+                WriteDebugLog("  Data Length: " & iSize)
+              Endif
+
+              If iSize > 0 Then
+                ProcessReceivedPacket($aMsgData[2], $aMsgData.Copy(4, iSize)) 
+              Endif
+            Else
+              WriteDebugLog("< " & Util.ByteToHex($aMsgData) & " (INVALID CRC: EXPECTED '" & Hex(CalculateCRC($aMsgData.Copy(0, $aMsgData.Count - 2)), 2) & "', RECEIVED '" & Hex($aMsgData[$aMsgData.Count - 2], 2) & "')")
+            Endif
+
+            $aMsgData.Clear()
+            $bMsgPrev = bTemp
+          Else
+            WriteDebugLog("< " & Util.ByteToHex($aMsgData) & " (INVALID PACKET: NO EOL FOUND)")
+            $aMsgData.Clear()
+            $bMsgPrev = bTemp
+            Return
+          Endif
+        Endif
+
+    End Select
+
+  Else
+    If bTemp = VB_STX Then
+      $aMsgData.Add(bTemp)
+    Else
+      $aMsgData.Add(bTemp)
+      WriteDebugLog("< " & Util.ByteToHex($aMsgData) & " (INVALID START PACKET)")
+      If $bDebug Then WriteDebugLog("ERROR: Invalid data")
+      $aMsgData.Clear()
+      $bMsgPrev = bTemp
+      Return
+    Endif 
+  Endif
+
+  $bMsgPrev = bTemp
+
+  Main.ControlLed("Velbus", "Off")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Calculate package checksum
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CalculateCRC(bPacket As Byte[]) As Byte
+
+  Dim icnt As Integer
+  Dim iChcksum As Integer = 0
+  Dim bCHK As Byte
+
+  For icnt = 0 To bPacket.length - 1
+    iChcksum = iChcksum + CInt(bPacket[icnt])
+  Next
+  While iChcksum > 256
+    iChcksum = iChcksum - 256
+  Wend
+  bCHK = CByte(iChcksum)
+
+  For icnt = 0 To 7
+    bCHK = BChg(bCHK, icnt)
+  Next
+  bCHK = bCHK + 1
+  Return bCHK
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Decode received data packet from velbus
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessReceivedPacket(bAddress As Byte, bData As Byte[])
+
+  Dim bModuleType As Byte
+  Dim sModuleTypeDetected As String
+
+  If $bDebug Then WriteDebugLog("  Command: " & DisplayCommandType(bData[0]))
+
+  ' If we receive a clock sync request, we will respond to it
+  If bAddress = &H00 And If bData[0] = VB_CLOCK_REQUEST Then
+    If $bSyncClock Then
+      SendDateClockDaylight()
+    Else
+      WriteDebugLog("  Received Clock request, but 'syncclock' is disabled")
+    Endif
+
+    Return
+  Endif
+
+  ' If the moduletype is unknown, maybe we received a moduletype now? If we did, store and use now
+  If bData.Count >= 2 And If bData[0] = VB_MODULE_TYPE Then
+    $aModuleList[Hex(bAddress, 2)] = bData[1]
+    bModuleType = bData[1]
+  Else
+    bModuleType = GetModuleType(bAddress)
+  Endif
+
+  ' Get the readable moduletype name
+  $sModuleType = DisplayModuleType(bModuleType)
+
+  ' Report module type, if we have an idea
+  If $bDebug Then
+    ' If we have detected it before, lets see if we have match/mismatch - otherwise we will report it
+    If $aModuleList.Exist(Hex(bAddress, 2)) Then
+      If $aModuleList[Hex(bAddress, 2)] <> VMUNKNOWN And If $aModuleList[Hex(bAddress, 2)] <> bModuleType Then
+        sModuleTypeDetected = DisplayModuleType($aModuleList[Hex(bAddress, 2)])
+      Endif
+    Endif
+
+    WriteDebugLog("  ModuleType: " & IIf(bModuleType = VMUNKNOWN, "UNKNOWN", $sModuleType) & IIf(sModuleTypeDetected, ", detected " & sModuleTypeDetected, ""))
+  Endif
+
+  Select bModuleType
+    Case VMB8PB
+      VMB8PB_Receive(bAddress, bData)
+    Case VMB4RY
+      VMB4RY_Receive(bAddress, bData)
+    Case VMB4RYLD
+      VMB4RYLD_Receive(bAddress, bData)
+    Case VMB4RYNO
+      VMB4RYNO_Receive(bAddress, bData)
+    Case VMB4DC
+      VMB4DC_Receive(bAddress, bData)
+    Case VMBDME
+      VMBDME_Receive(bAddress, bData)
+    Case VMB2BLE
+      VMB2BLE_Receive(bAddress, bData)
+    Case VMBGPO
+      VMBGPO_Receive(bAddress, bData)
+    Case VMB7IN
+      VMB7IN_Receive(bAddress, bData)
+    Case VMBDMI
+      VMBDMI_Receive(bAddress, bData)
+    Case VMBPIRC
+      VMBPIRC_Receive(bAddress, bData)
+    Case VMBPIRO
+      VMBPIRO_Receive(bAddress, bData)
+    Case VMB8PBU
+      VMB8PBU_Receive(bAddress, bData)
+    Case VMB6PBN
+      VMB6PBN_Receive(bAddress, bData)
+    Case VMBGP1
+      VMBGP1_Receive(bAddress, bData)
+    Case VMBGP2
+      VMBGP2_Receive(bAddress, bData)
+    Case VMBGP4
+      VMBGP4_Receive(bAddress, bData)
+    Case VMBGPOD
+      VMBGPOD_Receive(bAddress, bData)
+    Case &H00
+      WriteDebugLog("  Packet received from module with address '" & Hex(bAddress, 2) & "', device isn't discovered or configured yet")
+    Case Else
+      WriteDebugLog("  Packet received from module '" & $sModuleType & "' with address '" & Hex(bAddress, 2) & "' which is not (yet) supported by DomotiGa code")
+  End Select
+
+Catch
+  WriteLog("ERROR: Failed to decode packet '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Convert hex formatted string to byte
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function HexStringToByte(sValue As String) As Byte
+
+  Dim iValue As Integer = 0
+  Dim icnt As Integer
+
+  If Len(sValue) = 4 Then sValue = Right(sValue, 2)
+
+  For icnt = 1 To 2
+    Select UCase(Mid(sValue, icnt, 1))
+      Case "1"
+        iValue += 1
+      Case "2"
+        iValue += 2
+      Case "3"
+        iValue += 3
+      Case "4"
+        iValue += 4
+      Case "5"
+        iValue += 5
+      Case "6"
+        iValue += 6
+      Case "7"
+        iValue += 7
+      Case "8"
+        iValue += 8
+      Case "9"
+        ivalue += 9
+      Case "A"
+        ivalue += 10
+      Case "B"
+        ivalue += 11
+      Case "C"
+        ivalue += 12
+      Case "D"
+        ivalue += 13
+      Case "E"
+        ivalue += 14
+      Case "F"
+        ivalue += 15
+    End Select
+    If icnt = 1 Then ivalue = ivalue * 16
+  Next
+  Return CByte(ivalue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return velbus module type based on known module addresses
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function GetModuleType(bAddress As Byte, Optional DeviceId As Integer) As Byte
+
+  Dim iDeviceId As Integer
+  Dim rResult As Result
+  Dim sDeviceType As String
+
+  If DeviceId Then
+    iDeviceId = DeviceId
+  Else
+    rResult = Devices.FindDevicesForInterface(InterfaceId, Instance)
+    If rResult And If rResult.Available Then
+      For Each rResult
+        If InStr(rResult!address, "|") > 0 Then
+          If HexStringToByte(UCase(Left(rResult!address, (InStr(rResult!address, "|") - 1)))) = bAddress Then
+            iDeviceId = rResult!id
+            Break
+          Endif
+        Else
+          If UCase(rResult!address) = Hex(bAddress, 2) Then
+            iDeviceId = rResult!id
+            Break
+          Endif
+        Endif
+      Next
+    Endif
+  Endif
+
+  If iDeviceId Then
+    sDeviceType = UCase(Devices.FindDeviceTypeNameForDeviceId(iDeviceId))
+
+    Select sDeviceType 
+      Case "VMB4RY"
+        Return VMB4RY
+      Case "VMB4RYNO"
+        Return VMB4RYNO
+      Case "VMB4DC"
+        Return VMB4DC
+      Case "VMB7IN"
+        Return VMB7IN
+      Case "VMBGPO"
+        Return VMBGPO
+      Case "VMBDME"
+        Return VMBDME
+      Case "VMB4RYLD"
+        Return VMB4RYLD
+      Case "VMB2BLE"
+        Return VMB2BLE
+      Case "VMB8PB"
+        Return VMB8PB
+      Case "VMBDMI"
+        Return VMBDMI
+      Case "VMBPIRO"
+        Return VMBPIRO
+      Case "VMB8PBU"
+        Return VMB8PBU
+      Case "VMB6PBN"
+        Return VMB6PBN
+      Case "VMBGP1"
+        Return VMBGP1
+      Case "VMBGP2"
+        Return VMBGP2
+      Case "VMBGP4"
+        Return VMBGP4
+      Case "VMBGPOD"
+        Return VMBGPOD
+      Case Else
+        WriteDebugLog("  Unsupported velbus module '" & sDeviceType & "' for id '" & iDeviceId & "'")
+        Return VMUNKNOWN
+    End Select
+  Else
+
+    ' Check if we seen the device already, because we should send a SCAN only once
+    If Not $aModuleList.Exist(Hex(bAddress, 2)) Then
+      ' New module
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "  Send discover (SCAN) request to request module type at address " & Hex(bAddress, 2))
+      $aModuleList.Add(VMUNKNOWN, Hex(bAddress, 2))
+      SendCommand(Hex(bAddress, 2), "MODULETYPE")
+    Endif
+
+    Return $aModuleList[Hex(bAddress, 2)]
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Control velbus modules
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String, Optional DeviceId As Integer)
+
+  Dim bAddress, bModuleType As Byte
+  Dim iChannel As Integer
+
+  sCmd = UCase(sCmd)
+
+  If $bDebug Then WriteDebugLog("Send Command to address '" & sAddress & "' command '" & sCmd & "'")
+
+  Try bAddress = HexStringToByte(Left(sAddress, 2))
+  If Error Then
+    WriteLog("ERROR: Can't convert '" & sAddress & "' to a valid numeric value")
+    Return
+  Endif
+
+  If InStr(sAddress, "|") Then
+    Try iChannel = Mid(sAddress, InStr(sAddress, "|") + 1)
+    If Error Then
+      WriteLog("ERROR: Can't convert channel '" & sAddress & "' to a valid numeric value")
+      Return
+    Endif
+  Else
+    iChannel = 1
+  Endif
+
+  ' If we request the module-type, send the special packet
+  If sCmd = "MODULETYPE" Then
+    Try QueueCommand(CreateVelbusPackage(VB_LPRIO, bAddress, [], True))
+    Return
+  Endif
+
+  If DeviceId Then
+    bModuleType = GetModuleType(bAddress, DeviceId)
+  Else
+    bModuleType = GetModuleType(bAddress)
+  Endif
+
+  ' Get the module type name
+  $sModuleType = DisplayModuleType(bModuleType)
+
+  Select bModuleType
+    Case VMB4RY
+      If UCase(sCmd) = "STATUS" Then
+        VMB4RY_Send(bAddress, 1, sCmd)
+        VMB4RY_Send(bAddress, 2, sCmd)
+        VMB4RY_Send(bAddress, 3, sCmd)
+        VMB4RY_Send(bAddress, 4, sCmd)
+      Else
+        VMB4RY_Send(bAddress, iChannel, sCmd)
+      Endif
+    Case VMB4RYNO
+      If UCase(sCmd) = "STATUS" Then
+        VMB4RYNO_Send(bAddress, 1, sCmd)
+        VMB4RYNO_Send(bAddress, 2, sCmd)
+        VMB4RYNO_Send(bAddress, 3, sCmd)
+        VMB4RYNO_Send(bAddress, 4, sCmd)
+        VMB4RYNO_Send(bAddress, 5, sCmd)
+      Else
+        VMB4RYNO_Send(bAddress, iChannel, sCmd)
+      Endif
+    Case VMB4RYLD
+      If UCase(sCmd) = "STATUS" Then
+        VMB4RYLD_Send(bAddress, 1, sCmd)
+        VMB4RYLD_Send(bAddress, 2, sCmd)
+        VMB4RYLD_Send(bAddress, 3, sCmd)
+        VMB4RYLD_Send(bAddress, 4, sCmd)
+        VMB4RYLD_Send(bAddress, 5, sCmd)
+      Else
+        VMB4RYLD_Send(bAddress, iChannel, sCmd)
+      Endif
+    Case VMB4DC
+      If UCase(sCmd) = "STATUS" Then
+        VMB4DC_Send(bAddress, 1, sCmd)
+        VMB4DC_Send(bAddress, 2, sCmd)
+        VMB4DC_Send(bAddress, 3, sCmd)
+        VMB4DC_Send(bAddress, 4, sCmd)
+      Else
+        VMB4DC_Send(bAddress, iChannel, sCmd)
+      Endif
+    Case VMBGPO
+      VMBGPO_Send(bAddress, sCmd)
+    Case VMBDME
+      VMBDME_Send(bAddress, sCmd)
+    Case VMB7IN
+      VMB7in_Send(bAddress, sCmd)
+    Case VMB2BLE
+      If UCase(sCmd) = "STATUS" Then
+        VMB2BLE_Send(bAddress, 1, sCmd)
+        VMB2BLE_Send(bAddress, 2, sCmd)
+      Else
+        VMB2BLE_Send(bAddress, iChannel, sCmd)
+      Endif
+    Case VMB8PB
+      VMB8PB_Send(bAddress, sCmd)
+    Case VMBDMI
+      VMBDMI_Send(bAddress, sCmd)
+    Case VMBPIRO
+      VMBPIRO_Send(bAddress, sCmd)
+    Case VMB8PBU
+      VMB8PBU_Send(bAddress, sCmd)
+    Case VMB6PBN
+      VMB6PBN_Send(bAddress, sCmd)
+    Case VMBGP1
+      VMBGP1_Send(bAddress, sCmd)
+    Case VMBGP2
+      VMBGP2_Send(bAddress, sCmd)
+    Case VMBGP4
+      VMBGP4_Send(bAddress, sCmd)
+    Case VMBGPOD
+      VMBGPOD_Send(bAddress, sCmd)
+    Case VMBPIRC
+      VMBPIRC_Send(bAddress, sCmd)
+    Case Else
+      WriteDebugLog("Unable to send command to unknown or not (yet) unsupported Velbus module at address " & sAddress)
+      Return
+  End Select
+
+Catch
+  WriteLog("ERROR: SendCommand '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle Module Type Message - for newer modules
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Handle_VB_Module_Type(aData As Byte[])
+
+  WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
+  WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+  WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle Clock message (time)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Handle_VB_Clock(aData As Byte[])
+
+ WriteDebugLog("  Weekday: " & Util.DisplayWeekday(aData[1]))
+  WriteDebugLog("  Hour: " & Format(aData[2], "00"))
+  WriteDebugLog("  Minute: " & Format(aData[3], "00"))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle Date message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Handle_VB_Date(aData As Byte[])
+
+  WriteDebugLog("  Day: " & Format(aData[1], "00"))
+  WriteDebugLog("  Month: " & Format(aData[2], "00"))
+ WriteDebugLog("  Year: " & CStr(aData[3] * 256 + aData[4]))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle daylight saving message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Handle_VB_Daylight_Saving(aData As Byte[])
+
+  WriteDebugLog("  Daylight saving: " & IIf(aData[1] = 0, "Disabled", "Enabled"))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle Clock message (time)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Handle_VB_Error_Count(aData As Byte[])
+
+  WriteDebugLog("  Transmit Error Count: " & aData[1])
+  WriteDebugLog("  Receive Error Count: " & aData[2])
+  WriteDebugLog("  Bus Off Count: " & aData[3])
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle Sensor temperature 2 bytes
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Handle_VB_Temp2(bHigh As Byte, bLow As Byte) As String
+
+  Dim iTemp As Single
+
+  If BTst(bLow, 0) And BTst(bLow, 1) And BTst(bLow, 2) And BTst(bLow, 3) And BTst(bLow, 4) Then
+    iTemp = -0.0625
+    If Not BTst(bLow, 5) Then iTemp -= 0.0625
+    If Not BTst(bLow, 6) Then iTemp -= 0.125
+    If Not BTst(bLow, 7) Then iTemp -= 0.25
+    If Not BTst(bHigh, 0) Then iTemp -= 0.5
+    If Not BTst(bHigh, 1) Then iTemp -= 1
+    If Not BTst(bHigh, 2) Then iTemp -= 2
+    If Not BTst(bHigh, 3) Then iTemp -= 4
+    If Not BTst(bHigh, 4) Then iTemp -= 8
+    If Not BTst(bHigh, 5) Then iTemp -= 16
+    If Not BTst(bHigh, 6) Then iTemp -= 32
+  Else
+    iTemp = 0
+    If BTst(bLow, 5) Then iTemp += 0.0625
+    If BTst(bLow, 6) Then iTemp += 0.125
+    If BTst(bLow, 7) Then iTemp += 0.25
+    If BTst(bHigh, 0) Then iTemp += 0.5
+    If BTst(bHigh, 1) Then iTemp += 1
+    If BTst(bHigh, 2) Then iTemp += 2
+    If BTst(bHigh, 3) Then iTemp += 4
+    If BTst(bHigh, 4) Then iTemp += 8
+    If BTst(bHigh, 5) Then iTemp += 16
+    If BTst(bHigh, 6) Then iTemp += 32
+  Endif
+
+  Return Replace(Format(iTemp, "-#0.0###"), ",", ".")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB4RY module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB4RY_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iChannel As Integer
+  Dim iDeviceId As Integer
+  Dim sRelayStatus As String
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then
+        If aData.Count = 8 Then WriteDebugLog("  Build: " & Hex(aData[6], 2) & Hex(aData[7], 2))
+      Endif
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS ' Do nothing
+    Case VB_SWITCH_OFF
+      For iChannel = 1 To 4
+        If BTst(aData[1], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " switched off status received")
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Off", Devices.ValueType_Switch)
+        Endif
+      Next
+    Case VB_SWITCH_ON
+      For iChannel = 1 To 4
+        If BTst(aData[1], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " switched on status received")
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "On", Devices.ValueType_Switch)
+        Endif
+      Next
+    Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
+      For iChannel = 1 To 4
+        If BTst(aData[1], iChannel - 1) Then
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          Update_LED_Status(iDeviceId, aData[0]) 
+        Endif
+      Next
+    Case VB_RELAY_STATUS
+      For iChannel = 1 To 4
+        If BTst(aData[1], iChannel - 1) Then
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          sRelayStatus = IIf(BTst(aData[3], iChannel - 1), "On", "Off")
+          If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " switched " & sRelayStatus)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sRelayStatus, Devices.ValueType_Switch)
+
+          If BTst(aData[5], 7) Then
+            update_LED_Status(iDeviceId, VB_LED_SET)
+          Else
+            update_LED_Status(iDeviceId, VB_LED_CLEAR)
+          Endif
+          If BTst(aData[5], 6) Then update_LED_Status(iDeviceId, VB_LED_BLINK_SLOW)
+          If BTst(aData[5], 5) Then update_LED_Status(iDeviceId, VB_LED_BLINK_FAST)
+          If BTst(aData[5], 4) Then Update_LED_Status(iDeviceId, VB_LED_BLINK_VERY_FAST)
+        Endif
+      Next
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB4RY module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB4RY_Send(bAddress As Byte, iChannel As Integer, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  If (iChannel < 1) And (iChannel > 4) Then
+    WriteDebugLog("  Invalid channel '" & iChannel & "' supplied")
+    Return
+  Endif
+
+  Select UCase(sAction)
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+    Case "CLOCK" ' Not supported
+    Case "ERRORCOUNT"
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case "ON"
+      bPrio = VB_HPRIO
+      aData.Add(VB_SWITCH_ON)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+    Case "OFF"
+      bPrio = VB_HPRIO
+      aData.Add(VB_SWITCH_OFF)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+    Case "CHANNEL_NAME"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_NAME_REQUEST)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB4RYNO module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB4RYNO_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iChannel As Integer
+  Dim iDeviceId As Integer
+  Dim sRelayStatus As String
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS ' Do nothing
+    Case VB_SWITCH_OFF
+      For iChannel = 1 To 5
+        If BTst(aData[1], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " switched off status received")
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Off", Devices.ValueType_Switch)
+        Endif
+      Next
+    Case VB_SWITCH_ON
+      For iChannel = 1 To 5
+        If BTst(aData[1], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " switched on status received")
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "On", Devices.ValueType_Switch)
+        Endif
+      Next
+    Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
+      For iChannel = 1 To 5
+        If BTst(aData[1], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " LED status received")
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          Update_LED_Status(iDeviceId, aData[0]) 
+        Endif
+      Next
+    Case VB_RELAY_STATUS
+      For iChannel = 1 To 5
+        If BTst(aData[1], iChannel - 1) Then
+          sRelayStatus = IIf(BTst(aData[3], 0), "On", "Off")
+          If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & ", switched " & sRelayStatus)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          Devices.ValueUpdate(iDeviceId, 1, sRelayStatus, Devices.ValueType_Switch)
+          If BTst(aData[4], 7) Then
+            update_LED_Status(iDeviceId, VB_LED_SET)
+          Else
+            update_LED_Status(iDeviceId, VB_LED_CLEAR)
+          Endif
+          If BTst(aData[4], 6) Then update_LED_Status(iDeviceId, VB_LED_BLINK_SLOW)
+          If BTst(aData[4], 5) Then update_LED_Status(iDeviceId, VB_LED_BLINK_FAST)
+          If BTst(aData[4], 4) Then Update_LED_Status(iDeviceId, VB_LED_BLINK_VERY_FAST)
+        Endif
+      Next
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB4RYNO module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB4RYNO_Send(bAddress As Byte, iChannel As Integer, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  If (iChannel < 1) And (iChannel > 5) Then
+    WriteDebugLog("  Invalid channel '" & iChannel & "' supplied")
+    Return
+  Endif
+
+  Select UCase(sAction)
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+    Case "CLOCK" ' Not supported
+    Case "ERRORCOUNT"
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case "ON"
+      bPrio = VB_HPRIO
+      aData.Add(VB_SWITCH_ON)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+    Case "OFF"
+      bPrio = VB_HPRIO
+      aData.Add(VB_SWITCH_OFF)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB4RYLD module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB4RYLD_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iChannel As Integer
+  Dim iDeviceId As Integer
+  Dim sRelayStatus As String
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS ' Do nothing
+    Case VB_SWITCH_OFF
+      For iChannel = 1 To 5
+        If BTst(aData[1], iChannel - 1) Then
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "  Relay channel: " & iChannel & " switched off status received")
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Off", Devices.ValueType_Switch)
+        Endif
+      Next
+    Case VB_SWITCH_ON
+      For iChannel = 1 To 5
+        If BTst(aData[1], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " switched on status received")
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "On", Devices.ValueType_Switch)
+        Endif
+      Next
+    Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
+      For iChannel = 1 To 5
+        If BTst(aData[1], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " LED status received")
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          Update_LED_Status(iDeviceId, aData[0]) 
+        Endif
+      Next
+    Case VB_RELAY_STATUS
+      For iChannel = 1 To 5
+        If BTst(aData[1], iChannel - 1) Then
+          sRelayStatus = IIf(BTst(aData[3], 0), "On", "Off")
+          If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " switched " & sRelayStatus)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sRelayStatus, Devices.ValueType_Switch)
+
+          If BTst(aData[4], 7) Then
+            update_LED_Status(iDeviceId, VB_LED_SET)
+          Else
+            update_LED_Status(iDeviceId, VB_LED_CLEAR)
+          Endif
+          If BTst(aData[4], 6) Then update_LED_Status(iDeviceId, VB_LED_BLINK_SLOW)
+          If BTst(aData[4], 5) Then update_LED_Status(iDeviceId, VB_LED_BLINK_FAST)
+          If BTst(aData[4], 4) Then Update_LED_Status(iDeviceId, VB_LED_BLINK_VERY_FAST)
+        Endif
+      Next
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB4RYLD module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB4RYLD_Send(bAddress As Byte, iChannel As Integer, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  If (iChannel < 1) And (iChannel > 5) Then
+    WriteDebugLog("  Invalid channel '" & iChannel & "' supplied")
+    Return
+  Endif
+
+  Select UCase(sAction)
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+    Case "CLOCK" ' Not supported
+    Case "ERRORCOUNT"
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case "ON"
+      bPrio = VB_HPRIO
+      aData.Add(VB_SWITCH_ON)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+    Case "OFF"
+      bPrio = VB_HPRIO
+      aData.Add(VB_SWITCH_OFF)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB2BLE module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB2BLE_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iChannel As Integer
+  Dim iDeviceId As Integer
+  Dim sValue As String
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS ' Do nothing
+    Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
+      If BTst(aData[1], 0) Then
+        iChannel = 1 ' fixed?
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Blind " & iChannel)
+        Update_LED_Status(iDeviceId, aData[0])
+      Endif
+    Case VB_BLIND_STATUS
+      For iChannel = 1 To 2
+        If BTst(aData[1], iChannel - 1) Then
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Blind " & iChannel)
+
+          If BTst(aData[3], 0) Then
+            sValue = "Blind up"
+          Else
+            If BTst(aData[3], 1) Then
+              sValue = "Blind down"
+            Else
+              sValue = "Blinds off"
+            Endif
+          Endif
+
+          If $bDebug Then WriteDebugLog("  Blind Status:" & sValue)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 2, sValue)
+
+          Select aData[5]
+            Case &H64 '100%, blind is down
+              sValue = "Off"
+            Case &H00 '0%, blind is up
+              sValue = "On"
+            Case Else
+              sValue = "Dim " & Str(aData[2])
+          End Select
+
+          If $bDebug Then WriteDebugLog("  Dim Status: " & sValue)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sValue, Devices.ValueType_Blinds)
+        Endif
+      Next
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB2BLE_Send(bAddress As Byte, iChannel As Integer, sAction As String)
+
+  Dim sCommand As String
+  Dim iDim As Integer
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  If InStr(sAction, " ") Then
+    sCommand = UCase(Left(sAction, InStr(sAction, " ") - 1))
+    iDim = Right(sAction, Len(sAction) - InStr(sAction, " "))
+  Else
+    sCommand = UCase(sAction)
+  Endif
+
+  '  Invalid channel
+  If (iChannel < 1) And (iChannel > 2) Then
+    WriteDebugLog("  Invalid channel '" & iChannel & "' supplied")
+    Return
+  Endif
+  
+  Select sCommand
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+    Case "CLOCK"
+      bPrio = VB_LPRIO
+      aData.Add(VB_CLOCK_REQUEST)
+    Case "ERRORCOUNT"
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case "ON" ' Blind up
+      bPrio = VB_HPRIO
+      aData.Add(VB_BLIND_UP)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+      aData.Add(&H00) ' high byte of time out
+      aData.Add(&H00) ' mid byte of time out
+      aData.Add(&H00) ' low byte of time out
+    Case "OFF" ' Blind down
+      bPrio = VB_HPRIO
+      aData.Add(VB_BLIND_DOWN)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+      aData.Add(&H00) ' high byte of time out
+      aData.Add(&H00) ' mid byte of time out
+      aData.Add(&H00) ' low byte of time out
+    Case "DIM"
+      bPrio = VB_HPRIO
+      aData.Add(VB_BLIND_SET)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMBDME module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBDME_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iDeviceId As String
+  Dim sValue As String
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS ' Do nothing
+    Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
+      If BTst(aData[1], 0) Then
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, $sModuleType)
+        Update_LED_Status(iDeviceId, aData[0])
+      Endif
+    Case VB_SLIDER_STATUS, VB_DIMMER_STATUS
+      iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, $sModuleType)
+      Select aData[2]
+        Case &H64 '100%
+          sValue = "On"
+        Case &H00 '0%
+          sValue = "Off"
+        Case Else
+          sValue = "Dim " & Str(aData[2])
+      End Select
+
+      If $bDebug Then WriteDebugLog("  Dim Status: " & sValue)
+      If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sValue, Devices.ValueType_Blinds)
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBDME_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+  Dim sCommand As String
+  Dim iDim As Integer
+
+  If InStr(sAction, " ") Then
+    sCommand = Left(sAction, InStr(sAction, " ") - 1)
+    iDim = Right(sAction, Len(sAction) - InStr(sAction, " "))
+  Else
+    sCommand = sAction
+  Endif
+
+  Select UCase(sCommand)
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+      aData.Add(BSet(&H00, 0))
+    Case "CLOCK" ' Not supported
+    Case "ERRORCOUNT"
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case "ON"
+      bPrio = VB_HPRIO
+      aData.Add(VB_DIMMER_SET)
+      aData.Add(BSet(&H00, 0))
+      aData.Add(&H64)   '100 %
+      aData.Add(&H00)   'high byte of dim speed in seconds
+      aData.Add(&H05)   'low byte of dim speed in seconds
+    Case "OFF"
+      bPrio = VB_HPRIO
+      aData.Add(VB_DIMMER_SET)
+      aData.Add(BSet(&H00, 0))
+      aData.Add(&H00)   ' 0 %
+      aData.Add(&H00)   'high byte of dim speed in seconds
+      aData.Add(&H05)   'low byte of dim speed in seconds
+    Case "LAST"
+      bPrio = VB_LPRIO
+      aData.Add(VB_LAST_SLIDER_STATUS)
+      aData.Add(BSet(&H00, 0))
+      aData.Add(&H00)
+      aData.Add(&H00)
+      aData.Add(&H05)
+    Case "DIM"
+      bPrio = VB_HPRIO
+      aData.Add(VB_DIMMER_SET)
+      aData.Add(BSet(&H00, 0))
+      aData.Add(CByte(iDim))
+      aData.Add(&H00)
+      aData.Add(&H05)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB4DC module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB4DC_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iChannel, iDimmerValue As Integer
+  Dim iDeviceId As Integer
+  Dim sValue As String
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS ' Do nothing
+    Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
+      For iChannel = 1 To 4
+        If BTst(aData[1], iChannel - 1) Then
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          Update_LED_Status(iDeviceId, aData[0])
+        Endif
+      Next
+    Case VB_SLIDER_STATUS
+      For iChannel = 1 To 4
+        If BTst(aData[1], iChannel - 1) Then
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          Select aData[2]
+            Case &H64 '100%
+              sValue = "On"
+            Case &H00 '0%
+              sValue = "Off"
+            Case Else
+              sValue = "Dim " & aData[2]
+          End Select
+
+          If $bDebug Then WriteDebugLog("  Dim Channel: " & iChannel & " Dim Status: " & sValue)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sValue, Devices.ValueType_Blinds)
+        Endif
+      Next
+    Case VB_DIMMER_STATUS
+      For iChannel = 1 To 4
+        If BTst(aData[1], iChannel - 1) Then
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & "Channel " & iChannel)
+          iDimmerValue = Round((CInt(aData[2]) / 2.56), 0)
+          If $bDebug Then WriteDebugLog("  Dim Status: " & iDimmerValue)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, iDimmerValue)
+        Endif
+      Next
+    Case VB_DIMMER_CONTROLLER_STATUS
+      For iChannel = 1 To 4
+        If BTst(aData[1], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Dim Status: " & aData[3])
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Dim " & aData[3])
+        Endif
+      Next
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB4DC_Send(bAddress As Byte, iChannel As Integer, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+  Dim sCommand As String
+  Dim iDim As Integer
+
+  If InStr(sAction, " ") Then
+    sCommand = Left(sAction, InStr(sAction, " ") - 1)
+    iDim = Right(sAction, Len(sAction) - InStr(sAction, " "))
+  Else
+    sCommand = sAction
+  Endif
+
+  If (iChannel < 1) And (iChannel > 4) Then
+    WriteDebugLog("  Invalid channel '" & iChannel & "' supplied")
+    Return
+  Endif
+
+  Select UCase(sCommand)
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+    Case "CLOCK" ' Not supported
+    Case "ERRORCOUNT"
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case "ON"
+      bPrio = VB_HPRIO
+      aData.Add(VB_DIMMER_SET)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+      aData.Add(&H64)   '100 %
+      aData.Add(&H00)   'high byte of dim speed in seconds
+      aData.Add(&H05)   'low byte of dim speed in seconds
+    Case "OFF"
+      bPrio = VB_HPRIO
+      aData.Add(VB_DIMMER_SET)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+      aData.Add(&H00)   ' 0 %
+      aData.Add(&H00)   'high byte of dim speed in seconds
+      aData.Add(&H05)   'low byte of dim speed in seconds
+    Case "LAST"
+      bPrio = VB_LPRIO
+      aData.Add(VB_LAST_SLIDER_STATUS)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+      aData.Add(&H00)
+      aData.Add(&H00)
+      aData.Add(&H05)
+    Case "DIM"
+      bPrio = VB_HPRIO
+      aData.Add(VB_DIMMER_SET)
+      aData.Add(BSet(&H00, (iChannel - 1)))
+      aData.Add(CByte(iDim))
+      aData.Add(&H00)
+      aData.Add(&H05)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB7IN module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB7IN_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iChannel As Integer
+  Dim iDeviceId As Integer
+  Dim iPulses, iPulseWidth, iEnergyCounter, iEnergyUse As Integer
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_DAYLIGHT_SAVING
+      If $bDebug Then Handle_VB_Daylight_Saving(aData)
+    Case VB_STATUS
+      For iChannel = 1 To 7
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+        If BTst(aData[1], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Status: Pressed")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed")
+        Endif
+        If BTst(aData[2], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Status: Released")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+        Endif
+        If BTst(aData[3], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Status: Pressed (long)")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed (long)")
+        Endif
+      Next
+    Case VB_INPUT_STATUS
+      For iChannel = 1 To 7
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+        If BTst(aData[1], iChannel - 1) Then 
+          If $bDebug Then WriteDebugLog("  Input Status: Pressed")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed") 
+        Else
+          If $bDebug Then WriteDebugLog("  Input Status: Released")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+        Endif
+      Next
+    Case VB_ENERGY_COUNTER
+      If aData.Count = 8 Then
+        iChannel = IIf(BTst(aData[1], 0), 2, 1)
+        iChannel += IIf(BTst(aData[1], 1), 2, 0)
+        iPulses = IIf(BTst(aData[1], 2), 1, 0)
+        iPulses += IIf(BTst(aData[1], 3), 2, 0)
+        iPulses += IIf(BTst(aData[1], 4), 4, 0)
+        iPulses += IIf(BTst(aData[1], 5), 8, 0)
+        iPulses += IIf(BTst(aData[1], 6), 16, 0)
+        iPulses += IIf(BTst(aData[1], 7), 32, 0)
+        iEnergyCounter = (16777216 * CInt(aData[2])) + (65536 * CInt(aData[3])) + (256 * CInt(aData[4])) + CInt(aData[5])
+        iPulseWidth = (256 * CInt(aData[6])) + CInt(aData[7])
+
+        If iPulseWidth < 65535 Then
+          iEnergyUse = 3600000000 / (iPulses * iPulseWidth)
+        Else
+          iEnergyUse = 0
+        Endif
+
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+        If $bDebug Then 
+          WriteDebugLog("  Energy Use: " & iEnergyUse)
+          WriteDebugLog("  Energy Counter: " & iEnergyCounter)
+        Endif
+
+        If iDeviceId Then 
+          Devices.ValueUpdate(iDeviceId, 2, iEnergyUse, Devices.ValueType_Undefined)
+          Devices.ValueUpdate(iDeviceId, 3, iEnergyCounter, Devices.ValueType_Undefined)
+        Endif
+      Endif
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB7IN_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+  Dim sCommand As String
+  Dim iDim As Integer
+
+  If InStr(sAction, " ") Then
+    sCommand = UCase(Left(sAction, InStr(sAction, " ") - 1))
+    iDim = Right(sAction, Len(sAction) - InStr(sAction, " "))
+  Else
+    sCommand = UCase(sAction)
+  Endif
+  
+  Select sCommand
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+      aData.Add(&H00) ' Don't care
+    Case "CLOCK"
+      bPrio = VB_LPRIO
+      aData.Add(VB_CLOCK_REQUEST)
+    Case "ERRORCOUNT"
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMBGPO module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBGPO_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim sTemp As String
+  Dim iDeviceId As Integer
+  Dim iSubAddress As Integer
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS ' Todo
+    Case VB_TEMP
+      If aData.Count = 7 Then
+
+        sTemp = Handle_VB_Temp2(aData[1], aData[2])
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, $sModuleType, $sModuleType & " Panel")
+
+        If $bDebug Then WriteDebugLog("  Temperature: " & sTemp)
+        If iDeviceId Then Devices.ValueUpdate(iDeviceId, 2, sTemp, Devices.ValueType_Temperature)
+      Else
+        If $bDebug Then WriteDebugLog("  *** Received unsupported Temperature message ***")
+      Endif
+    Case VB_SUBTYPE
+      WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
+      For iSubAddress = 1 To 4
+        WriteDebugLog("  Subaddress" & iSubAddress & ": " & IIf(aData[3 + iSubAddress] <> &HFF, Hex(aData[3 + iSubAddress], 2), "disabled"))
+      Next
+    Case VB_DAYLIGHT_SAVING
+      WriteDebugLog("  Daylight Saving: " & IIf(aData[1], "Enabled", "Disabled"))
+
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBGPO_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+  Dim sCommand As String
+  Dim sSetPoint As String
+  Dim fSetPoint As Float
+  Dim bSetPoint As Byte
+
+  If InStr(sAction, " ") Then
+    sCommand = UCase(Left(sAction, InStr(sAction, " ") - 1))
+    sSetPoint = Right(sAction, Len(sAction) - InStr(sAction, " "))
+  Else
+    sCommand = UCase(sAction)
+  Endif
+
+  Select sCommand
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+      aData.Add(&H00) ' Don't care
+    Case "CLOCK"
+      bPrio = VB_LPRIO
+      aData.Add(VB_CLOCK_REQUEST)
+    Case "ERRORCOUNT"
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case "SP"
+      Try fSetPoint = Val(Replace(sSetPoint, ".", ","))
+      If Error Then
+        WriteLog("ERROR: Invalid SetPoint '" & sSetPoint & "' , it has to be e.g. '20.5'")
+        Return
+      Endif
+
+      If fSetPoint < -55 Or If fSetPoint > 63.5 Then
+        WriteLog("ERROR: Invalid SetPoint '" & sSetPoint & "', it has to be between '-55' and '63.5'")
+        Return
+      Endif
+
+      bPrio = VB_LPRIO
+      aData.Add(VB_TEMP_SET)
+      aData.Add(&H00) ' We only support - Target temperature set
+
+      ' Multiple with 2 and round - Gambas converts it automatically in the right byte format
+      bSetPoint = Round(fSetPoint * 2)
+      aData.Add(bSetPoint)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB8PB module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB8PB_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iChannel As Integer
+  Dim iDeviceId As Integer
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then
+        If aData.Count = 7 Then WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
+      Endif
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS
+      For iChannel = 1 To 8
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+        If BTst(aData[1], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Status: Pressed")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed")
+        Endif
+        If BTst(aData[2], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Status: Released")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+        Endif
+        If BTst(aData[3], iChannel - 1) Then
+          If $bDebug Then WriteDebugLog("  Status: Pressed (long)")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed (long)")
+        Endif
+      Next
+    Case VB_INPUT_STATUS
+      For iChannel = 1 To 8
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+        If BTst(aData[1], iChannel - 1) Then 
+          If $bDebug Then WriteDebugLog("  Input Status: Pressed")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed") 
+        Else
+          If $bDebug Then WriteDebugLog("  Input Status: Released")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+        Endif
+      Next
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB8PB_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+  Dim sCommand As String
+  Dim iDim As Integer
+
+  If InStr(sAction, " ") Then
+    sCommand = UCase(Left(sAction, InStr(sAction, " ") - 1))
+    iDim = Right(sAction, Len(sAction) - InStr(sAction, " "))
+  Else
+    sCommand = UCase(sAction)
+  Endif
+
+  Select sCommand
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+      aData.Add(&HFF)
+    Case "CLOCK" ' Not supported
+    Case "ERRORCOUNT"
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMBDMI module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBDMI_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iDeviceId As Integer
+  Dim sValue As String
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS ' Do nothing
+    Case VB_DIMMER_CONTROLLER_STATUS
+      iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, $sModuleType)
+
+      Select aData[3]
+        Case &H64 ' 100%
+          sValue = "On"
+        Case &H00 ' 0%
+          sValue = "Off"
+        Case Else
+          sValue = "Dim " & Str(aData[3])
+      End Select
+
+      If $bDebug Then WriteDebugLog("  Dim Status: " & sValue)
+      If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sValue)
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBDMI_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+  Dim sCommand As String
+  Dim iDim As Integer
+
+  If InStr(sAction, " ") Then
+    sCommand = UCase(Left(sAction, InStr(sAction, " ") - 1))
+    iDim = Right(sAction, Len(sAction) - InStr(sAction, " "))
+  Else
+    sCommand = UCase(sAction)
+  Endif
+
+  Select sCommand
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+      aData.Add(BSet(&H00, 0))
+    Case "CLOCK" ' Not supported
+    Case "ON"
+      bPrio = VB_HPRIO
+      aData.Add(VB_DIMMER_SET)
+      aData.Add(BSet(&H00, 0))
+      aData.Add(&H64) ' 100 %
+      aData.Add(&H00) ' high byte of dim speed in seconds
+      aData.Add(&H05) ' low byte of dim speed in seconds
+    Case "OFF"
+      bPrio = VB_HPRIO
+      aData.Add(VB_DIMMER_SET)
+      aData.Add(BSet(&H00, 0))
+      aData.Add(&H00) ' 0 %
+      aData.Add(&H00) ' high byte of dim speed in seconds
+      aData.Add(&H05) ' low byte of dim speed in seconds
+    Case "LAST"
+      bPrio = VB_LPRIO
+      aData.Add(VB_LAST_SLIDER_STATUS)
+      aData.Add(BSet(&H00, 0))
+      aData.Add(&H00)
+      aData.Add(&H00)
+      aData.Add(&H05)
+    Case "DIM"
+      bPrio = VB_HPRIO
+      aData.Add(VB_DIMMER_SET)
+      aData.Add(BSet(&H00, 0))
+      aData.Add(CByte(iDim))
+      aData.Add(&H00)
+      aData.Add(&H05)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMBPIRC: Ceiling PIR detector module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBPIRC_Receive(bAddress As Byte, aData As Byte[])
+
+  'Dim iDeviceId As Integer
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS ' Do nothing
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBPIRC_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  sAction = UCase(sAction)
+
+  Select sAction
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+    Case "CLOCK"
+      bPrio = VB_LPRIO
+      aData.Add(VB_CLOCK_REQUEST)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMBPIRO module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBPIRO_Receive(bAddress As Byte, aData As Byte[])
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBPIRO_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  sAction = UCase(sAction)
+
+  Select sAction
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+    Case "CLOCK" ' ???
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB8PBU module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB8PBU_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iDeviceId As Integer
+  Dim iChannel As Integer
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS
+      For iChannel = 1 To 8
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+        If iDeviceId Then
+          If BTst(aData[1], iChannel - 1) Then
+            If $bDebug Then WriteDebugLog("  Status: Pressed")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed")
+          Endif
+          If BTst(aData[2], iChannel - 1) Then
+            If $bDebug Then WriteDebugLog("  Status: Released")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+          Endif
+          If BTst(aData[3], iChannel - 1) Then
+            If $bDebug Then WriteDebugLog("  Status: Pressed (long)")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed (long)")
+          Endif
+        Endif
+      Next
+    Case VB_INPUT_STATUS
+      For iChannel = 1 To 8
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+        If iDeviceId Then
+          If BTst(aData[1], iChannel - 1) Then 
+            If $bDebug Then WriteDebugLog("  Input Status: Pressed")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed") 
+          Else
+            If $bDebug Then WriteDebugLog("  Input Status: Released")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+          Endif
+        Endif
+      Next
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB8PBU_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  sAction = UCase(sAction)
+
+  Select sAction
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+      aData.Add(&H00) ' Don't care
+    Case "CLOCK"
+      bPrio = VB_LPRIO
+      aData.Add(VB_CLOCK_REQUEST)
+    Case "ERRORCOUNT" ' build 0649 and higher
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB6PBN module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB6PBN_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iDeviceId As Integer
+  Dim iChannel As Integer
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS
+      For iChannel = 1 To 8
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+        If iDeviceId Then
+          If BTst(aData[1], iChannel - 1) Then
+            If $bDebug Then WriteDebugLog("  Status: Pressed")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed")
+          Endif
+          If BTst(aData[2], iChannel - 1) Then
+            If $bDebug Then WriteDebugLog("  Status: Released")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+          Endif
+          If BTst(aData[3], iChannel - 1) Then
+            If $bDebug Then WriteDebugLog("  Status: Pressed (long)")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed (long)")
+          Endif
+        Endif
+      Next
+    Case VB_INPUT_STATUS
+      For iChannel = 1 To 8
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+        If iDeviceId Then
+          If BTst(aData[1], iChannel - 1) Then 
+            If $bDebug Then WriteDebugLog("  Input Status: Pressed")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed") 
+          Else
+            If $bDebug Then WriteDebugLog("  Input Status: Released")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+          Endif
+        Endif
+      Next
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB6PBN_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  sAction = UCase(sAction)
+
+  Select sAction
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+    Case "CLOCK"
+      bPrio = VB_LPRIO
+      aData.Add(VB_CLOCK_REQUEST)
+    Case "ERRORCOUNT"
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMBGP1 module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBGP1_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iDeviceId As Integer
+  Dim iSubAddress As Integer
+  Dim iTemp As Short
+  Dim sTemp As String
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS
+      iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, $sModuleType)
+      If iDeviceId Then
+        If BTst(aData[1], 0) Then
+          If $bDebug Then WriteDebugLog("  Status: Pressed")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed")
+        Endif
+        If BTst(aData[2], 0) Then
+          If $bDebug Then WriteDebugLog("  Status: Released")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+        Endif
+        If BTst(aData[3], 0) Then
+          If $bDebug Then WriteDebugLog("  Status: Pressed (long)")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed (long)")
+        Endif
+      Endif
+    Case VB_INPUT_STATUS
+      iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, $sModuleType)
+      If iDeviceId Then
+        If BTst(aData[1], 0) Then 
+          If $bDebug Then WriteDebugLog("  Input Status: Pressed")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed") 
+        Else
+          If $bDebug Then WriteDebugLog("  Input Status: Released")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+        Endif
+      Endif
+    Case VB_SUBTYPE
+      WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
+      For iSubAddress = 1 To 4
+        WriteDebugLog("  Subaddress" & iSubAddress & ": " & IIf(aData[3 + iSubAddress] <> &HFF, Hex(aData[3 + iSubAddress], 2), "disabled"))
+      Next
+    Case VB_TEMP_STATUS
+      ' Current temperature measured. Add the FF00 to make it a negative number
+      iTemp = aData[4]
+      If aData[4] >= &H80 Then iTemp += &HFF00
+      sTemp = Format(CSingle(CSingle(iTemp) / 2), "-#0.0")
+      WriteDebugLog("  Temperature Measured: " & sTemp)
+
+      ' Current temperature set
+      iTemp = aData[5]
+      If aData[5] >= &H80 Then iTemp += &HFF00
+      sTemp = Format(CSingle(CSingle(iTemp) / 2), "-#0.0")
+      WriteDebugLog("  Temperature Set: " & sTemp)
+    Case VB_DAYLIGHT_SAVING
+      WriteDebugLog("  Daylight Saving: " & IIf(aData[1], "Enabled", "Disabled"))
+    Case VB_TEMP
+      If aData.Count = 7 Then
+
+        sTemp = Handle_VB_Temp2(aData[1], aData[2])
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, $sModuleType, $sModuleType & " Panel")
+
+        If $bDebug Then WriteDebugLog("  Temperature: " & sTemp)
+        If iDeviceId Then Devices.ValueUpdate(iDeviceId, 2, sTemp, Devices.ValueType_Temperature)
+      Else
+        If $bDebug Then WriteDebugLog("  *** Received unsupported Temperature message ***")
+      Endif
+
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBGP1_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  sAction = UCase(sAction)
+
+  Select sAction
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+    Case "CLOCK"
+      bPrio = VB_LPRIO
+      aData.Add(VB_CLOCK_REQUEST)
+    Case "ERRORCOUNT"
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMBGP2 module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBGP2_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iDeviceId As Integer
+  Dim iChannel As Integer
+  Dim iSubAddress As Integer
+  Dim iTemp As Short
+  Dim sTemp As String
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS
+      For iChannel = 1 To 2
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+        If iDeviceId Then
+          If BTst(aData[1], iChannel - 1) Then
+            If $bDebug Then WriteDebugLog("  Status: Pressed")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed")
+          Endif
+          If BTst(aData[2], iChannel - 1) Then
+            If $bDebug Then WriteDebugLog("  Status: Released")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+          Endif
+          If BTst(aData[3], iChannel - 1) Then
+            If $bDebug Then WriteDebugLog("  Status: Pressed (long)")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed (long)")
+          Endif
+        Endif
+      Next
+    Case VB_INPUT_STATUS
+      For iChannel = 1 To 2
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+        If iDeviceId Then
+          If BTst(aData[1], iChannel - 1) Then 
+            If $bDebug Then WriteDebugLog("  Input Status: Pressed")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed") 
+          Else
+            If $bDebug Then WriteDebugLog("  Input Status: Released")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+          Endif
+        Endif
+      Next
+    Case VB_SUBTYPE
+      WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
+      For iSubAddress = 1 To 4
+        WriteDebugLog("  Subaddress" & iSubAddress & ": " & IIf(aData[3 + iSubAddress] <> &HFF, Hex(aData[3 + iSubAddress], 2), "disabled"))
+      Next
+    Case VB_TEMP_STATUS
+      ' Current temperature measured. Add the FF00 to make it a negative number
+      iTemp = aData[4]
+      If aData[4] >= &H80 Then iTemp += &HFF00
+      sTemp = Format(CSingle(CSingle(iTemp) / 2), "-#0.0")
+      WriteDebugLog("  Temperature Measured: " & sTemp)
+
+      ' Current temperature set
+      iTemp = aData[5]
+      If aData[5] >= &H80 Then iTemp += &HFF00
+      sTemp = Format(CSingle(CSingle(iTemp) / 2), "-#0.0")
+      WriteDebugLog("  Temperature Set: " & sTemp)
+    Case VB_DAYLIGHT_SAVING
+      WriteDebugLog("  Daylight Saving: " & IIf(aData[1], "Enabled", "Disabled"))
+    Case VB_TEMP
+      If aData.Count = 7 Then
+
+        sTemp = Handle_VB_Temp2(aData[1], aData[2])
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, $sModuleType, $sModuleType & " Panel")
+
+        If $bDebug Then WriteDebugLog("  Temperature: " & sTemp)
+        If iDeviceId Then Devices.ValueUpdate(iDeviceId, 2, sTemp, Devices.ValueType_Temperature)
+      Else
+        If $bDebug Then WriteDebugLog("  *** Received unsupported Temperature message ***")
+      Endif
+
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBGP2_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  sAction = UCase(sAction)
+
+  Select sAction
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+    Case "CLOCK"
+      bPrio = VB_LPRIO
+      aData.Add(VB_CLOCK_REQUEST)
+    Case "ERRORCOUNT"
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMBGP4 module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBGP4_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iDeviceId As Integer
+  Dim iChannel As Integer
+  Dim iSubAddress As Integer
+  Dim iTemp As Short
+  Dim sTemp As String
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case VB_STATUS
+      For iChannel = 1 To 4
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+        If iDeviceId Then
+          If BTst(aData[1], iChannel - 1) Then
+            If $bDebug Then WriteDebugLog("  Status: Pressed")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed")
+          Endif
+          If BTst(aData[2], iChannel - 1) Then
+            If $bDebug Then WriteDebugLog("  Status: Released")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+          Endif
+          If BTst(aData[3], iChannel - 1) Then
+            If $bDebug Then WriteDebugLog("  Status: Pressed (long)")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed (long)")
+          Endif
+        Endif
+      Next
+    Case VB_INPUT_STATUS
+      For iChannel = 1 To 4
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
+        If iDeviceId Then
+          If BTst(aData[1], iChannel - 1) Then 
+            If $bDebug Then WriteDebugLog("  Input Status: Pressed")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Pressed") 
+          Else
+            If $bDebug Then WriteDebugLog("  Input Status: Released")
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Released")
+          Endif
+        Endif
+      Next
+    Case VB_SUBTYPE
+      WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
+      For iSubAddress = 1 To 4
+        WriteDebugLog("  Subaddress" & iSubAddress & ": " & IIf(aData[3 + iSubAddress] <> &HFF, Hex(aData[3 + iSubAddress], 2), "disabled"))
+      Next
+    Case VB_TEMP_STATUS
+      ' Current temperature measured. Add the FF00 to make it a negative number
+      iTemp = aData[4]
+      If aData[4] >= &H80 Then iTemp += &HFF00
+      sTemp = Format(CSingle(CSingle(iTemp) / 2), "-#0.0")
+      WriteDebugLog("  Temperature Measured: " & sTemp)
+
+      ' Current temperature set
+      iTemp = aData[5]
+      If aData[5] >= &H80 Then iTemp += &HFF00
+      sTemp = Format(CSingle(CSingle(iTemp) / 2), "-#0.0")
+      WriteDebugLog("  Temperature Set: " & sTemp)
+    Case VB_DAYLIGHT_SAVING
+      WriteDebugLog("  Daylight Saving: " & IIf(aData[1], "Enabled", "Disabled"))
+    Case VB_TEMP
+      If aData.Count = 7 Then
+
+        sTemp = Handle_VB_Temp2(aData[1], aData[2])
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, $sModuleType, $sModuleType & " Panel")
+
+        If $bDebug Then WriteDebugLog("  Temperature: " & sTemp)
+        If iDeviceId Then Devices.ValueUpdate(iDeviceId, 2, sTemp, Devices.ValueType_Temperature)
+      Else
+        If $bDebug Then WriteDebugLog("  *** Received unsupported Temperature message ***")
+      Endif
+
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBGP4_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  sAction = UCase(sAction)
+
+  Select sAction
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+    Case "CLOCK"
+      bPrio = VB_LPRIO
+      aData.Add(VB_CLOCK_REQUEST)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMBGPOD module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBGPOD_Receive(bAddress As Byte, aData As Byte[])
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then Handle_VB_Module_Type(aData)
+    Case VB_ERROR_COUNT
+      If $bDebug Then Handle_VB_Error_Count(aData)
+    Case VB_CLOCK
+      If $bDebug Then Handle_VB_Clock(aData)
+    Case VB_DATE
+      If $bDebug Then Handle_VB_Date(aData)
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBGPOD_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  sAction = UCase(sAction)
+
+  Select sAction
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+    Case "CLOCK" 
+      bPrio = VB_LPRIO
+      aData.Add(VB_CLOCK_REQUEST)
+    Case "ERRORCOUNT"
+      bPrio = VB_LPRIO
+      aData.Add(VB_ERROR_COUNT_REQUEST)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Update LED status of push button
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Update_LED_Status(iDeviceId As Integer, bLedStatus As Byte)
+
+  Select bLedStatus
+    Case VB_LED_CLEAR
+      If $bDebug Then WriteDebugLog("  Update LED Status: Off")
+      If iDeviceId Then Devices.ValueUpdate(iDeviceId, 2, "Off")
+    Case VB_LED_SET
+      If $bDebug Then WriteDebugLog("  Update LED Status: On")
+      If iDeviceId Then Devices.ValueUpdate(iDeviceId, 2, "On")
+    Case VB_LED_BLINK_SLOW
+      If $bDebug Then WriteDebugLog("  Update LED Status: Blink slow")
+      If iDeviceId Then Devices.ValueUpdate(iDeviceId, 2, "Blink slow")
+    Case VB_LED_BLINK_FAST
+      If $bDebug Then WriteDebugLog("  Update LED Status: Blink fast")
+      If iDeviceId Then Devices.ValueUpdate(iDeviceId, 2, "Blink fast")
+    Case VB_LED_BLINK_VERY_FAST
+      If $bDebug Then WriteDebugLog("  Update LED Status: Blink very fast")
+      If iDeviceId Then Devices.ValueUpdate(iDeviceId, 2, "Blink very fast")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display module type
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DisplayModuleType(bModule As Byte) As String
+
+  Select bModule
+    Case VMUNKNOWN
+      Return "VMUNKNOWN"
+    Case VMB8PB
+      Return "VMB8PB"
+    Case VMB1RY
+      Return "VMB1RY"
+    Case VMB1BL
+      Return "VMB1BL"
+    Case VMB6IN
+      Return "VMB6IN"
+    Case VMB1DM
+      Return "VMB1DM"
+    Case VMB4RY
+      Return "VMB4RY"
+    Case VMB2BL
+      Return "VMB2BL"
+    Case VMB8IR
+      Return "VMB8IR"
+    Case VMB4PD
+      Return "VMB4PD"
+    Case VMB1TS
+      Return "VMB1TS"
+    Case VMB1TH
+      Return "VMB1TH"
+    Case VMB1TC
+      Return "VMB1TC"
+    Case VMB1LED
+      Return "VMB1LED"
+    Case VMB4RYLD
+      Return "VMB4RYLD"
+    Case VMB4RYNO
+      Return "VMB4RYNO"
+    Case VMB4DC
+      Return "VMB4DC"
+    Case VMBMPD
+      Return "VMBMPD"
+    Case VMBDME
+      Return "VMBDME"
+    Case VMBDMI
+      Return "VMBDMI"
+    Case VMB8PBU
+      Return "VMB8PBU"
+    Case VMB6PBN
+      Return "VMB6PBN"
+    Case VMB2PBN
+      Return "VMB2PBN"
+    Case VMB6PBB
+      Return "VMB6PBB"
+    Case VMB4RF
+      Return "VMB4RF"
+    Case VMB1RYNO
+      Return "VMB1RYNO"
+    Case VMB1BLE
+      Return "VMB1BLE"
+    Case VMB2BLE
+      Return "VMB2BLE"
+    Case VMBGP1
+      Return "VMBGP1"
+    Case VMBGP2
+      Return "VMBGP2"
+    Case VMBGP4
+      Return "VMBGP4"
+    Case VMBGPO
+      Return "VMBGPO"
+    Case VMB7IN
+      Return "VMB7IN"
+    Case VMBGPTC
+      Return "VMBGPTC"
+    Case VMBGPOD
+      Return "VMBGPOD"
+    Case VMB1RYNOS
+      Return "VMB1RYNOS"
+    Case VMBPIRM
+      Return "VMBPIRM"
+    Case VMBPIRC
+      Return "VMBPIRC"
+    Case VMBPIRO
+      Return "VMBPIRO"
+    Case VMBPP4PIR
+      Return "VMBPP4PIR"
+    Case VMBDMIR
+      Return "VMBDMIR"
+    Case VMBRF8RXS
+      Return "VMBRF8RXS"
+    Case &HFF
+      Return ""
+    Case Else
+      Return "Unknown (" & Hex(bModule, 2) & ")"
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display Velbus Command type
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DisplayCommandType(bType As Byte) As String
+
+  Select bType
+    Case VB_STATUS
+      Return "VB_STATUS"
+    Case VB_SWITCH_OFF
+      Return "VB_SWITCH_OFF"
+    Case VB_SWITCH_ON
+      Return "VB_SWITCH_ON"
+    Case VB_RELAY_TIMER
+      Return "VB_RELAY_TIMER"
+    Case VB_BLIND_OFF
+      Return "VB_BLIND_OFF"
+    Case VB_BLIND_UP
+      Return "VB_BLIND_UP"
+    Case VB_BLIND_DOWN
+      Return "VB_BLIND_DOWN"
+    Case VB_DIMMER_SET
+      Return "VB_DIMMER_SET"
+    Case VB_DIMMER_TIMER
+      Return "VB_DIMMER_TIMER"
+    Case VB_BUS_OFF
+      Return "VB_BUS_OFF"
+    Case VB_BUS_ACTIVE
+      Return "VB_BUS_ACTIVE"
+    Case VB_RS232_BUFFER_FULL
+      Return "VB_RS232_BUFFER_FULL"
+    Case VB_RS232_BUFFER_EMPTY
+      Return "VB_RS232_BUFFER_EMPTY"
+    Case VB_REALY_TIMER_BLINK
+      Return "VB_REALY_TIMER_BLINK"
+    Case VB_INTERFACE_STATUS
+      Return "VB_INTERFACE_STATUS"
+    Case VB_SLIDER_STATUS
+      Return "VB_SLIDER_STATUS"
+    Case VB_LAST_SLIDER_STATUS
+      Return "VB_LAST_SLIDER_STATUS"
+    Case VB_FORCED_OFF
+      Return "VB_FORCED_OFF"
+    Case VB_CANCEL_FORCED_OFF
+      Return "VB_CANCEL_FORCED_OFF"
+    Case VB_FORCED_ON
+      Return "VB_FORCED_ON"
+    Case VB_INHIBIT
+      Return "VB_INHIBIT"
+    Case VB_CANCEL_INHIBIT
+      Return "VB_CANCEL_INHIBIT"
+    Case VB_BLIND_SET
+      Return "VB_BLIND_SET"
+    Case VB_FIRMWARE_UPDATE
+      Return "VB_FIRMWARE_UPDATE"
+    Case VB_FIRMWARE_INFO
+      Return "VB_FIRMWARE_INFO"
+    Case VB_FIRMWARE_UPGRADE_ENTER
+      Return "VB_FIRMWARE_UPGRADE_ENTER"
+    Case VB_FIRMWARE_UPGRADE_ABORT
+      Return "VB_FIRMWARE_UPGRADE_ABORT"
+    Case VB_FIRMWARE_UPGRADE_EXIT
+      Return "VB_FIRMWARE_UPGRADE_EXIT"
+    Case VB_FIRMWARE_UPGRADE_START
+      Return "VB_FIRMWARE_UPGRADE_START"
+    Case VB_FIRMWARE_MEM_WRITE
+      Return "VB_FIRMWARE_MEM_WRITE"
+    Case VB_FIRMWARE_MEM
+      Return "VB_FIRMWARE_MEM"
+    Case VB_FIRMWARE_MEM_WRITE_CONFIRM
+      Return "VB_FIRMWARE_MEM_WRITE_CONFIRM"
+    Case VB_FIRMWARE_MEM_READ
+      Return "VB_FIRMWARE_MEM_READ"
+    Case VB_DISABLE_PROGRAM
+      Return "VB_DISABLE_PROGRAM"
+    Case VB_ENABLE_PROGRAM
+      Return "VB_ENABLE_PROGRAM"
+    Case VB_SELECT_PROGRAM
+      Return "VB_SELECT_PROGRAM"
+    Case VB_CLR_LEARN_MODE
+      Return "VB_CLR_LEARN_MODE"
+    Case VB_RF_CODE_STATUS
+      Return "VB_RF_CODE_STATUS"
+    Case VB_DATE
+      Return "VB_DATE"
+    Case VB_DIMMER_CONTROLLER_STATUS
+      Return "VB_DIMMER_CONTROLLER_STATUS"
+    Case VB_ENERGY_COUNTER
+      Return "VB_ENERGY_COUNTER"
+    Case VB_ALARM_CLOCK
+      Return "VB_ALARM_CLOCK"
+    Case VB_TEMP_SETTINGS_3
+      Return "VB_TEMP_SETTINGS_3"
+    Case VB_TEMP_SETTINGS_4
+      Return "VB_TEMP_SETTINGS_4"
+    Case VB_STATISTICS_REQUEST
+      Return "VB_STATISTICS_REQUEST"
+    Case VB_STATISTICS
+      Return "VB_STATISTICS"
+    Case VB_MEM_READ
+      Return "VB_MEM_READ"
+    Case VB_MEM_WRITE
+      Return "VB_MEM_WRITE"
+    Case VB_MEM_DUMP
+      Return "VB_MEM_DUMP"
+    Case VB_MEM_BLOCK
+      Return "VB_MEM_BLOCK"
+    Case VB_LCD_1
+      Return "VB_LCD_1"
+    Case VB_LCD_2
+      Return "VB_LCD_2"
+    Case VB_LCD_3
+      Return "VB_LCD_3"
+    Case VB_LCD_REQUEST
+      Return "VB_LCD_REQUEST"
+    Case VB_TIMER_ENABLE
+      Return "VB_TIMER_ENABLE"
+    Case VB_BACKLIGHT_RESET
+      Return "VB_BACKLIGHT_RESET"
+    Case VB_BACKLIGHT_BUTTON_RESET
+      Return "VB_BACKLIGHT_BUTTON_RESET"
+    Case VB_BACKLIGHT_BUTTON_SET
+      Return "VB_BACKLIGHT_BUTTON_SET"
+    Case VB_BACKLIGHT_STATUS
+      Return "VB_BACKLIGHT_STATUS"
+    Case VB_BACKLIGHT
+      Return "VB_BACKLIGHT"
+    Case VB_CLOCK_REQUEST
+      Return "VB_CLOCK_REQUEST"
+    Case VB_CLOCK
+      Return "VB_CLOCK"
+    Case VB_ERROR_COUNT_REQUEST
+      Return "VB_ERROR_COUNT_REQUEST"
+    Case VB_ERROR_COUNT
+      Return "VB_ERROR_COUNT"
+    Case VB_TEMP_COMFORT
+      Return "VB_TEMP_COMFORT"
+    Case VB_TEMP_DAY
+      Return "VB_TEMP_DAY"
+    Case VB_TEMP_NIGHT
+      Return "VB_TEMP_NIGHT"
+    Case VB_TEMP_SAFE
+      Return "VB_TEMP_SAFE"
+    Case VB_TEMP_COOLING
+      Return "VB_TEMP_COOLING"
+    Case VB_TEMP_HEATING
+      Return "VB_TEMP_HEATING"
+    Case VB_TEMP_LOCK
+      Return "VB_TEMP_LOCK"
+    Case VB_TEMP_UNLOCK
+      Return "VB_TEMP_UNLOCK"
+    Case VB_TIMER_SLEEP
+      Return "VB_TIMER_SLEEP"
+    Case VB_TEMP_SET
+      Return "VB_TEMP_SET"
+    Case VB_TEMP_REQUEST
+      Return "VB_TEMP_REQUEST"
+    Case VB_TEMP
+      Return "VB_TEMP"
+    Case VB_TEMP_SETTINGS_REQUEST
+      Return "VB_TEMP_SETTINGS_REQUEST"
+    Case VB_TEMP_SETTINGS_1
+      Return "VB_TEMP_SETTINGS_1"
+    Case VB_TEMP_SETTINGS_2
+      Return "VB_TEMP_SETTINGS_2"
+    Case VB_TEMP_STATUS
+      Return "VB_TEMP_STATUS"
+    Case VB_IR_STATUS
+      Return "VB_IR_STATUS"
+    Case VB_BLIND_STATUS
+      Return "VB_BLIND_STATUS"
+    Case VB_INPUT_STATUS
+      Return "VB_INPUT_STATUS"
+    Case VB_DIMMER_STATUS
+      Return "VB_DIMMER_STATUS"
+    Case VB_MODULE_NAME_REQUEST
+      Return "VB_MODULE_NAME_REQUEST"
+    Case VB_MODULE_NAME_1
+      Return "VB_MODULE_NAME_1"
+    Case VB_MODULE_NAME_2
+      Return "VB_MODULE_NAME_2"
+    Case VB_MODULE_NAME_3
+      Return "VB_MODULE_NAME_3"
+    Case VB_BLACKLIGHT_SET
+      Return "VB_BLACKLIGHT_SET"
+    Case VB_LED_STATUS
+      Return "VB_LED_STATUS"
+    Case VB_LED_CLEAR
+      Return "VB_LED_CLEAR"
+    Case VB_LED_SET
+      Return "VB_LED_SET"
+    Case VB_LED_BLINK_SLOW
+      Return "VB_LED_BLINK_SLOW"
+    Case VB_LED_BLINK_FAST
+      Return "VB_LED_BLINK_FAST"
+    Case VB_LED_BLINK_VERY_FAST
+      Return "VB_LED_BLINK_VERY_FAST"
+    Case VB_MODULE_STATUS
+      Return "VB_MODULE_STATUS"
+    Case VB_RELAY_STATUS
+      Return "VB_RELAY_STATUS"
+    Case VB_EEPROM_WRITE
+      Return "VB_EEPROM_WRITE"
+    Case VB_EEPROM_READ
+      Return "VB_EEPROM_READ"
+    Case VB_EEPROM_STATUS
+      Return "VB_EEPROM_STATUS"
+    Case VB_MODULE_TYPE
+      Return "VB_MODULE_TYPE"
+    Case VB_DAYLIGHT_SAVING
+      Return "VB_DAYLIGHT_SAVING"
+    Case VB_SUBTYPE
+      Return "VB_SUBTYPE"
+    Case VB_ENERGY_COUNTER_STATUS
+      Return "VB_ENERGY_COUNTER_STATUS"
+    Case Else
+      Return "UNKNOWN (" & Hex(bType, 2) & ")"
+  End Select
+
+End

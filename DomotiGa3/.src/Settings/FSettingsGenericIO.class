@@ -18,11 +18,53 @@ Public Sub Form_Open()
 
   Me.Move(FMain.X + 50, FMain.Y + 70)
 
-  ' TODO: add more instances
+  GetInstances()
+
+  ' always load first instance
   If LoadSettings(1) = False Then
-    ' TODO: Handle problems
+    Message.Error("Couldn't load settings for instance #1!")
     Try Me.Close
     Return
+  Endif
+
+  EnableDisableSettings()
+  btnSave.Enabled = False
+
+End
+
+
+Public Sub GetInstances()
+
+  Dim iMax As Integer = GetMaxInstanceforPlugin("genericio")
+  Dim iInstance As Integer
+
+  cmbInstance.Clear
+  If iMax Then
+    For iInstance = 1 To iMax
+      cmbInstance.Add("Instance #" & iInstance)
+    Next
+  Else
+    Message.Error("Couldn't find MaxInstances value for this plugin!")
+  Endif
+
+End
+
+Private Sub GetMaxInstanceforPlugin(sPluginName As String) As Integer
+
+  If Main.bServer Then
+    Return Plugin.GetPluginMaxInstances(sPluginName)
+  Else
+    ' FIXME: We are running in client/server mode - call json
+    Return 9
+  Endif
+
+End
+
+Public Sub cmbInstance_Click()
+
+  ' load selected instance, if not available load defaults
+  If LoadSettings(cmbInstance.Index + 1) = False Then
+    LoadSettings(0)
   Endif
 
   EnableDisableSettings()
@@ -50,15 +92,23 @@ End
 
 Public Sub btnSave_Click()
 
-  Dim rResult As Result
+  Dim rTest As Result
+  Dim iInstance As Integer = cmbInstance.Index + 1
 
-  ' save new GenericIO settings
-  rResult = Main.hDB.Exec("UPDATE settings_genericio SET debug = &1, type = &2, tcphost = &3, tcpport = &4, serialport = &5, baudrate = &6, enabled = &7, regex = &8, delimiter = &9 WHERE id = 1", chkDebug.Value, cmbType.Text, txtTCPHost.Text, txtTCPPort.Text, txtSerialPort.Text, cmbBaudrate.Text, chkEnabled.Value, txtRegex.Text, txtDelimiter.Text)
+  ' test if instance is already present
+  rTest = Main.hDB.Exec("SELECT * from settings_genericio WHERE id = &1", iInstance)
+  If rTest.Count = 1 Then
+    ' update settings
+     Main.hDB.Exec("UPDATE settings_genericio SET debug = &1, type = &2, tcphost = &3, tcpport = &4, serialport = &5, baudrate = &6, enabled = &7, regex = &8, delimiter = &9 WHERE id = &{10}", chkDebug.Value, cmbType.Text, txtTCPHost.Text, txtTCPPort.Text, txtSerialPort.Text, cmbBaudrate.Text, chkEnabled.Value, txtRegex.Text, txtDelimiter.Text, iInstance)
+  Else
+    ' insert settings
+    Main.hDB.Exec("INSERT INTO settings_genericio (debug, type, tcphost, tcpport, serialport, baudrate, enabled, regex, delimiter, id) values (&1, &2, &3, &4, &5, &6, &7, &8, &9, &{10})", chkDebug.Value, cmbType.Text, txtTCPHost.Text, txtTCPPort.Text, txtSerialPort.Text, cmbBaudrate.Text, chkEnabled.Value, txtRegex.Text, txtDelimiter.Text, iInstance)
+  Endif
 
   If Main.bServer Then
-    Plugin.Restart("GenericIO", 1)
+    Plugin.Restart("GenericIO", iInstance)
   Else
-    Client.ModuleRestart("GenericIO")
+    Client.Plugin_Restart("GenericIO", iInstance)
   Endif
 
   Me.Close
@@ -112,7 +162,7 @@ End
 
 Public Sub txtRegex_Change()
 
-  btnTest_Click()
+  TestRegEx()
 
 End
 
@@ -124,29 +174,28 @@ End
 
 Public Sub txtDelimiter_Change()
 
-  btnTest_Click()
+  TestRegEx()
 
 End
 
 Public Sub txtInputTest_Change()
 
-  btnTest_Click()
+  TestRegEx()
 
 End
 
 Public Sub txtDeviceAddress_Change()
 
-  btnTest_Click()
+  TestRegEx()
 
 End
 
-Public Sub btnTest_Click()
+Public Sub TestRegEx()
 
   Dim aScan, aValueToUpdate As String[]
-  Dim sLine, sSingleAddress, sAddress, sRegexExpression, sAddressToChange, sValueFields As String
-  Dim iDeviceId, iValueToUpdate As Integer
+  Dim sAddress, sAddressToChange, sValueFields As String
+  Dim iValueToUpdate, iAddressPosition As Integer
   Dim rRegex As Regexp
-  Dim iAddressPosition As Integer
 
   txtValue1.Text = ""
   txtValue2.Text = ""
@@ -186,7 +235,7 @@ Public Sub btnTest_Click()
       End Select
     Case 2
       txtValue1.Text = Trim(aValueToUpdate[0])
-      txtValue3.Text = Trim(aValueToUpdate[1])
+      txtValue2.Text = Trim(aValueToUpdate[1])
     Case 3
       txtValue1.Text = Trim(aValueToUpdate[0])
       txtValue2.Text = Trim(aValueToUpdate[1])
@@ -263,6 +312,8 @@ Private Sub EnableDisableSettings()
   cmbBaudrate.Enabled = chkEnabled.Value
   txtRegex.Enabled = chkEnabled.Value
   txtDelimiter.Enabled = chkEnabled.Value
+  btnSave.Enabled = chkEnabled.Value
+  btnSerial.Enabled = chkEnabled.Value
   If chkEnabled.Value Then SetButtons()
 
 End
@@ -277,13 +328,26 @@ Public Sub SetButtons()
     cmbBaudrate.Enabled = False
     txtTCPHost.Enabled = True
     txtTCPPort.Enabled = True
+    btnSave.Enabled = False
+    btnSerial.Enabled = False
   Endif
   If cmbType.Text = "serial" Then
     txtSerialPort.Enabled = True
     cmbBaudrate.Enabled = True
     txtTCPHost.Enabled = False
     txtTCPPort.Enabled = False
+    btnSave.Enabled = True
+    btnSerial.Enabled = True
   Endif
 
 End
 
+Public Sub btnSerial_Click()
+
+  Dim sSerialPort As String
+
+  sSerialPort = FToolsSerialPorts.Run()
+  If sSerialPort Then txtSerialPort.Text = sSerialPort
+  btnSave.Enabled = True
+
+End

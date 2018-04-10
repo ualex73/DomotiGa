@@ -79,7 +79,7 @@ Public Sub btnSave_Click()
   If Main.bServer Then
     Plugin.Restart("RFXComTRX", 1)
   Else
-    Client.ModuleRestart("RFXComTRX")
+    Client.Plugin_Restart("RFXComTRX")
   Endif
 
   FMain.UpdateStatusPanel()
@@ -163,7 +163,7 @@ Private Sub EnableDisableSettings()
   chkRelayEnabled.Enabled = chkEnabled.Value
   txtRelayPort.Enabled = chkEnabled.Value And chkRelayEnabled.Value
   chkOldAddrFmt.Enabled = chkEnabled.Value
-
+  btnSerial.Enabled = chkEnabled.Value
   If chkEnabled.Value Then SetButtons()
 
 End
@@ -189,3 +189,12 @@ Public Sub SetButtons()
 
 End
 
+Public Sub btnSerial_Click()
+
+  Dim sSerialPort As String
+
+  sSerialPort = FToolsSerialPorts.Run()
+  If sSerialPort Then txtSerialPort.Text = sSerialPort
+  btnSave.Enabled = True
+
+End

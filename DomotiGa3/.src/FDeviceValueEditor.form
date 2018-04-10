@@ -6,171 +6,199 @@
   Text = ("Add Device Value")
   Icon = Picture["icons/devices.png"]
   Resizable = False
-  { tabDevice TabStrip
+  { btnSave Button
+    MoveScaled(43,55,12,4)
+    Enabled = False
+    Text = ("Save")
+  }
+  { btnCancel Button
+    MoveScaled(56,55,12,4)
+    Text = ("Cancel")
+  }
+  { btnDeleteDevice Button
+    MoveScaled(2,55,12,4)
+    Text = ("Delete")
+  }
+  { tabPanelDeviceValue TabPanel
     MoveScaled(1,1,68,53)
     Count = 4
     Index = 0
     Text = ("Main")
-    { Frame1 Frame
-      MoveScaled(1,1,65,20)
+    { Frame3 Frame
+      MoveScaled(1,21,65,10)
+      Expand = True
       Text = ("Device")
       { TextLblDeviceId TextLabel
-        MoveScaled(1,3,9,3)
+        MoveScaled(1,3,9,4)
         Text = ("Device Id")
         Alignment = Align.Normal
       }
       { tbDeviceId TextBox
-        MoveScaled(11,3,7,3)
-        ReadOnly = True
-      }
-      { LblValueNum Label
-        MoveScaled(29,3,13,3)
-        Text = ("Value number")
-      }
-      { tbValuenum TextBox
-        MoveScaled(42,3,5,3)
+        MoveScaled(10,3,7,4)
         ReadOnly = True
       }
       { LblName Label
-        MoveScaled(1,7,9,3)
+        MoveScaled(19,3,9,4)
         Text = ("Name")
       }
       { tbName TextBox
-        MoveScaled(11,7,36,3)
+        MoveScaled(28,3,36,4)
         ReadOnly = True
       }
+    }
+    { Frame1 Frame
+      MoveScaled(1,1,65,19)
+      Text = ("Value")
       { LblValue Label
-        MoveScaled(1,11,9,3)
+        MoveScaled(0,8,9,4)
         Text = ("Value")
       }
       { tbValue TextBox
-        MoveScaled(11,11,41,3)
+        MoveScaled(10,8,41,4)
       }
       { cmbUnits ComboBox
-        MoveScaled(53,11,10,3)
-        List = [(""), ("°"), ("°C"), ("°F"), ("%"), ("Ampere"), ("Count"), ("hPa"), ("Volt"), ("kWh"), ("kg"), ("W"), ("Wh"), ("Watt"), ("Level"), ("lb"), ("RSSI"), ("m/s"), ("mbar"), ("mm"), ("mm/hr"), ("m3"), ("Speed")]
-      }
-      { LblCorrection Label
-        MoveScaled(1,15,9,3)
-        Text = ("Correction")
-      }
-      { tbCorrection TextBox
-        MoveScaled(11,15,36,3)
-      }
-      { LblResult Label
-        MoveScaled(48,15,2,3)
-        Text = ("=")
+        MoveScaled(52,8,12,4)
+        List = [("°"), ("°C"), ("°F"), ("%"), ("€"), ("$"), ("Ampere"), ("Count"), ("hPa"), ("Volt"), ("kWh"), ("km/h"), ("kg"), ("W"), ("Wh"), ("Watt"), ("Level"), ("lb"), ("lux"), ("RSSI"), ("m/s"), ("mbar"), ("mm"), ("mm/hr"), ("m3"), ("Speed"), ("ppm")]
       }
       { tbResult TextBox
-        MoveScaled(50,15,13,3)
+        MoveScaled(51,13,13,4)
+      }
+      { tbCorrection TextBox
+        MoveScaled(10,13,36,4)
+      }
+      { LblCorrection Label
+        MoveScaled(0,13,9,4)
+        Text = ("Correction")
+      }
+      { LblResult Label
+        MoveScaled(47,13,3,4)
+        Text = ("=")
+        Alignment = Align.Center
+      }
+      { vbValueNum ValueBox
+        MoveScaled(10,3,5,4)
+      }
+      { LblValueNum Label
+        MoveScaled(0,3,9,4)
+        Text = ("Number")
       }
     }
     { Frame4 Frame
-      MoveScaled(1,22,65,12)
+      MoveScaled(1,32,65,14)
       Text = ("Status")
       { LblSeenLast Label
-        MoveScaled(2,3,9,3)
+        MoveScaled(2,3,16,4)
         Text = ("Seen Last")
       }
       { tbLastSeen TextBox
-        MoveScaled(16,3,21,3)
+        MoveScaled(19,3,21,4)
         ReadOnly = True
       }
       { LblLastChanged Label
-        MoveScaled(2,7,12,3)
+        MoveScaled(2,8,16,4)
         Text = ("Last Changed")
       }
       { tbLastChanged TextBox
-        MoveScaled(16,7,21,3)
+        MoveScaled(19,8,21,4)
         ReadOnly = True
       }
     }
     Index = 1
+    Text = ("Options")
+    { FDeviceEditorOptions Frame
+      MoveScaled(1,1,65,24)
+      Text = ("Options")
+      { chkLog CheckBox
+        MoveScaled(2,11,31,4)
+        Text = ("Log value history to database")
+      }
+      { chkLogDisplay CheckBox
+        MoveScaled(2,15,31,4)
+        Text = ("Display status changes")
+      }
+      { chkLogSpeak CheckBox
+        MoveScaled(2,19,31,4)
+        Text = ("Speak status changes")
+      }
+      { chkControllable CheckBox
+        MoveScaled(2,3,31,4)
+        ToolTip = ("This value can be controlled (switch/dim/etc)")
+        Text = ("Controllable")
+      }
+      { chkFeedback CheckBox
+        MoveScaled(2,7,31,4)
+        ToolTip = ("Value gets update by plugin")
+        Text = ("Feedback")
+      }
+    }
+    { Frame6 Frame
+      MoveScaled(1,27,65,17)
+      Text = ("Description")
+      { tbDescription TextArea
+        MoveScaled(2,4,61,11)
+      }
+    }
+    Index = 2
     Text = ("Graphs")
     { Frame7 Frame
-      MoveScaled(1,1,65,11)
+      MoveScaled(1,1,65,12)
       Text = ("RRDTool")
       { chkRRD CheckBox
-        MoveScaled(2,3,27,3)
+        MoveScaled(2,3,27,4)
         Text = ("Log RRD data")
       }
       { chkGraph CheckBox
-        MoveScaled(2,6,27,3)
+        MoveScaled(2,7,27,4)
         Text = ("Enable simple graphing")
       }
       { btnDeleteRRD Button
-        MoveScaled(43,3,14,3)
+        MoveScaled(43,3,14,4)
         Text = ("Delete RRD")
       }
     }
     { Frame8 Frame
-      MoveScaled(1,12,65,9)
+      MoveScaled(1,15,65,9)
       Text = ("Value")
       { TextLabel6 TextLabel
-        MoveScaled(2,3,16,3)
+        MoveScaled(2,3,16,4)
         Text = ("DataSource Name")
+        Alignment = Align.Normal
       }
       { tbValueDS TextBox
-        MoveScaled(19,3,13,3)
+        MoveScaled(19,3,13,4)
       }
       { TextLabel7 TextLabel
-        MoveScaled(37,3,5,3)
+        MoveScaled(37,3,5,4)
         Text = ("Type")
+        Alignment = Align.Normal
       }
       { cmbValueType ComboBox
-        MoveScaled(43,3,14,3)
+        MoveScaled(43,3,14,4)
         ReadOnly = True
         List = [(""), ("GAUGE"), ("COUNTER"), ("DERIVE"), ("ABSOLUTE")]
-      }
-    }
-    Index = 2
-    Text = ("Options")
-    { FDeviceEditorOptions Frame
-      MoveScaled(1,1,65,36)
-      Text = ("Options")
-      { chkLog CheckBox
-        MoveScaled(2,4,38,3)
-        Text = ("Log status changes to db")
-      }
-      { chkLogDisplay CheckBox
-        MoveScaled(2,7,38,3)
-        Text = ("Display status changes")
-      }
-      { chkLogSpeak CheckBox
-        MoveScaled(2,10,38,3)
-        Text = ("Speak status changes")
       }
     }
     Index = 3
     Text = ("Log")
     { Frame14 Frame
-      MoveScaled(1,2,65,40)
+      MoveScaled(1,0,65,48)
       { DataSourceLog DataSource
-        MoveScaled(1,1,63,38)
+        MoveScaled(1,1,63,40)
         Table = "device_values_log"
         { DataBrowserLog DataBrowser
-          MoveScaled(0,1,63,37)
+          MoveScaled(0,1,63,38)
           Columns = ["lastchanged", "value"]
         }
       }
     }
+    { btnDeleteLogValue Button
+      MoveScaled(20,43,17,4)
+      Text = ("Erase this Value")
+    }
     { btnDeleteLog Button
-      MoveScaled(2,43,12,4)
-      Text = ("Erase Log")
+      MoveScaled(2,43,17,4)
+      Text = ("Erase All Values")
     }
     Index = 0
-  }
-  { btnSave Button
-    MoveScaled(42,55,12,4)
-    Enabled = False
-    Text = ("Save")
-  }
-  { btnCancel Button
-    MoveScaled(55,55,12,4)
-    Text = ("Cancel")
-  }
-  { btnDeleteDevice Button
-    MoveScaled(1,55,12,4)
-    Text = ("Delete")
   }
 }

@@ -51,6 +51,7 @@ Public Sub chkDebug_Click()
   btnSave.Enabled = True
 
 End
+
 Public Sub btnSave_Click()
 
   Dim rResult As Result
@@ -61,7 +62,7 @@ Public Sub btnSave_Click()
   If Main.bServer Then
     Plugin.Restart("DMXPlayer", 1)
   Else
-    Client.ModuleRestart("DMXPlayer")
+    Client.Plugin_Restart("DMXPlayer")
   Endif
 
   Me.Close
@@ -78,6 +79,7 @@ End
 Public Sub chkEnabled_Click()
 
   EnableDisableSettings()
+  btnSerial.Enabled = chkEnabled.Value
   btnSave.Enabled = True
 
 End
@@ -111,6 +113,16 @@ Private Sub EnableDisableSettings()
   txtSerialPort.Enabled = chkEnabled.Value
   cmbBaudrate.Enabled = chkEnabled.Value
   chkDebug.Enabled = chkEnabled.Value
+  btnSerial.Enabled = chkEnabled.Value
 
 End
 
+Public Sub btnSerial_Click()
+
+  Dim sSerialPort As String
+
+  sSerialPort = FToolsSerialPorts.Run()
+  If sSerialPort Then txtSerialPort.Text = sSerialPort
+  btnSave.Enabled = True
+
+End

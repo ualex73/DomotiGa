@@ -1,11 +1,11 @@
-' Gambas Class file
+' Gambas class file
 
 ' Description:
 ' CBluetooth.class
 ' Support for Bluetooth proximity, see if a user is around by checking his bluetooth device(s).
 
 ' Development Status:
-' Works.
+' Working
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -16,7 +16,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Bluetooth"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "Bluetooth"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -25,6 +24,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[Bluetooth] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -44,7 +44,7 @@ Public tBluetooth As Timer
 Private cOutput As New Collection
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -62,15 +62,20 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $iPollTime = cPl.Settings["polltime"]
   $bDebug = cPl.Settings["debug"]
 
+  InterfaceId = Devices.FindInterface("Bluetooth Dongle")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
   ' Check if bluetooth binary exists
   If CheckBinary() Then
-
     ' Initialize timer
     Run()
-
     IsRunning = True
   Else
-
     ' Disable bluetooth
     cPl.Settings["enabled"] = False
   Endif
@@ -78,7 +83,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -91,7 +96,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function CheckBinary() As Boolean
 
-  If Main.ProgramExist("hcitool") Then
+  If Util.ProgramExist("hcitool") Then
     Return True
   Else
     Main.WriteLog(LogLabel & "ERROR: command 'hcitool' not found, did you install it?")
@@ -135,31 +140,29 @@ Private Sub CheckBluetooth()
   Dim sRSSI, sProx As String
 
   ' get all enabled devices of type blutooth
-  rResult = Devices.FindDevicesForInterface(Devices.FindInterface("Bluetooth Dongle"))
-  If rResult.Available Then
-    If rResult.Count >= 1 Then
-      ' check each device
-      For Each rResult
-        iDeviceId = rResult!id
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking device named '" & rResult!name & "' with address '" & rResult!address & "'.")
-        ' check device for signal strenght
-        sRSSI = GetRSSI(rResult!address)
-        If $bDebug Then Main.WriteDebugLog(LogLabel & Replace(sRSSI, gb.NewLine, ""))
-        If TypeOf(Val(sRSSI)) = gb.Integer Then
-          iRSSI = TypeOf(Val(sRSSI)) = gb.Integer
-          sProx = IIf(iRSSI > $iThreshold, "Near", "Far")
-          If iDeviceId Then
-            Devices.ValueUpdateExt(iDeviceId, 1, sProx)
-            Devices.ValueUpdateExt(iDeviceId, 2, Val(sRSSI))
-          Endif
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Got RSSI value " & iRSSI)
-        Else
-          If iDeviceId Then Devices.ValueUpdateExt(iDeviceId, 1, "Away")
+  rResult = Devices.FindDevicesForInterface(InterfaceId, Instance)
+  If rResult And If rResult.Available Then
+    ' check each device
+    For Each rResult
+      iDeviceId = rResult!id
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking device named '" & rResult!name & "' with address '" & rResult!address & "'.")
+      ' check device for signal strenght
+      sRSSI = GetRSSI(rResult!address)
+      If $bDebug Then Main.WriteDebugLog(LogLabel & Replace(sRSSI, gb.NewLine, ""))
+      If TypeOf(Val(sRSSI)) = gb.Integer Then
+        iRSSI = TypeOf(Val(sRSSI)) = gb.Integer
+        sProx = IIf(iRSSI > $iThreshold, "Near", "Far")
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, sProx)
+          Devices.ValueUpdate(iDeviceId, 2, Val(sRSSI))
         Endif
-      Next
-    Else
-      Main.WriteLog(LogLabel & "No Bluetooth device(s) found in device table!")
-    Endif
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Got RSSI value " & iRSSI)
+      Else
+        If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Away")
+      Endif
+    Next
+  Else
+    Main.WriteLog(LogLabel & "No Bluetooth device(s) found in device table!")
   Endif
 
 End
@@ -173,17 +176,15 @@ Private Function ScanBluetooth() As String
 
   If $bDebug Then Main.WriteDebugLog(LogLabel & "Starting device scan.")
 
-  rResult = Devices.FindDevicesForInterface(Devices.FindInterface("Bluetooth Dongle"))
-  If rResult.Available Then
-    If rResult.Count >= 1 Then
-      ' check each device
-      For Each rResult
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking '" & rResult!name & "' with address '" & rResult!address & "'.")
-        BluetoothName(rResult!id, rResult!address)
-      Next
-    Else
-      Main.WriteLog(LogLabel & "No Bluetooth devices found in device table!")
-    Endif
+  rResult = Devices.FindDevicesForInterface(InterfaceId, Instance)
+  If rResult And If rResult.Available Then
+    ' check each device
+    For Each rResult
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking '" & rResult!name & "' with address '" & rResult!address & "'.")
+      BluetoothName(rResult!id, rResult!address)
+    Next
+  Else
+    Main.WriteLog(LogLabel & "No Bluetooth devices found in device table!")
   Endif
 
 Catch
@@ -237,7 +238,7 @@ Public Sub Bluetooth_Kill()
       sStatus = ("Away")
     Endif
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Device with id '" & iDeviceId & "' is '" & sStatus & "'.")
-    Devices.ValueUpdateExt(iDeviceId, 1, sStatus)
+    Devices.ValueUpdate(iDeviceId, 1, sStatus)
   Endif
 
 End

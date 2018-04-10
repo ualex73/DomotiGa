@@ -1,69 +1,79 @@
 # Gambas Form File 3.0
 
 { Form Form
-  MoveScaled(0,0,45,31)
+  MoveScaled(0,0,47,38)
   Background = Color.TextBackground
   Text = ("Setup")
   Icon = Picture["icons/oww.png"]
   Resizable = False
   { FrameSettingsOww Frame
-    MoveScaled(1,0,43,30)
+    MoveScaled(1,1,45,36)
     Text = ("1-Wire Weather Station Settings")
     { TextLblModuleEnabled TextLabel
-      MoveScaled(20,3,17,3)
-      Text = ("Module Enabled")
+      MoveScaled(31,4,9,4)
+      Text = ("Enabled")
       Alignment = Align.Right
     }
     { chkEnabled CheckBox
-      MoveScaled(38,3,3,3)
+      MoveScaled(41,4,3,4)
     }
     { TextLblServerType TextLabel
-      MoveScaled(2,7,11,3)
-      Text = ("Server Type")
+      MoveScaled(2,9,12,4)
+      Text = ("ServerType")
       Alignment = Align.Normal
     }
     { cmbServer ComboBox
-      MoveScaled(14,7,27,3)
+      MoveScaled(15,9,26,4)
       Background = Color.Background
       ReadOnly = True
       List = [("Henriksen WServer TCP"), ("Henriksen WServer UDP"), ("Oww text-format")]
     }
     { TextLblTCPHost TextLabel
-      MoveScaled(2,11,11,3)
+      MoveScaled(2,14,12,4)
       Text = ("IP Host")
       Alignment = Align.Normal
     }
     { txtTCPHost TextBox
-      MoveScaled(14,11,27,3)
+      MoveScaled(15,14,26,4)
     }
     { TextLblTCPPort TextLabel
-      MoveScaled(2,15,11,3)
+      MoveScaled(2,19,12,4)
       Text = ("IP Port")
       Alignment = Align.Normal
     }
-    { txtTCPPort TextBox
-      MoveScaled(14,15,7,3)
-    }
     { TextLblDebug TextLabel
-      MoveScaled(2,19,11,3)
+      MoveScaled(2,24,12,4)
       Text = ("Debug")
       Alignment = Align.Normal
     }
     { chkDebug CheckBox
-      MoveScaled(14,19,3,3)
+      MoveScaled(15,24,3,4)
     }
     { btnDefaults Button
-      MoveScaled(2,24,12,4)
+      MoveScaled(2,30,12,4)
       Text = ("Defaults")
     }
     { btnSave Button
-      MoveScaled(16,24,12,4)
+      MoveScaled(18,30,12,4)
       Enabled = False
       Text = ("Save")
     }
     { btnCancel Button
-      MoveScaled(29,24,12,4)
+      MoveScaled(31,30,12,4)
       Text = ("Cancel")
+    }
+    { txtTCPPort ValueBox
+      MoveScaled(15,19,7,4)
+    }
+    { cmbInstance ComboBox
+      MoveScaled(15,4,15,4)
+      ReadOnly = True
+      Sorted = True
+    }
+    { TextLblDebug3 TextLabel
+      MoveScaled(2,4,12,4)
+      Text = ("Instance")
+      Alignment = Align.Normal
     }
   }
 }

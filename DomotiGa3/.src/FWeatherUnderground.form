@@ -1,69 +1,72 @@
 # Gambas Form File 3.0
 
 { Form Form
-  MoveScaled(0,0,119,68.25)
+  MoveScaled(0,0,105,64)
   Background = Color.SelectedForeground
   Text = ("Weather")
   Icon = Picture["icons/weather.png"]
   SkipTaskbar = True
-  { TabStrip1 TabStrip
-    MoveScaled(0,0,99.75,62.125)
+  { TextAreaMsg TextArea
+    MoveScaled(1,2,75,13)
+  }
+  { TabPanelWeatherUnderground TabPanel
+    MoveScaled(1,1,103,62)
     Tag = "True"
     Count = 4
     Index = 0
     Text = ("Live Weather")
-    { Frame1 Frame
-      MoveScaled(1,1,48,32)
+    { FrmLiveGeneral Frame
+      MoveScaled(1,1,48,42)
       Text = ("General")
       { TxtTemp TextBox
-        MoveScaled(17,3,11,3)
+        MoveScaled(17,3,11,4)
         ReadOnly = True
         Border = False
       }
-      { Label2 Label
-        MoveScaled(1,3,11.375,2.625)
-        Text = ("Temperature:")
+      { LblLiveTemperature Label
+        MoveScaled(1,3,15,4)
+        Text = ("Temperature")
       }
       { TxtWindDir TextBox
-        MoveScaled(30,26.25,16.625,2.625)
+        MoveScaled(31,28,17,4)
         Font = Font["-1"]
         Alignment = Align.Center
         ReadOnly = True
         Border = False
       }
-      { TxtWindMph TextBox
-        MoveScaled(17,7,11,3)
+      { TxtWind TextBox
+        MoveScaled(17,7,11,4)
         ReadOnly = True
         Border = False
       }
-      { Label5 Label
-        MoveScaled(1,7,11.375,2.625)
-        Text = ("Wind:")
+      { LblLiveWind Label
+        MoveScaled(1,7,15,4)
+        Text = ("Wind")
       }
       { PicCurrentWeather PictureBox
         MoveScaled(34,3,10,10)
         Stretch = True
       }
-      { Label6 Label
-        MoveScaled(1,17,15.75,2.625)
-        Text = ("Relative Humidity:")
+      { LblLiveRelativeHumidity Label
+        MoveScaled(1,21,15.75,3)
+        Text = ("Rel Humidity")
       }
       { TxtRelativeHumidity TextBox
-        MoveScaled(17,17,11,3)
+        MoveScaled(17,20,11,4)
         ReadOnly = True
         Border = False
       }
-      { Label13 Label
-        MoveScaled(1,20,14,2.625)
+      { LblLivePressure Label
+        MoveScaled(1,24,15,4)
         Text = ("Pressure")
       }
       { TxtPressureMb TextBox
-        MoveScaled(17,20,11,3)
+        MoveScaled(17,24,11,4)
         ReadOnly = True
         Border = False
       }
       { TxtWeather TextBox
-        MoveScaled(30,11.375,16.625,2.625)
+        MoveScaled(31,13,17,4)
         Font = Font["-1"]
         Alignment = Align.Center
         ReadOnly = True
@@ -73,157 +76,157 @@
         MoveScaled(28,2,1.75,28)
       }
       { PicWindDir PictureBox
-        MoveScaled(34,17,10,10)
+        MoveScaled(34,18,10,10)
         Stretch = True
       }
       { TxtWindMs TextBox
-        MoveScaled(17,10,11,3)
+        MoveScaled(17,11,11,4)
         ReadOnly = True
         Border = False
       }
       { TxtWindBeaufort TextBox
-        MoveScaled(17,13,11,3)
+        MoveScaled(17,15,11,4)
         ReadOnly = True
         Border = False
       }
-      { Label3 Label
-        MoveScaled(1,23,10.5,2.625)
-        Text = ("Heat Index:")
+      { LblLiveHeatIndex Label
+        MoveScaled(1,28,15,4)
+        Text = ("Heat Index")
       }
-      { TxtHeatIndexC TextBox
-        MoveScaled(17,23,11,3)
+      { TxtHeatIndex TextBox
+        MoveScaled(17,28,11,4)
         ReadOnly = True
         Border = False
       }
-      { Label9 Label
-        MoveScaled(1,26,10.5,2.375)
-        Text = ("Wind Chill:")
+      { LblLiveWindChill Label
+        MoveScaled(1,32,15,4)
+        Text = ("Wind Chill")
       }
       { TxtWindchill TextBox
-        MoveScaled(17,26,11,3)
+        MoveScaled(17,32,11,4)
         ReadOnly = True
         Border = False
       }
     }
-    { Frame2 Frame
-      MoveScaled(51,1,43.75,12.25)
+    { FrmLiveExtra Frame
+      MoveScaled(51,1,50,16)
       Text = ("Extra")
-      { TxtWindGustMph TextBox
-        MoveScaled(32.375,1.75,10,3)
+      { TxtWindGust TextBox
+        MoveScaled(38,3,11,4)
         ReadOnly = True
         Border = False
       }
       { Label7 Label
-        MoveScaled(21.875,1.75,9.625,2.625)
-        Text = ("Wind Gust:")
+        MoveScaled(27,3,10,4)
+        Text = ("Wind Gust")
       }
       { TxtWindDegrees TextBox
-        MoveScaled(14,5,8,3)
+        MoveScaled(15,7,10,4)
         ReadOnly = True
         Border = False
       }
-      { Label8 Label
-        MoveScaled(0.875,5.25,11.375,2.625)
-        Text = ("Wind Degrees:")
+      { LblLiveWindDegrees Label
+        MoveScaled(1,7,13,4)
+        Text = ("Wind Degrees")
       }
-      { Label17 Label
-        MoveScaled(0.875,1.75,11.375,2.625)
+      { LblLiveDewPoint Label
+        MoveScaled(1,3,13,4)
         Text = ("Dew Point")
       }
       { TxtDewPoint TextBox
-        MoveScaled(14,2,8,3)
+        MoveScaled(15,3,10,4)
         ReadOnly = True
         Border = False
       }
       { TxtWindGustMs TextBox
-        MoveScaled(33,5,10,3)
+        MoveScaled(38,7,11,4)
         ReadOnly = True
         Border = False
       }
       { TxtWindGustBeaufort TextBox
-        MoveScaled(33,8,10,3)
+        MoveScaled(38,11,11,4)
         ReadOnly = True
         Border = False
       }
       { Separator7 Separator
-        MoveScaled(21,2,1.75,9.625)
+        MoveScaled(25,2,1.75,9.625)
       }
-      { Label11 Label
-        MoveScaled(0.875,8.75,10.5,2.625)
+      { LblLiveVisibility Label
+        MoveScaled(1,11,14,4)
         Text = ("Visibility")
       }
       { TxtVisibilityKm TextBox
-        MoveScaled(12,8,10,3)
+        MoveScaled(15,11,10,4)
         ReadOnly = True
         Border = False
       }
     }
-    { Frame6 Frame
-      MoveScaled(51,26,44,9)
+    { FrmLiveWeatherInfo Frame
+      MoveScaled(51,38,49,15)
       Text = ("Weather Station info")
       { TxtWeather2 TextBox
         MoveScaled(46.375,15.75,9.625,2.625)
         Border = False
       }
       { TxtStationLocation TextBox
-        MoveScaled(0.875,1.75,31,3)
+        MoveScaled(1,3,31,4)
         ReadOnly = True
         Border = False
       }
       { TxtTimeUpdate TextBox
-        MoveScaled(1,5,31,3)
+        MoveScaled(1,8,31,4)
         ReadOnly = True
         Border = False
       }
     }
-    { Astronomy Frame
-      MoveScaled(51,13.875,43.75,5.25)
+    { FrmLiveAstro Frame
+      MoveScaled(51,18,50,8)
       Text = ("Astronomy")
-      { Label20 Label
-        MoveScaled(21.875,1.75,10.5,2.625)
+      { LblLiveMoonPhase Label
+        MoveScaled(27,3,11,4)
         Text = ("Moon Phase")
       }
       { TxtPercentIlluminated TextBox
-        MoveScaled(33,2,9,3)
+        MoveScaled(39,3,10,4)
         ReadOnly = True
         Border = False
       }
       { TxtAgeOfMoon TextBox
-        MoveScaled(11.375,1.75,9,3)
+        MoveScaled(15,3,10,4)
         ReadOnly = True
         Border = False
       }
-      { Label21 Label
-        MoveScaled(0.875,1.75,10.5,2.625)
+      { LblLiveMoonAge Label
+        MoveScaled(1,3,11,4)
         Text = ("Moon Age")
       }
       { Separator6 Separator
-        MoveScaled(20.125,1.75,1.75,2.625)
+        MoveScaled(25,3,1.75,2.625)
       }
     }
-    { Frame4 Frame
-      MoveScaled(51,20,43.75,5.25)
+    { FrmLiveRain Frame
+      MoveScaled(51,28,50,8)
       Text = ("Rain")
       { Label12 Label
-        MoveScaled(21.875,1.75,7.875,2.625)
+        MoveScaled(27,3,10,4)
         Text = ("Today")
       }
-      { Label10 Label
-        MoveScaled(0.875,1.75,11.375,2.625)
+      { LblLiveLastHour Label
+        MoveScaled(1,3,11,4)
         Text = ("Last hour")
       }
-      { TxtPrecip1hrMetric TextBox
-        MoveScaled(14,2,6.125,2.625)
+      { TxtPrecip1hr TextBox
+        MoveScaled(15,3,10,4)
         ReadOnly = True
         Border = False
       }
-      { TxtPrecipTodayMetric TextBox
-        MoveScaled(32.375,1.75,11,3)
+      { TxtPrecipToday TextBox
+        MoveScaled(38,3,11,4)
         ReadOnly = True
         Border = False
       }
       { Separator8 Separator
-        MoveScaled(20.125,1.75,1.75,2.625)
+        MoveScaled(25,3,1.75,2.625)
       }
     }
     Index = 1
@@ -243,22 +246,6 @@
       { Separator5 Separator
         MoveScaled(73.5,1.75,1.75,18.375)
       }
-      { PicFor2 PictureBox
-        MoveScaled(42.875,7,6.25,6.25)
-        Stretch = True
-      }
-      { PicFor3 PictureBox
-        MoveScaled(61.25,7,6.25,6.25)
-        Stretch = True
-      }
-      { PicWindDir6 PictureBox
-        MoveScaled(131.25,-35,6.25,6.25)
-        Stretch = True
-      }
-      { PicFor1 PictureBox
-        MoveScaled(24.5,7,6.25,6.25)
-        Stretch = True
-      }
       { PicFor0 PictureBox
         MoveScaled(6.125,7,6.25,6.25)
         Stretch = True
@@ -270,6 +257,21 @@
         Border = False
         ScrollBar = Scroll.None
       }
+      { PicFor1 PictureBox
+        MoveScaled(24.5,7,6.25,6.25)
+        Stretch = True
+      }
+      { TextArea1 TextArea
+        MoveScaled(20,14,17,23)
+        ReadOnly = True
+        Wrap = True
+        Border = False
+        ScrollBar = Scroll.None
+      }
+      { PicFor2 PictureBox
+        MoveScaled(42.875,7,6.25,6.25)
+        Stretch = True
+      }
       { TextArea2 TextArea
         MoveScaled(38,14,17,23)
         ReadOnly = True
@@ -277,15 +279,12 @@
         Border = False
         ScrollBar = Scroll.None
       }
+      { PicFor3 PictureBox
+        MoveScaled(61.25,7,6.25,6.25)
+        Stretch = True
+      }
       { TextArea3 TextArea
         MoveScaled(57,14,17,23)
-        ReadOnly = True
-        Wrap = True
-        Border = False
-        ScrollBar = Scroll.None
-      }
-      { TextArea4 TextArea
-        MoveScaled(75,14,18,23)
         ReadOnly = True
         Wrap = True
         Border = False
@@ -295,37 +294,41 @@
         MoveScaled(79.625,7,6.25,6.25)
         Stretch = True
       }
-      { Label4 Label
-        MoveScaled(0.875,2.625,17.5,2.625)
-        Text = ("Today")
-        Alignment = Align.Center
-      }
-      { Label15 Label
-        MoveScaled(19.25,2.625,17.5,2.625)
-        Text = ("Tonight")
-        Alignment = Align.Center
-      }
-      { Label16 Label
-        MoveScaled(37.625,2.625,17.5,2.625)
-        Text = ("Tomorrow")
-        Alignment = Align.Center
-      }
-      { Label22 Label
-        MoveScaled(56,2.625,17.5,2.625)
-        Text = ("Tomorrow night")
-        Alignment = Align.Center
-      }
-      { Label24 Label
-        MoveScaled(75.25,2.625,17.5,2.625)
-        Text = ("Day after tommorow")
-        Alignment = Align.Center
-      }
-      { TextArea1 TextArea
-        MoveScaled(20,14,17,23)
+      { TextArea4 TextArea
+        MoveScaled(75,14,18,23)
         ReadOnly = True
         Wrap = True
         Border = False
         ScrollBar = Scroll.None
+      }
+      { PicWindDir6 PictureBox
+        MoveScaled(131.25,-35,6.25,6.25)
+        Stretch = True
+      }
+      { Label4 Label
+        MoveScaled(0.875,2.625,18,4)
+        Text = ("Today")
+        Alignment = Align.Center
+      }
+      { Label15 Label
+        MoveScaled(19.25,2.625,18,4)
+        Text = ("Tonight")
+        Alignment = Align.Center
+      }
+      { Label16 Label
+        MoveScaled(37.625,2.625,18,4)
+        Text = ("Tomorrow")
+        Alignment = Align.Center
+      }
+      { Label22 Label
+        MoveScaled(56,3,18,4)
+        Text = ("Tomorrow night")
+        Alignment = Align.Center
+      }
+      { Label24 Label
+        MoveScaled(75.25,2.625,18,4)
+        Text = ("Day after tommorow")
+        Alignment = Align.Center
       }
     }
     Index = 2
@@ -346,21 +349,25 @@
         MoveScaled(131.25,-35,6.25,6.25)
         Stretch = True
       }
-      { Pic3 PictureBox
-        MoveScaled(32,6,6.875,5.75)
+      { PicFC2 PictureBox
+        MoveScaled(32,6,6.25,6.25)
         Tag = "1"
+        Stretch = True
       }
-      { Pic2 PictureBox
-        MoveScaled(17,6,6.875,5.75)
+      { PicFC1 PictureBox
+        MoveScaled(17,6,6.25,6.25)
         Tag = "1"
+        Stretch = True
       }
-      { Pic1 PictureBox
-        MoveScaled(0.5,6.25,6.875,5.75)
+      { PicFC0 PictureBox
+        MoveScaled(0.5,6.25,6.25,6.25)
         Tag = "1"
+        Stretch = True
       }
-      { Pic4 PictureBox
-        MoveScaled(47,6,6.875,5.75)
+      { PicFC3 PictureBox
+        MoveScaled(47,6,6.25,6.25)
         Tag = "1"
+        Stretch = True
       }
       { LblTempLow3 Label
         MoveScaled(47,15,12,2)

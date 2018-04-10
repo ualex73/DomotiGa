@@ -4,7 +4,8 @@
 ' COpenTherm.class
 ' Support for OpenTherm gateway interface
 
-' Development Status: Work in progress
+' Development Status:
+' Work in progress
 
 ' Links:
 ' http://www.tclcode.com/opentherm/index.html#intro
@@ -53,15 +54,15 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "OpenTherm"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "OpenTherm Gateway"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
-Public PluginMaxInstances As Integer = 1
+Public PluginMaxInstances As Integer = 9
 
 Public KeyName As String
 Public LogLabel As String = "[OpenTherm] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -75,11 +76,10 @@ Private $sInterface As String
 Private $sTCPHost As String
 Private $iTCPPort As Integer
 Private $sSerPort As String
-Private $bOpenThermDebug As Boolean
+Private $bDebug As Boolean
 Private $iPollTime As Integer
 Private $sThermostat As String
 Private $sTemperatureOverride As String
-Private $bOutsideSensor As Boolean
 Private $bSyncClock As Boolean
 Private $bRelayEnabled As Boolean
 Private $iRelayPort As Integer
@@ -133,8 +133,17 @@ Private fCentralHeatingSetPoint As Float    ' Central heating setpoint
 Private bClockSyncedToday As Boolean        ' Indicates if clock is already synced
 Private iDayOfMonth As Integer
 
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+
+' queue and command buffer stuff
+Private cQueue As New Collection    ' command buffer
+Private bInterfaceBusy As Boolean   ' waiting for busy timer to finish
+Public tInterfaceBusy As Timer
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -153,12 +162,25 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sInterface = cPl.Settings["type"]
   $sThermostat = cPl.Settings["thermostat"]
   $iPollTime = cPl.Settings["polltime"]
-  $bOpenThermDebug = cPl.Settings["debug"]
+  $bDebug = cPl.Settings["debug"]
   $sTemperatureOverride = cPl.Settings["temperatureoverride"]
   $bRelayEnabled = cPl.Settings["relayenabled"]
   $iRelayPort = cPl.Settings["relayport"]
   $bSyncClock = cPl.Settings["syncclock"]
- 
+
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
+  InterfaceId = Devices.FindInterface("OpenTherm Gateway")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
     ConnectTCP()
@@ -166,10 +188,21 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     ConnectSerial()
   Endif
 
+  ' Start relaying
+  If $bRelayEnabled Then
+    If StartRelay() Then
+      Main.WriteLog(LogLabel & "Relay listening for client on port " & $iRelayPort)
+    Else
+      Main.WriteLog(LogLabel & "ERROR: Relay FAILED to listen  to port " & $iRelayPort)
+    Endif
+  Else
+    Main.WriteLog(LogLabel & "Relay disabled.")
+  Endif
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -199,29 +232,29 @@ Public Function ConnectSerial() As Boolean
   End With
 
   bIgnoreAbout = True
-  Try Print #hOpenThermSer, "PR=A\r" ' get about information Of opentherm gateway
+  Try Print #hOpenThermSer, "PR=A\r" ' request information about OpenTherm gateway
   If Error Then
     Main.WriteDebugLog(LogLabel & "Error writing data to serial port! -> " & Error.Text)
     Return False
   Else
     GetDeviceIDs()
-    Wait 1 ' wait to let the gateway repond to about request
-    If bIgnoreAbout Then
-      hOpenThermSer.Close
-      Main.WriteDebugLog(LogLabel & "Gateway is not responding.")
-      Return False
-    Else
-      ' Write to main logfile we connected successfully
-      Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
-      IsRunning = True
+    'Wait 1 ' wait to let the gateway repond to about request
+    ' If bIgnoreAbout Then
+    '   ' Try hOpenThermSer.Close
+    '   Main.WriteDebugLog(LogLabel & "Gateway is not responding.")
+    '   Return False
+    ' Else
+    ' Write to main logfile we connected successfully
+    Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
+    IsRunning = True
 
-      ' All went ok
-      Return True
-    Endif
+    ' All went ok
+    Return True
+  '  Endif
   Endif
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -263,7 +296,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   hOpenThermTCP.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready
 
@@ -271,7 +304,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -289,7 +322,21 @@ Public Sub OpenThermTCP_Ready()
   GetDeviceIDs()
   Main.WriteLog(LogLabel & "TCP socket connected.")
   IsRunning = True
+
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
   Try Print #hOpenthermTCP, "PR=A" ' get about information of opentherm gateway
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  ConnectTCP()
 
 End
 
@@ -298,7 +345,31 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub OpenThermTCP_Closed()
 
-  Main.WriteLog(LogLabel & "TCP socket closed.")
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
+
+End
+
+Public Sub ReConnect()
+
+  If iReConnectRetry < aReConnectDelay.Max + 1 Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
+  Endif
+  Inc iReConnectRetry
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub OpenThermTCP_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 
@@ -314,6 +385,7 @@ Public Sub OpenThermTCP_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
 
 End
 
@@ -361,11 +433,11 @@ Public Sub OpenThermRelay_Connection(sHost As String)
   hRelayOTSocket = New Socket As "RelayOTSocket"
   ' accept client
   If hOpenThermRelay.Status <= Net.Inactive Then Return
-  If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Relay Connection request from client " & sHost)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Relay Connection request from client '" & sHost & "'")
 
   hRelayOTSocket = hOpenThermRelay.Accept()
   hRelayOTclient.Add(hRelayOTSocket)
-  If $bOpenThermDebug Then
+  If $bDebug Then
     If hRelayOTSocket.Status = Net.Connected Then Main.WriteLog(LogLabel & "Relay client connection from IP address '" & hRelayOTSocket.RemoteHost & "' (" & DNS.ResolveHost(hRelayOTSocket.RemoteHost) & ") accepted.")
   Endif
 
@@ -402,7 +474,7 @@ Public Sub Socket_Read()
     If Len(sBufferSocket) > 1 Then
       sBufferSocket = Left(sBufferSocket, Len(sBufferSocket) - 1)
       Main.WriteDebugLog(LogLabel & "Relay Received command from relay client '" & sBufferSocket & "'")
-      WriteCmd(sBufferSocket)
+      QueueCommand(sBufferSocket)
     Endif
     sBufferSocket = Null
   Else
@@ -423,37 +495,37 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub GetDeviceIDs()
 
-  iThermostatID = Devices.Find(Instance, "Thermostat", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Thermostat")
+  iThermostatID = Devices.Find(Instance, "Thermostat", InterfaceId, "OpenTherm Thermostat")
   If iThermostatID = 0 Then
-    If $bOpenThermDebug Then
+    If $bDebug Then
       Main.WriteDebugLog(LogLabel & "Thermostat device is missing and not automatically created. Thermostat updates will be ignored!")
       Main.WriteDebugLog(LogLabel & "Check if the device exists and is not disabled or hidden.")
     Endif
   Endif
-  iCHID = Devices.Find(Instance, "CentralHeating", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Central Heating")
+  iCHID = Devices.Find(Instance, "CentralHeating", InterfaceId, "OpenTherm Central Heating")
   If iCHID = 0 Then
-    If $bOpenThermDebug Then
+    If $bDebug Then
       Main.WriteDebugLog(LogLabel & "Central heating device is missing and not automatically created. Central heating updates will be ignored!")
       Main.WriteDebugLog(LogLabel & "Check if the device exists and is not disabled or hidden.")
     Endif
   Endif
-  iBoilerID = Devices.Find(Instance, "Boiler", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Boiler")
+  iBoilerID = Devices.Find(Instance, "Boiler", InterfaceId, "OpenTherm Boiler")
   If iBoilerID = 0 Then
-    If $bOpenThermDebug Then
+    If $bDebug Then
       Main.WriteDebugLog(LogLabel & "Boiler device is missing and not automatically created. Boiler updates will be ignored!")
       Main.WriteDebugLog(LogLabel & "Check if the device exists and is not disabled or hidden.")
     Endif
   Endif
-  iBurnerID = Devices.Find(Instance, "Burner", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Burner")
+  iBurnerID = Devices.Find(Instance, "Burner", InterfaceId, "OpenTherm Burner")
   If iBurnerID = 0 Then
-    If $bOpenThermDebug Then
+    If $bDebug Then
       Main.WriteDebugLog(LogLabel & "Burner device is missing and not automatically created. Burner updates will be ignored!")
       Main.WriteDebugLog(LogLabel & "Check if the device exists and is not disabled or hidden.")
     Endif
   Endif
-  iOutsideID = Devices.Find(Instance, "Outside", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Outside sensor")
+  iOutsideID = Devices.Find(Instance, "Outside", InterfaceId, "OpenTherm Outside sensor")
   If iOutsideID = 0 Then
-    If $bOpenThermDebug Then
+    If $bDebug Then
       Main.WriteDebugLog(LogLabel & "Outside sensor device is missing and not automatically created. Outside sensor updates will be ignored!")
       Main.WriteDebugLog(LogLabel & "Check if the device exists and is not disabled or hidden.")
     Endif
@@ -466,6 +538,10 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Run()
 
+  ' define timer for interface busy
+  tInterfaceBusy = New Timer As "tInterfaceBusy"
+  tInterfaceBusy.Delay = 150 ' default time between cmds
+
   If $iPollTime > 0 Then
     ' start poll timer
     tOpenTherm = New Timer As "tOpenTherm"
@@ -473,7 +549,7 @@ Public Sub Run()
     tOpenTherm.Start
   Else
     ' don't turn on polling, just process all messages received via OpenTherm gateway connection
-    WriteCmd("PS=0")
+    QueueCommand("PS=0")
   Endif
 
 End
@@ -492,7 +568,7 @@ Public Sub GetStatus()
   Dim sDay As String
 
   ' request new status report
-  WriteCmd("PS=1")
+  QueueCommand("PS=1")
   If $bSyncClock Then
     If iDayOfMonth <> Day(Now) Then
       bClockSyncedToday = False
@@ -505,7 +581,7 @@ Public Sub GetStatus()
         bClockSyncedToday = True
         sDay = CStr(WeekDay(Now))
         If sDay = "0" Then sDay = "7" ' correct sundays
-        WriteCmd("SC=" & Format(Now, "h:n") & "/" & sDay)
+        QueueCommand("SC=" & Format(Now, "h:n") & "/" & sDay)
       Endif
     Endif
   Endif
@@ -527,64 +603,67 @@ Private Sub ParseLine(sData As String)
   Dim bTemp As Byte
   Dim sMsgData, sMsgDirection, sErrorDescription As String
 
-  ' relay incoming data to relay port
-  If $bRelayEnabled Then Try Write #hRelayOTSocket, sData & "\r"
-
+  Main.ControlLed("OT", "On")
   ' parse each line
   For Each sLine In Split(sData, "\n")
     bParseLine = True
 
+    ' relay incoming data to connected relayclient
+    If $bRelayEnabled Then
+      If hRelayOTSocket.Status = Net.Connected Then Try Write #hRelayOTSocket, sline & "\r\n"
+    Endif
+
     Select Case Right(sLine, 2)
       Case "OK"
-        'IF $bOpenThermDebug THEN Main.WriteDebugLog(LogLabel & "Received 'OK' response: The command was accepted."))
+        'IF $bDebug THEN Main.WriteDebugLog(LogLabel & "Received 'OK' response: The command was accepted."))
         bParseLine = False
       Case "NG"
-        If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'NG' response: The command code is unknown.")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'NG' response: The command code is unknown.")
         bParseLine = False
       Case "SE"
-        If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'SE' response: The command contained an unexpected character or was incomplete.")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'SE' response: The command contained an unexpected character or was incomplete.")
         bParseLine = False
       Case "BV"
-        If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'BV' response: The command contained a value that is not allowed")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'BV' response: The command contained a value that is not allowed.")
         bParseLine = False
       Case "OR"
-        If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'OR' response: A number was specified outside of the allowed range")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'OR' response: A number was specified outside of the allowed range.")
         bParseLine = False
       Case "NS"
-        If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'NS' response: The alternative Data-ID could not be added because the table is full.")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'NS' response: The alternative Data-ID could not be added because the table is full.")
         bParseLine = False
       Case "NF"
-        If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'NF' response: The specified alternative Data-ID could not be removed because it does not exist in the table.")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'NF' response: The specified alternative Data-ID could not be removed because it does not exist in the table.")
         bParseLine = False
       Case "IP"
-        If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'IP' response: The device cannot perform the action at this time, but will do so as soon as possible.")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'IP' response: The device cannot perform the action at this time, but will do so as soon as possible.")
         bParseLine = False
       Case "OE"
-        If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'OE' response: Overrun error in command")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'OE' response: Overrun error in command.")
         bParseLine = False
       Case "PF"
-        'IF $bOpenThermDebug THEN Main.WriteDebugLog(LogLabel & "Received 'PF' response: The requested information will be printed in a separate report."))
+        'IF $bDebug THEN Main.WriteDebugLog(LogLabel & "Received 'PF' response: The requested information will be printed in a separate report."))
         bParseLine = False
     End Select
 
     Select Case Right(sLine, 8)
       Case "Error 01"
-        If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 01' response: A bit transistion happend at an unexpected time")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 01' response: A bit transistion happend at an unexpected time.")
         bParseLine = False
       Case "Error 02"
-        If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 02' response: The stop bit was 0 while it should be 1")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 02' response: The stop bit was 0 while it should be 1.")
         bParseLine = False
       Case "Error 03"
-        If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 03' response: A bit was not received when it was expected")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 03' response: A bit was not received when it was expected.")
         bParseLine = False
       Case "Error 04"
-        If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 04' response: A parity error was detected on a received opentherm message")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 04' response: A parity error was detected on a received opentherm message.")
         bParseLine = False
     End Select
 
     If InStr(sLine, ":") Then
-      'If OTGW is running firmware 4.0 or later it will report the accepted command send to the OTGW
-      If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Command '" & sline & "' accepted by gateway")
+      ' If OTGW is running firmware 4.0 or later it will report the accepted command send to the OTGW
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Command '" & sline & "' accepted by gateway.")
       bParseLine = False
     Else
       If Len(sLine) = 9 Then 'AND NOT (bIgnoreAbout) THEN
@@ -592,72 +671,72 @@ Private Sub ParseLine(sData As String)
         sMsgData = Right(sLine, 4)
         fTemp = Val("&H" & sMsgData & "&")
         sMsgDirection = Left(sLine, 1)
-  
+
         Select Case iMsgID  ' OpenTherm Message ID
           Case 0
             If sMsgDirection = "B" And Not (iThermostatID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received status message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received status message: " & sLine)
               bTemp = Val("&" & Right(sMsgData, 2)) ' Lower byte
-              If $bOpenThermDebug Then
-                If BTst(bTemp, 0) Then Main.WriteDebugLog(LogLabel & " - status = Error")
+              If $bDebug Then
+                If BTst(bTemp, 0) Then Main.WriteDebugLog(LogLabel & " - status = Error.")
                 If BTst(bTemp, 3) Then
                   Main.WriteDebugLog(LogLabel & " - status = Flame on")
                 Else
                   Main.WriteDebugLog(LogLabel & " - status = Flame off")
                 Endif
-                If BTst(bTemp, 1) Then Main.WriteDebugLog(LogLabel & " - status = Heating up room")
-                If BTst(bTemp, 2) Then Main.WriteDebugLog(LogLabel & " - status = Heating boiler")
-                If BTst(bTemp, 4) Then Main.WriteDebugLog(LogLabel & " - status = Cooling down room")
+                If BTst(bTemp, 1) Then Main.WriteDebugLog(LogLabel & " - status = Heating up room.")
+                If BTst(bTemp, 2) Then Main.WriteDebugLog(LogLabel & " - status = Heating boiler.")
+                If BTst(bTemp, 4) Then Main.WriteDebugLog(LogLabel & " - status = Cooling down room.")
               Endif
               If (BTst(bTemp, 1) <> bCH) Then ' Central Heating state
                 bCH = BTst(bTemp, 1)
                 If bCH Then
-                  Devices.ValueUpdateExt(iThermostatID, 4, "Heating up room")
+                  Devices.ValueUpdate(iThermostatID, 4, "Heating up room")
                 Else
-                  Devices.ValueUpdateExt(iThermostatID, 4, "Idle")
+                  Devices.ValueUpdate(iThermostatID, 4, "Idle")
                 Endif
               Endif
               If (BTst(bTemp, 2) <> bDHW) Then ' Domestic hot water state
                 bDHW = BTst(bTemp, 2)
                 If bDHW Then
-                  Devices.ValueUpdateExt(iThermostatID, 4, "Heating up boiler")
+                  Devices.ValueUpdate(iThermostatID, 4, "Heating up boiler")
                 Else
-                  Devices.ValueUpdateExt(iThermostatID, 4, "Idle")
+                  Devices.ValueUpdate(iThermostatID, 4, "Idle")
                 Endif
               Endif
               If (BTst(bTemp, 3) <> bFlame) Then ' Flame status
                 bFlame = BTst(bTemp, 3)
                 If bFlame Then
-                  Devices.ValueUpdateExt(iBurnerID, 1, "On")
+                  Devices.ValueUpdate(iBurnerID, 1, "On")
                 Else
-                  Devices.ValueUpdateExt(iBurnerID, 1, "Off")
+                  Devices.ValueUpdate(iBurnerID, 1, "Off")
                 Endif
               Endif
               If (BTst(bTemp, 4) <> bCooling) Then ' Cooling state
                 bCooling = BTst(bTemp, 3)
                 If bCooling Then
-                  Devices.ValueUpdateExt(iThermostatID, 4, "Cooling down room")
+                  Devices.ValueUpdate(iThermostatID, 4, "Cooling down room")
                 Else
-                  Devices.ValueUpdateExt(iThermostatID, 4, "Idle")
+                  Devices.ValueUpdate(iThermostatID, 4, "Idle")
                 Endif
               Endif
               If (BTst(bTemp, 0) <> bFault) Then ' Fault indicator (details in message #5)
                 bFault = BTst(bTemp, 0)
                 If bFault Then
-                  If Not (bApplicationError) Then Devices.ValueUpdateExt(iThermostatID, 4, "Unknown error")
+                  If Not (bApplicationError) Then Devices.ValueUpdate(iThermostatID, 4, "Unknown error")
                 Else
-                  Devices.ValueUpdateExt(iThermostatID, 4, "Idle")
+                  Devices.ValueUpdate(iThermostatID, 4, "Idle")
                 Endif
               Endif
             Endif
           Case 1  ' Control set point
             If sMsgDirection = "B" And Not (iCHID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received control set point message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received control set point message: " & sLine)
               fTemp = Round((fTemp / 256), -2)
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - set point temperature = " & CStr(fTemp))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & " - set point temperature = " & CStr(fTemp))
               If fCHSetPoint <> fTemp Then
                 fCHSetPoint = fTemp
-                Devices.ValueUpdateExt(iCHID, 1, Format(fCHSetPoint, "#0.0#"), Devices.ValueType_Temperature)
+                Devices.ValueUpdate(iCHID, 1, Format(fCHSetPoint, "#0.0#"), Devices.ValueType_Temperature)
               Endif
             Endif
           Case 5  ' Application specific fault flags
@@ -665,169 +744,169 @@ Private Sub ParseLine(sData As String)
               bTemp = Val("&" & Left(sMsgData, 2)) ' High byte
               If bTemp > 0 Then ' Check if a fault bit is set
                 bApplicationError = True
-                If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'application specific fault flags' message: " & sLine)
+                If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'application specific fault flags' message: " & sLine)
                 sErrorDescription = ""
                 If BTst(bTemp, 0) Then
-                  If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - fault = service required")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = service required.")
                   sErrorDescription &= ", Service required"
                 Endif
                 If BTst(bTemp, 1) Then
-                  If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - fault = remote reset enabled")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = remote reset enabled.")
                   sErrorDescription &= ", remote reset enabled"
                 Endif
                 If BTst(bTemp, 2) Then
-                  If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - fault = water pressure fault")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = water pressure fault.")
                    sErrorDescription &= ", water pressure fault"
                 Endif
                 If BTst(bTemp, 3) Then
-                  If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - fault = gas/flame fault")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = gas/flame fault.")
                    sErrorDescription &= ", gas/flame fault"
                 Endif
                 If BTst(bTemp, 4) Then
-                  If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - fault = air pressure fault")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = air pressure fault.")
                   sErrorDescription &= ", air pressure fault"
                 Endif
                 If BTst(bTemp, 5) Then
-                  If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - fault = water over temperature fault")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = water over temperature fault.")
                   sErrorDescription &= ", water over temperature fault"
                 Endif
                 If BTst(bTemp, 6) Then
-                  If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - fault = <unknown> (bit 7 set)")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = <unknown> (bit 7 set).")
                   sErrorDescription &= ", unknown fault"
                 Endif
                 If BTst(bTemp, 7) Then
-                  If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - fault = <unknown> (bit 8 set)")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = <unknown> (bit 8 set).")
                   sErrorDescription &= ", unknown fault"
                 Endif
                 If Len(sErrorDescription) > 0 Then
                   sErrorDescription = Right(sErrorDescription, Len(sErrorDescription) - 2)
-                  If Not (iThermostatID = 0) Then Devices.ValueUpdateExt(iThermostatID, 4, sErrorDescription)
+                  If Not (iThermostatID = 0) Then Devices.ValueUpdate(iThermostatID, 4, sErrorDescription)
                 Endif
               Else
-                If $bOpenThermDebug Then
+                If $bDebug Then
                   Main.WriteDebugLog(LogLabel & "Received 'application specific fault flags' message: " & sLine)
-                  Main.WriteDebugLog(LogLabel & " - No fault flags set")
+                  Main.WriteDebugLog(LogLabel & " - No fault flags set.")
                 Endif
                 bApplicationError = False
               Endif
             Endif
           Case 16 ' Room set point
             If sMsgDirection = "T" And Not (iThermostatID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received room set point message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received room set point message: " & sLine)
               fTemp = Round((fTemp / 256), -2)
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - set point temperature = " & CStr(fTemp))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & " - set point temperature = " & CStr(fTemp))
               fCurrentSetPoint = fTemp
               If fRoomSetPoint <> fTemp Then
                 fRoomSetPoint = fTemp
-                Devices.ValueUpdateExt(iThermostatID, 1, Format(fRoomSetPoint, "#0.0#"))
-                Devices.ValueUpdateExt(iThermostatID, 3, CheckRemoteControl())
+                Devices.ValueUpdate(iThermostatID, 1, Format(fRoomSetPoint, "#0.0#"))
+                Devices.ValueUpdate(iThermostatID, 3, CheckRemoteControl())
               Endif
             Endif
           Case 17 ' Relative modulation level
             If sMsgDirection = "B" And Not (iCHID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received relative modulation level message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received relative modulation level message: " & sLine)
               fTemp = fTemp / 256
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - level = " & CStr(fTemp))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & " - level = " & CStr(fTemp))
               If fCHModLevel <> fTemp Then
                 fCHModLevel = fTemp
-                Devices.ValueUpdateExt(iCHID, 3, fCHModLevel)
+                Devices.ValueUpdate(iCHID, 3, fCHModLevel)
               Endif
             Endif
           Case 18 ' CH Water pressure
             If sMsgDirection = "B" And Not (iCHID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received central heating water pressure message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received central heating water pressure message: " & sLine)
               fTemp = Round((fTemp / 256), -2)
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - pressure = " & CStr(fTemp))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & " - pressure = " & CStr(fTemp))
               If fCHWaterPress <> fTemp Then
                 fCHWaterPress = fTemp
-                Devices.ValueUpdateExt(iCHID, 4, Format(fCHWaterPress, "#.0#"))
+                Devices.ValueUpdate(iCHID, 4, Format(fCHWaterPress, "#.0#"))
               Endif
             Endif
           Case 19 ' Boiler hot water flow
             If sMsgDirection = "B" And Not (iBoilerID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received hot water flow message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received hot water flow message: " & sLine)
               fTemp = Round((fTemp / 256), -2)
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - flow rate = " & CStr(fTemp))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & " - flow rate = " & CStr(fTemp))
               If fBoilerFlow <> fTemp Then
                 fBoilerFlow = fTemp
-                Devices.ValueUpdateExt(iBoilerID, 3, Format(fBoilerFlow, "#.0#"))
+                Devices.ValueUpdate(iBoilerID, 3, Format(fBoilerFlow, "#.0#"))
               Endif
             Endif
           Case 24 ' Room temperature
             If sMsgDirection = "T" And Not (iThermostatID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received room temperature message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received room temperature message: " & sLine)
               fTemp = Round((fTemp / 256), -2)
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - temperature = " & CStr(fTemp))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & " - temperature = " & CStr(fTemp))
               If fRoomTemp <> fTemp Then
                 fRoomTemp = fTemp
-                Devices.ValueUpdateExt(iThermostatID, 2, Format(fRoomTemp, "#0.0#"), Devices.ValueType_Temperature)
+                Devices.ValueUpdate(iThermostatID, 2, Format(fRoomTemp, "#0.0#"), Devices.ValueType_Temperature)
               Endif
             Endif
           Case 25 ' Boiler water temperature
             If sMsgDirection = "B" And Not (iBoilerID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received boiler temperature message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received boiler temperature message: " & sLine)
               fTemp = Round((fTemp / 256), -2)
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - temperature = " & CStr(fTemp))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & " - temperature = " & CStr(fTemp))
               If fBoilerTemp <> fTemp Then
                 fBoilerTemp = fTemp
-                Devices.ValueUpdateExt(iBoilerID, 2, Format(fBoilerTemp, "#0.0#"), Devices.ValueType_Temperature)
+                Devices.ValueUpdate(iBoilerID, 2, Format(fBoilerTemp, "#0.0#"), Devices.ValueType_Temperature)
               Endif
             Endif
           Case 27 ' Outside temperature
             If sMsgDirection = "B" And Not (iOutsideID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received outside temperature message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received outside temperature message: " & sLine)
               fTemp = Round((fTemp / 256), -2)
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - temperature = " & CStr(fTemp))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & " - temperature = " & CStr(fTemp))
               If fOutsideTemp <> fTemp And fTemp <> 0 Then
                 fOutsideTemp = fTemp
-                Devices.ValueUpdateExt(iOutsideID, 1, Format(fOutsideTemp, "#0.0#"), Devices.ValueType_Temperature)
+                Devices.ValueUpdate(iOutsideID, 1, Format(fOutsideTemp, "#0.0#"), Devices.ValueType_Temperature)
               Endif
             Endif
           Case 56 ' Boiler temperature set point
             If (sMsgDirection = "B" Or sMsgDirection = "A") And Not (iBoilerID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received boiler set point message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received boiler set point message: " & sLine)
               fTemp = Round((fTemp / 256), -2)
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - set point temperature = " & CStr(fTemp))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & " - set point temperature = " & CStr(fTemp))
               If fBoilerSetPoint <> fTemp Then
                 fBoilerSetPoint = fTemp
-                Devices.ValueUpdateExt(iBoilerID, 1, Format(fBoilerSetPoint, "#0.0#"), Devices.ValueType_Temperature)
+                Devices.ValueUpdate(iBoilerID, 1, Format(fBoilerSetPoint, "#0.0#"), Devices.ValueType_Temperature)
               Endif
             Endif
           Case 57 ' CH temperature set point
             If (sMsgDirection = "B" Or sMsgDirection = "A") And Not (iCHID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received maximum central heating set point message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received maximum central heating set point message: " & sLine)
               fTemp = Round((fTemp / 256), -2)
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - set point temperature = " & CStr(fTemp))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & " - set point temperature = " & CStr(fTemp))
               If fCHSetPoint <> fTemp Then
                 fCHSetPoint = fTemp
-                Devices.ValueUpdateExt(iCHID, 1, Format(fCHSetPoint, "#0.0#"), Devices.ValueType_Temperature)
+                Devices.ValueUpdate(iCHID, 1, Format(fCHSetPoint, "#0.0#"), Devices.ValueType_Temperature)
               Endif
             Endif
           Case 116 ' Burner starts counter
             If sMsgDirection = "B" And Not (iBurnerID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received burner starts counter message: " & sLine)
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - counter = " & CStr(fTemp))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received burner starts counter message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & " - counter = " & CStr(fTemp))
               If fBurnerStarts <> fTemp Then
                 fBurnerStarts = fTemp
-                Devices.ValueUpdateExt(iBurnerID, 2, fBurnerStarts)
+                Devices.ValueUpdate(iBurnerID, 2, fBurnerStarts)
               Endif
             Endif
           Case 120 ' Burner hours central heating
             If sMsgDirection = "B" And Not (iBurnerID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received burner running hours central heating message: " & sLine)
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - counter = " & CStr(fTemp))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received burner running hours central heating message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & " - counter = " & CStr(fTemp))
               If fCHBurnerHours <> fTemp Then
                 fCHBurnerHours = fTemp
-                Devices.ValueUpdateExt(iBurnerID, 3, fCHBurnerHours)
+                Devices.ValueUpdate(iBurnerID, 3, fCHBurnerHours)
               Endif
             Endif
           Case 123 ' Burner hours boiler
             If sMsgDirection = "B" And Not (iBurnerID = 0) Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received burner running hours boiler message: " & sLine)
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & " - counter = " & CStr(fTemp))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Received burner running hours boiler message: " & sLine)
+              If $bDebug Then Main.WriteDebugLog(LogLabel & " - counter = " & CStr(fTemp))
               If fHWBurnerHours <> fTemp Then
                 fHWBurnerHours = fTemp
-                Devices.ValueUpdateExt(iBurnerID, 4, fHWBurnerHours)
+                Devices.ValueUpdate(iBurnerID, 4, fHWBurnerHours)
               Endif
             Endif
         End Select
@@ -840,9 +919,9 @@ Private Sub ParseLine(sData As String)
         bIgnoreAbout = False
         Main.WriteLog(LogLabel & "Connected to '" & sLine & "'")
       Else
-        If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Received 'OpenTherm Gateway' response, OpenTherm gateway device has been restarted unexpectedly?")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'OpenTherm Gateway' response, OpenTherm gateway device has been restarted unexpectedly?")
         If bOverrideActive Then
-          If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "  resending thermostat override setpoint '" & CStr(fOverrideSetPoint) & "'")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "  resending thermostat override setpoint '" & CStr(fOverrideSetPoint) & "'")
           SendCommand("THERMOSTAT", CStr(fOverrideSetPoint))
         Endif
       Endif
@@ -853,7 +932,7 @@ Private Sub ParseLine(sData As String)
       Main.WriteDebugLog(LogLabel & "Parsing received OpenTherm gateway report: " & sLine)
       Try sResponses = Split(sLine)
       If Error Then
-        If $bOpenThermDebug Then
+        If $bDebug Then
           Main.WriteDebugLog(LogLabel & "Failed to parse report: " & ERROR.Text & " at " & ERROR.Where)
         Endif
       Else
@@ -885,7 +964,7 @@ Private Sub ParseLine(sData As String)
         ' 24 - 258                 DHW burner operation hours (MsgID=123) - Printed as a decimal value
 
         If sResponses.count = 25 Then
-          ' remove : in any response
+          ' Remove : in any response
           For iCount = 0 To 24
             sResponses[iCount] = Replace(sResponses[iCount], ":", "", 1)
           Next
@@ -894,7 +973,7 @@ Private Sub ParseLine(sData As String)
 
           ' Update thermostat values
           If Not (iThermostatID = 0) Then
-            If $bOpenThermDebug Then
+            If $bDebug Then
               Main.WriteDebugLog(LogLabel & "Thermostat:")
               Main.WriteDebugLog(LogLabel & " - Room temperature set point = " & sResponses[8])
               Main.WriteDebugLog(LogLabel & " - Room temperature = " & sResponses[5])
@@ -906,41 +985,41 @@ Private Sub ParseLine(sData As String)
             If (Mid(sResponses[0], 15, 1)) = "1" Then sThermostat = "Heating up boiler" ' OpenTherm MsgID=0, LWB, 0000 0100
             If (Mid(sResponses[0], 16, 1)) = "1" Then sThermostat = "Heating up room"   ' OpenTherm MsgID=0, LWB, 0000 0010
             If (Mid(sResponses[0], 17, 1)) = "1" Then sThermostat = "Error"             ' OpenTherm MsgID=0, LWB, 0000 0001
-            Devices.ValueUpdateExt(iThermostatID, 1, Format(sResponses[5], "#0.0#"), Devices.ValueType_Temperature)
-            Devices.ValueUpdateExt(iThermostatID, 2, Format(sResponses[8], "#0.0#"), Devices.ValueType_Temperature)
-            Devices.ValueUpdateExt(iThermostatID, 3, sTemperatureOverrideStatus)
-            Devices.ValueUpdateExt(iThermostatID, 4, sThermostat)
+            Devices.ValueUpdate(iThermostatID, 1, Format(sResponses[5], "#0.0#"), Devices.ValueType_Temperature)
+            Devices.ValueUpdate(iThermostatID, 2, Format(sResponses[8], "#0.0#"), Devices.ValueType_Temperature)
+            Devices.ValueUpdate(iThermostatID, 3, sTemperatureOverrideStatus)
+            Devices.ValueUpdate(iThermostatID, 4, sThermostat)
           Endif
 
           ' Update Central Heating values
           If Not (iCHID = 0) Then
-            If $bOpenThermDebug Then
+            If $bDebug Then
               Main.WriteDebugLog(LogLabel & "Central heating:")
               Main.WriteDebugLog(LogLabel & " - Set point = " & sResponses[16])
               Main.WriteDebugLog(LogLabel & " - Temperature = " & sResponses[1])
               Main.WriteDebugLog(LogLabel & " - Modulation level = " & sResponses[6])
               Main.WriteDebugLog(LogLabel & " - Water pressure = " & sResponses[7])
             Endif
-            Devices.ValueUpdateExt(iCHID, 1, Format(sResponses[16], "##0.0#"))
-            Devices.ValueUpdateExt(iCHID, 2, Format(sResponses[1], "##0.0#"))
-            Devices.ValueUpdateExt(iCHID, 3, Format(sResponses[6], "##0"))
-            Devices.ValueUpdateExt(iCHID, 4, Format(sResponses[7], "0.##"))
+            Devices.ValueUpdate(iCHID, 1, Format(sResponses[16], "##0.0#"))
+            Devices.ValueUpdate(iCHID, 2, Format(sResponses[1], "##0.0#"))
+            Devices.ValueUpdate(iCHID, 3, Format(sResponses[6], "##0"))
+            Devices.ValueUpdate(iCHID, 4, Format(sResponses[7], "0.##"))
           Endif
 
-          'Update hot water (boiler) values
+          ' Update hot water (boiler) values
           If Not (iBoilerID = 0) Then
-            If $bOpenThermDebug Then
+            If $bDebug Then
               Main.WriteDebugLog(LogLabel & "Hot water (boiler):")
               Main.WriteDebugLog(LogLabel & " - Set point = " & sResponses[15])
               Main.WriteDebugLog(LogLabel & " - Temperature = " & sResponses[9])
             Endif
-            Devices.ValueUpdateExt(iBoilerID, 1, Format(sResponses[15], "##0.0#"))
-            Devices.ValueUpdateExt(iBoilerID, 2, Format(sResponses[9], "##0.0#"), Devices.ValueType_Temperature)
+            Devices.ValueUpdate(iBoilerID, 1, Format(sResponses[15], "##0.0#"))
+            Devices.ValueUpdate(iBoilerID, 2, Format(sResponses[9], "##0.0#"), Devices.ValueType_Temperature)
           Endif
 
           ' Update burner values
           If Not (iBurnerID = 0) Then
-            If $bOpenThermDebug Then
+            If $bDebug Then
               Main.WriteDebugLog(LogLabel & "Burner:")
               Main.WriteDebugLog(LogLabel & " - Flame = " & Mid(sResponses[0], 14, 1))
               Main.WriteDebugLog(LogLabel & " - starts = " & sResponses[17])
@@ -948,30 +1027,31 @@ Private Sub ParseLine(sData As String)
               Main.WriteDebugLog(LogLabel & " - operation hours hot water boiler = " & sResponses[24])
             Endif
             sFlame = IIf((Mid(sResponses[0], 14, 1) = "1"), "On", "Off")
-            Devices.ValueUpdateExt(iBurnerID, 1, sFlame)
-            Devices.ValueUpdateExt(iBurnerID, 2, Format(CStr(sResponses[17]), "#####"))
-            Devices.ValueUpdateExt(iBurnerID, 3, Format(CStr(sResponses[21]), "#####"))
-            Devices.ValueUpdateExt(iBurnerID, 4, Format(CStr(sResponses[24]), "#####"))
+            Devices.ValueUpdate(iBurnerID, 1, sFlame)
+            Devices.ValueUpdate(iBurnerID, 2, Format(CStr(sResponses[17]), "#####"))
+            Devices.ValueUpdate(iBurnerID, 3, Format(CStr(sResponses[21]), "#####"))
+            Devices.ValueUpdate(iBurnerID, 4, Format(CStr(sResponses[24]), "#####"))
           Endif
 
           ' Update outside sensor
           If Not (iOutsideID = 0) Then
-            If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Outside temperature: " & sResponses[11])
+            If $bDebug Then Main.WriteDebugLog(LogLabel & "Outside temperature: " & sResponses[11])
             If sResponses[11] <> "0.00" Then
               fOutsideTemp = CFloat(Format(CStr(sResponses[11]), "#0.0#"))
-              Devices.ValueUpdateExt(iOutsideID, 1, Format(CStr(fOutsideTemp), "#0.0#"), Devices.ValueType_Temperature)
+              Devices.ValueUpdate(iOutsideID, 1, Format(CStr(fOutsideTemp), "#0.0#"), Devices.ValueType_Temperature)
             Endif
           Endif
 
         Else
-          If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Invalid response '" & sLine & "'")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid response '" & sLine & "'")
         Endif
       Endif
     Endif
   Next
+  Main.ControlLed("OT", "Off")
 
 Catch
-  If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Parsing OpenTherm data packet: " & sLine & " " & Error.Text & " at " & Error.Where)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Parsing OpenTherm data packet: '" & sLine & "' '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -1011,11 +1091,11 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
   Dim iDeviceId As Integer
   Dim sType, sDay, sCmdPrefix As String
 
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("OpenTherm gateway"))
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId)
   If iDeviceId Then
     sType = Devices.FindTypeForDevice(iDeviceId)
   Else
-    If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Device with address '" & sAddress & "' not found!")
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Device with address '" & sAddress & "' not found!")
     Return
   Endif
 
@@ -1024,7 +1104,7 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
       Case "THERMOSTAT"  ' Set new thermostat setpoint (override currently active setpoint)
         sCmdPrefix = ""
         fOriginalSetPoint = fCurrentSetPoint
-        fOverrideSetPoint = CFloat(Fix(Val(sCmd)))
+        fOverrideSetPoint = CFloat(Val(sCmd))
         Select Case UCase($sTemperatureOverride)
           Case "CONSTANT"
             sCmdPrefix = "TC="
@@ -1039,18 +1119,18 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
                 sCmdPrefix = "TT="
                 bOverrideSend = True
               Case Else
-                If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Invalid Thermostat type: " & $sThermostat)
+                If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid Thermostat type: " & $sThermostat)
             End Select
           Case Else
-            If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Invalid temperature override: " & $sTemperatureOverride)
+            If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid temperature override: " & $sTemperatureOverride)
         End Select
         If Len(sCmdPrefix) = 3 Then
           If fOverrideSetPoint >= 0 And fOverrideSetPoint < 30 Then 'validate new thermostat override setpoint
             If fCurrentSetPoint = fOverrideSetPoint Then
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Thermostat setpoint already set to '" & sCmd & "'")
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Thermostat setpoint already set to '" & sCmd & "'")
             Else
-              If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "send new thermostat setpoint command: '" & sCmdPrefix & sCmd & "'")
-              WriteCmd(sCmdPrefix & CStr(fOverrideSetPoint))
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "send new thermostat setpoint command: '" & sCmdPrefix & sCmd & "'")
+              QueueCommand(sCmdPrefix & CStr(fOverrideSetPoint))
               If sCmd = "0" Or sCmd = "0.0" Then
                 sTemperatureOverrideStatus = ""
                 fOriginalSetPoint = 0
@@ -1061,59 +1141,86 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
               If bOverrideSend Then sTemperatureOverrideStatus = "Override send"
             Endif
           Else
-            If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Invalid thermostat override setpoint value '" & sCmd & "'. Valid values are between 0.0 and 30.0")
+            If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid thermostat override setpoint value '" & sCmd & "'. Valid values are between 0.0 and 30.0")
             bOverrideSend = False
           Endif
         Else
-          If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Invalid thermostat override prefix '" & sCmdPrefix * "'")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid thermostat override prefix '" & sCmdPrefix * "'")
           bOverrideSend = False
         Endif
 
       Case "BOILER"           ' Set the domestic hot water setpoint
         If CFloat(Val(sCmd)) > 0 And CFloat(Val(sCmd)) < 100 Then
           fOverrideBoilerSetPoint = CFloat(Val(sCmd))
-          WriteCmd("SW=" & CStr(fOverrideBoilerSetPoint))
+          QueueCommand("SW=" & CStr(fOverrideBoilerSetPoint))
         Else
-          If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Invalid boiler setpoint value '" & CStr(fOverrideBoilerSetPoint) & "'. Valid values are between 0.0 and 100.0")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid boiler setpoint value '" & CStr(fOverrideBoilerSetPoint) & "'. Valid values are between 0.0 and 100.0")
         Endif
 
       Case "CENTRALHEATING"   ' Set the maximum central heating setpoint
         If CFloat(Val(sCmd)) > 0 And CFloat(Val(sCmd)) < 100 Then
           fCentralHeatingSetPoint = CFloat(Val(sCmd))
-          WriteCmd("SH=" & CStr(fCentralHeatingSetPoint))
+          QueueCommand("SH=" & CStr(fCentralHeatingSetPoint))
         Else
-          If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Invalid central heating setpoint value '" & CStr(fCentralHeatingSetPoint) & "'. Valid values are between 0.0 and 100.0")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid central heating setpoint value '" & CStr(fCentralHeatingSetPoint) & "'. Valid values are between 0.0 and 100.0")
         Endif
 
       Case "OUTSIDE"          ' Send new outside temperature to thermostat
         If CFloat(Val(sCmd)) > -40 And CFloat(Val(sCmd)) < 127 Then
           fOutsideTemp = CFloat(Val(sCmd))
-          WriteCmd("OT=" & CStr(fOutsideTemp))
+          QueueCommand("OT=" & CStr(fOutsideTemp))
         Else
-          If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Invalid outside temperature '" & CStr(fOutsideTemp) & "'. Valid values are between -40.0 and +127.0")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid outside temperature '" & CStr(fOutsideTemp) & "'. Valid values are between -40.0 and +127.0")
         Endif
 
-      Case "CLOCK"            ' Synchonize clock with local clock by sending current time
+      Case "CLOCK"            ' Synchronize clock with local clock by sending current time
         If sCmd = "sync" Then
           sDay = CStr(WeekDay(Now))
           If sDay = "0" Then sDay = "7" ' Correct sundays
-          WriteCmd("SC=" & Format(Now, "hh:nn") & "/" & sDay)
+          QueueCommand("SC=" & Format(Now, "hh:nn") & "/" & sDay)
         Else
-          If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Invalid command for 'Clock' device: " & sCmd)
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid command for 'Clock' device: " & sCmd)
         Endif
     End Select
   Else
-    If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Invalid command '" & sCmd & "' for device " & sAddress)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid command '" & sCmd & "' for device " & sAddress)
   Endif
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at '" & Error.Where & "'")
+  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
-Private Sub WriteCmd(sCommand As String)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueueCommand(sCmd As String)
 
-  If $bOpenThermDebug Then
+  ' add command to queue
+  cQueue.Add(sCmd, Rnd)
+
+  ' if interface is not busy process it
+  If bInterfaceBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DoQueue()
+
+  Dim sCmd As String
+
+  For Each sCmd In cQueue
+    WriteCmd(sCmd, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+Private Sub WriteCmd(sCommand As String, sKey As String)
+
+  If $bDebug Then
     If sCommand <> "PS=1" Then ' Don't log default report request
       Main.WriteDebugLog(LogLabel & "write command: " & sCommand)
     Endif
@@ -1134,8 +1241,11 @@ Private Sub WriteCmd(sCommand As String)
       Endif
     Endif
   Else
-    If $bOpenThermDebug Then Main.WriteDebugLog(LogLabel & "Invalid command: " & sCommand)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid command: " & sCommand)
   Endif
+
+  ' remove command from queue
+  cQueue.Remove(sKey)
 
 End
 
@@ -1144,15 +1254,16 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function Disconnect() As Boolean
 
-  ' try to close the connection
+  ' try to stop timers and close the connection
+  Try tInterfaceBusy.Stop
+  Try tReConnect.Stop
   Try tOpenTherm.Stop
   Try hOpenThermRelay.Close
   Try hOpenThermTCP.Close
-  Try tOpenTherm.Stop
   Try hOpenThermSer.Close
 
- If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+  If InStr($sInterface, "tcp") Then
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
   Else
     Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
   Endif
@@ -1166,4 +1277,3 @@ Catch ' some errors
   ErrorWhere = ""
 
 End
-

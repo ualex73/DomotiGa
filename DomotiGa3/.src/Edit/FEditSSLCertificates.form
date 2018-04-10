@@ -1,0 +1,86 @@
+# Gambas Form File 3.0
+
+{ Form Form
+  MoveScaled(0,0,86,71)
+  Background = Color.TextBackground
+  Text = ("Edit SSL Certificates")
+  Resizable = False
+  { Frame1 Frame
+    MoveScaled(1,1,84,69)
+    Text = ("SSL Certificates")
+    { DataSourceSSL DataSource
+      MoveScaled(1,2,81,66)
+      Table = "sslcertificates"
+      { DBSSLCertificate DataBrowser
+        MoveScaled(1,1,79,21)
+        Columns = ["name", "certificate", "private", "client"]
+      }
+      { LblCertificate Label
+        MoveScaled(2,29,11,4)
+        Text = ("Certificate")
+      }
+      { DCCertificate DataControl
+        MoveScaled(14,29,55,4)
+        ToolTip = ("The certificate directory is ~/domotiga/certificate")
+        Field = "certificate"
+      }
+      { LblKey Label
+        MoveScaled(2,34,11,4)
+        Text = ("Private Key")
+      }
+      { DCPrivateKey DataControl
+        MoveScaled(14,34,55,4)
+        ToolTip = ("The certificate directory is ~/domotiga/certificate")
+        Field = "private"
+      }
+      { LblClient Label
+        MoveScaled(2,39,11,4)
+        Text = ("Client")
+      }
+      { DCClient DataControl
+        MoveScaled(14,39,55,4)
+        ToolTip = ("The certificate directory is ~/domotiga/certificate")
+        Field = "client"
+      }
+      { btnClose Button
+        MoveScaled(65,58,12,4)
+        Text = ("Close")
+      }
+      { DCName DataControl
+        MoveScaled(14,24,55,4)
+        Field = "name"
+      }
+      { LblName Label
+        MoveScaled(2,24,11,4)
+        Text = ("Name")
+      }
+      { btnCertificate Button
+        MoveScaled(71,29,4,4)
+        Picture = Picture["images/points.png"]
+      }
+      { btnPrivate Button
+        MoveScaled(71,34,4,4)
+        Picture = Picture["images/points.png"]
+      }
+      { btnClient Button
+        MoveScaled(71,39,4,4)
+        Picture = Picture["images/points.png"]
+      }
+      { DCDescription DataControl
+        MoveScaled(14,44,55,8)
+        Field = "description"
+      }
+      { LblDesciption Label
+        MoveScaled(2,44,11,4)
+        Text = ("Description")
+      }
+      { TextLblInfo TextLabel
+        MoveScaled(1,53,62,12)
+        Font = Font["Italic"]
+        ToolTip = ("The certificate directory is ~/domotiga/certificate")
+        Text = ("Certificate and Private Key are required for Server. It is possible to combine these files into 1 file, then configure this as the certificate. The Client is *only* required if you only want to accept certain clients (this client certificate is installed on the client).")
+        Alignment = Align.Center
+      }
+    }
+  }
+}

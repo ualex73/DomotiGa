@@ -5,118 +5,136 @@
 ' Shows which serial ports are available and which are in use.
 
 ' Development Status:
-' Works.
+' Finished
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
 
 ' Read file called COPYING for license details.
 
+Private $sPort As String
+Private $sRun As String
+Private $iHeight As Integer
+Const sByIdPath As String = "/dev/serial/by-id/"
+
 Public Sub Form_Open()
 
-  Me.Move(FMain.X + 50, FMain.Y + 70)
+  Me.Move(FMain.X + 350, FMain.Y + 70)
 
   ' tweak tableview
   With tbvPorts
-    .Columns.Count = 2
+    .Columns.Count = 3
     .Columns[0].Title = ("Serial Device")
     .Columns[0].Width = 100
-    .Columns[1].Title = ("In use by")
-    .Columns[1].Width = 160
+    .Columns[1].Title = (sByIdPath)
+    .Columns[1].Width = 320
+    .Columns[2].Title = ("In use by")
   End With
 
-  ScanPorts()
+  PopulateTable("/dev", txtSearchPattern.Text)
+
+End
+
+Public Sub Run() As String
+
+  btnSelect.Visible = True
+  btnClose.Text = "Cancel"
+
+  If Not Me.ShowModal() Then Return
+
+  Return $sRun
+
+End
+
+Public Sub btnSelect_Click()
+
+  $sRun = $sPort
+  Me.Close(True)
 
 End
 
 Public Sub btnClose_Click()
 
-  Me.Close
+  Me.Close(True)
 
 End
 
-Public Sub ScanPorts()
+Public Sub PopulateTable(sPath As String, sFilter As String)
 
-  Dim sSerialPort, sGroup As String
-  Dim sSerialPorts As String[]
+  Dim sType, sRealName, sGroup As String
+  Dim sById As String
+  Dim cSerialPorts As New Collection
   Dim iCount As Integer
   Dim rResult As Result
-  Dim sInterfaces As String[] = ["ctx35", "irman", "sms", "gps", "temp08", "visca", "rfxcomrx", "rfxcomtx", "weeder", "dsc", "domotica", "plugwise", "openzwave", "jeelabs", "plcbus", "onkyo", "denon", "currentcost", "ledmatrix", "opentherm", "rfxcomtrx", "pioneer", "visonic", "smartmeter"]
+  Dim cSerialPortList As Collection
+  Dim cData As New JSONCollection
+  Dim sInterfaces As String[] = ["ctx35", "cul", "irman", "sms", "gps", "temp08", "visca", "rfxcomrx", "rfxcomtx", "weeder", "dsc", 
+                                 "plugwise", "openzwave", "jeelabs", "plcbus", "onkyo", "denon", "currentcost", "ledmatrix", 
+                                 "opentherm", "rfxcomtrx", "pioneer", "visonic", "smartmeter", "mysensors", "conrad8relay"]
 
-  ' fill array with available ports
-  sSerialPorts = Dir("/dev", txtSearchPattern.Text)
-  sSerialPorts.Sort
+  If Main.bServer Then
+    cSerialPorts = Util.ScanSerialPorts(sPath, sFilter)
+  Else
+    cData.Add("list", "command")
+    cData.Add(sPath, "path")
+    cData.Add(sFilter, "filter")
+    cSerialPortList = Client.Call_Tools_SerialPort_Get(cData)
+
+    ' don't continue if we get an empty response
+    If cSerialPortList = Null Or If Not cSerialPortList.Exist("count") Then
+      Message.Error(("Received an empty or invalid response from the JSON-RPC server.\nPlease consult the server logfile for more information"))
+      Try Me.Close
+      Return
+    Endif
+
+    ' check if we received the valid fields and handle errors
+    If cSerialPortList["count"] > 0 Then
+      If Not cSerialPortList.Exist("serialport") Then
+        Message.Error(("Missing serialport list in response from the JSON-RPC server.\nPlease consult the server logfile for more information"))
+        Try Me.Close
+        Return
+      Endif
+
+      cSerialPorts = cSerialPortList["serialport"]
+    Else
+      cSerialPorts.Clear
+    Endif
+
+  Endif
 
   ' set no of rows to number of ports found
-  tbvPorts.Rows.Count = sSerialPorts.Count
+  tbvPorts.Clear()
+  tbvPorts.Rows.Count = cSerialPorts.Count
 
-  For Each sSerialPort In sSerialPorts
+  For Each cSerialPorts
+    $iHeight = tbvPorts.Rows[iCount].Height
 
-    sSerialPort = "/dev" &/ sSerialPort
-    tbvPorts[iCount, 0].Text = sSerialPort
-    tbvPorts[iCount, 1].Text = ("(unassigned)")
+    sRealName = cSerialPorts.Key
+    sById = cSerialPorts[sRealName]
+
+    tbvPorts[iCount, 0].Text = sRealName
+    tbvPorts[iCount, 1].Text = sById
+    tbvPorts[iCount, 2].Text = ("(unassigned)")
 
     For Each sGroup In sInterfaces
       rResult = Main.hDB.Exec("SELECT * FROM " & DB.Quote("settings_" & sGroup) & " WHERE id = 1")
 
       If (rResult.Count >= 1) Then
         For Each rResult
-          If rResult!serialport = sSerialPort And sGroup <> "rfxcomrx" And sGroup <> "rfxcomtx" And sGroup <> "onkyo" And sGroup <> "denon" Then
-            sGroup = Upper$(sGroup)
-            If rResult!enabled = False Then
-              sGroup &= (" (disabled)")
-              Continue
-            Endif
-            tbvPorts[iCount, 1].Text = sGroup
-          Endif
-          If sGroup = "rfxcomrx" Then
-            If rResult!serialport = sSerialPort And rResult!type = "serial" Then
+
+          ' first determine if type in the record
+          Try sType = rResult!type
+          If Error Then sType = "serial"
+          If sType <> "tcp" And If sType <> "serial" Then sType = "serial"
+
+          If sType = "serial" Then
+            If rResult!serialport = sRealName Or If rResult!serialport = "/dev/serial/by-id/" & sById Then
               sGroup = Upper$(sGroup)
               If rResult!enabled = False Then
                 sGroup &= (" (disabled)")
                 Continue
               Endif
-              tbvPorts[iCount, 1].Text = sGroup
-            Endif
-          Endif
-          If sGroup = "rfxcomtx" Then
-            If rResult!serialport = sSerialPort And rResult!type = "serial" Then
-              sGroup = Upper$(sGroup)
-              If rResult!enabled = False Then
-                sGroup &= (" (disabled)")
-                Continue
-              Endif
-              tbvPorts[iCount, 1].Text = sGroup
-            Endif
-          Endif
-          If sGroup = "onkyo" Then
-            If rResult!serialport = sSerialPort And rResult!type = "serial" Then
-              sGroup = Upper$(sGroup)
-              If rResult!enabled = False Then
-                sGroup &= (" (disabled)")
-                Continue
-              Endif
-              tbvPorts[iCount, 1].Text = sGroup
-            Endif
-          Endif
-          If sGroup = "denon" Then
-            If rResult!serialport = sSerialPort And rResult!type = "serial" Then
-              sGroup = Upper$(sGroup)
-              If rResult!enabled = False Then
-                sGroup &= (" (disabled)")
-                Continue
-              Endif
-              tbvPorts[iCount, 1].Text = sGroup
-            Endif
-          Endif
-          If sGroup = "pioneer" Then
-            If rResult!serialport = sSerialPort And rResult!type = "serial" Then
-              sGroup = Upper$(sGroup)
-              If rResult!enabled = False Then
-                sGroup &= (" (disabled)")
-                Continue
-              Endif
-              tbvPorts[iCount, 1].Text = sGroup
+              tbvPorts[iCount, 2].Text = sGroup
             Endif
           Endif
         Next
@@ -125,16 +143,66 @@ Public Sub ScanPorts()
     Inc iCount
   Next
 
+  ShowAll()
+
 End
 
 Public Sub btnRescan_Click()
 
-  ScanPorts()
+  PopulateTable("/dev", txtSearchPattern.Text)
 
 End
 
 Public Sub txtSearchPattern_KeyPress()
 
-  ScanPorts()
+  PopulateTable("/dev", txtSearchPattern.Text)
+
+End
+
+Public Sub tbvPorts_Select()
+
+  If tbvPorts.Row = -1 Then Return
+  If tbvPorts[tbvPorts.Row, 1].Text Then
+    $sPort = sByIdPath &/ tbvPorts[tbvPorts.Row, 1].Text
+  Else
+    $sPort = tbvPorts[tbvPorts.Row, 0].Text
+  Endif
+
+End
+
+Public Sub tbvPorts_DblClick()
+
+  ' If tbvPorts.Row = -1 Then Return
+  If Len(tbvPorts[tbvPorts.Row, 1].Text) > 1 Then
+    $sPort = sByIdPath &/ tbvPorts[tbvPorts.Row, 1].Text
+  Else
+    $sPort = tbvPorts[tbvPorts.Row, 0].Text
+  Endif
+  $sRun = $sPort
+  Me.Close(True)
+
+End
+
+Public Sub chkShowAll_Click()
+
+  ShowAll()
+
+End
+
+Public Sub ShowAll()
+
+  Dim iCount As Integer
+
+  For iCount = 0 To (tbvPorts.Rows.Count - 1)
+    If tbvPorts[iCount, 1].Text = "-" Then
+      If chkShowAll.Value Then
+        tbvPorts.Rows[iCount].Height = $iHeight
+      Else
+        tbvPorts.Rows[iCount].Height = 0
+      Endif
+    Else
+      tbvPorts.Rows[iCount].Height = $iHeight
+    Endif
+  Next
 
 End

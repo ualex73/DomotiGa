@@ -21,7 +21,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "KMTronicUDP"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "KMTronicUDP"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -30,6 +29,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[KMTronicUDP] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -39,7 +39,7 @@ Public ErrorWhere As String
 ' Private Variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private $bEnabled As Boolean
-Private $bKMTronicUDPDebug As Boolean
+Private $bDebug As Boolean
 Private $iPollTime As Integer
 Private $iUDPPort As Integer
 
@@ -54,7 +54,7 @@ Private bInterfaceBusy As Boolean   ' waiting for delay timer to finish
 Public tKMTronicUDPBusy As Timer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -69,15 +69,23 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bEnabled = cPl.Settings["enabled"]
   $iUDPPort = cPl.Settings["udpport"]
   $iPollTime = cPl.Settings["polltime"]
-  $bKMTronicUDPDebug = cPl.Settings["debug"]
- 
+  $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("KMTronicUDP Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
   ' Start
   Run()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -110,6 +118,8 @@ Public Function Run()
   tKMTronicUDPBusy.Delay = 50 ' 50mS (initial test value)
   tKMTronicUDPBusy.Stop
 
+  IsRunning = True
+
 End
 
 Public Sub hKMTronicUDPServer_Error()
@@ -132,7 +142,7 @@ Public Sub hKMTronicUDPServer_Read()
   Dim sData As String
 
   Read #hKMTronicUDPServer, sData, Lof(hKMTronicUDPServer)
-  If $bKMTronicUDPDebug Then Main.WriteDebugLog(LogLabel & "Board with address '" & hKMTronicUDPServer.SourceHost & "' replied with '" & sData & "'")
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Board with address '" & hKMTronicUDPServer.SourceHost & "' replied with '" & sData & "'")
 
   ProcessData(sData, hKMTronicUDPServer.SourceHost)
 
@@ -149,20 +159,20 @@ Private Sub ProcessData(sData As String, sDevice As String)
         sStatus = IIf(Mid(sData, iPort, 1) = "1", "On", "Off")
         If iPort < 5 Then ' Input port
           sAddress = "IN" & Format(iPort, "0#")
-          If $bKMTronicUDPDebug Then Main.WriteDebugLog(LogLabel & "Port with address '" & sAddress & "' has status '" & sStatus & "'")
-          iDeviceId = Devices.Find(Instance, sDevice & ":" & sAddress, Devices.FindInterface("KMTronicUDP Interface"), "KMTronic Input")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Port with address '" & sAddress & "' has status '" & sStatus & "'")
+          iDeviceId = Devices.Find(Instance, sDevice & ":" & sAddress, InterfaceId, "KMTronic Input")
           ' if found then update it's value
-          If iDeviceId Then Devices.ValueUpdateExt(iDeviceId, 1, sStatus)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sStatus)
         Else ' Output port
           sAddress = "OUT" & Format(iPort - 4, "0#")
-          If $bKMTronicUDPDebug Then Main.WriteDebugLog(LogLabel & "Port with address '" & sAddress & "' has status '" & sStatus & "'")
-          iDeviceId = Devices.Find(Instance, sDevice & ":" & sAddress, Devices.FindInterface("KMTronicUDP Interface"), "KMTronic Output")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Port with address '" & sAddress & "' has status '" & sStatus & "'")
+          iDeviceId = Devices.Find(Instance, sDevice & ":" & sAddress, InterfaceId, "KMTronic Output")
           ' if found then update it's value
-          If iDeviceId Then Devices.ValueUpdateExt(iDeviceId, 1, sStatus)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sStatus)
         Endif
       Next
     Case Else
-      If $bKMTronicUDPDebug Then Main.WriteDebugLog(LogLabel & "Response not supported, please report board type and response to support@domotiga.nl")
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Response not supported, please report board type and response to support@domotiga.nl")
   End Select
 
 End
@@ -218,24 +228,20 @@ Private Sub CheckUDPBoards()
   Dim sName As String
 
   ' get all enabled devices of type KMTronicUDP
-  rResult = Devices.FindDevicesForInterface(Devices.FindInterface("KMTronicUDP Interface"))
-  If rResult Then
-    If rResult.Available Then
-      If rResult.Count >= 1 Then
-        ' loop through each device
-        For Each rResult
-          aScan = Scan(rResult!address, "*:*")
-          If aScan.Count = 2 Then
-            cDevices.Add(rResult!name, aScan[0])
-          Else
-            Main.WriteDebugLog(LogLabel & "Invalid address given: '" & rResult!addres & "'")
-            rResult.MoveNext
-          Endif
-        Next
+  rResult = Devices.FindDevicesForInterface(InterfaceId, Instance)
+  If rResult And If rResult.Available Then
+    ' loop through each device
+    For Each rResult
+      aScan = Scan(rResult!address, "*:*")
+      If aScan.Count = 2 Then
+        cDevices.Add(rResult!name, aScan[0])
+      Else
+        Main.WriteDebugLog(LogLabel & "Invalid address given: '" & rResult!addres & "'")
+        rResult.MoveNext
       Endif
-    Else
-      Main.WriteLog(LogLabel & "No KMTronicUDP type device(s) found in device table!")
-    Endif
+    Next
+  Else
+    Main.WriteLog(LogLabel & "No KMTronicUDP type device(s) found in device table!")
   Endif
 
   If cDevices.Count Then
@@ -256,7 +262,7 @@ Public Sub tKMTronicUDPBusy_Timer()
   tKMTronicUDPBusy.Stop
 
   If cQueue.Count Then ' if there are more commands left in queue, send next one
-    If $bKMTronicUDPDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
     DoQueue()
   Endif
 
@@ -269,7 +275,7 @@ Public Sub GetStatus(sDevice As String, sAddress As String)
 
   Dim sCmd As String = "FF0000"
 
-  If $bKMTronicUDPDebug Then Main.WriteDebugLog(LogLabel & "Checking port status of device named '" & sDevice & "' with address '" & sAddress & "'.")
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking port status of device named '" & sDevice & "' with address '" & sAddress & "'.")
   QueueCommand(sCmd, sAddress)
 
 End
@@ -286,11 +292,11 @@ Private Sub WriteCommand(sBuffer As String, sDevice As String, sKey As String)
 
   Try Write #hKMTronicUDPClient, sBuffer, Len(sBuffer)
   If Not Error Then
-    If $bKMTronicUDPDebug Then Main.WriteDebugLog(LogLabel & "Sent UDP packet to device with address '" & sDevice & "'")
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sent UDP packet to device with address '" & sDevice & "'")
   Else
     Print Error.Text
   Endif
-  If $bKMTronicUDPDebug Then Main.WriteDebugLog(LogLabel & "> " & sBuffer)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sBuffer)
   Try Close hKMTronicUDPClient
 
   ' remove sent command from queue
@@ -302,7 +308,7 @@ Private Sub WriteCommand(sBuffer As String, sDevice As String, sKey As String)
   bInterfaceBusy = True
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: Cannot send UDP message! " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: Cannot send UDP message! '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -338,7 +344,7 @@ Public Function Disconnect() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   Return False
 
 End
@@ -346,33 +352,33 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' called from devices module
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SendCommand(sAddress As String, sCommand As String, iDeviceId As Integer)
+Public Sub SendCommand(sAddress As String, sCmd As String) ' , iDeviceId As Integer)
 
   Dim sIp As String
   Dim aScan As String[]
-  Dim sCmd As String = "FF"
+  Dim sRawCmd As String = "FF"
 
   aScan = Scan(sAddress, "*:OUT*")
   If aScan.Count = 2 Then
     sIp = aScan[0]
-    sCmd &= Format(aScan[1], "0#")
+    sRawCmd &= Format(aScan[1], "0#")
   Else
     Main.WriteDebugLog(LogLabel & "Invalid address given: " & sAddress)
     Return
   Endif
 
-  Select Case UCase(sCommand)
+  Select Case UCase(sCmd)
     Case "ON"
-      sCmd &= "01"
+      sRawCmd &= "01"
     Case "OFF"
-      sCmd &= "00"
+      sRawCmd &= "00"
     Case Else
       Main.WriteDebugLog(LogLabel & "Only ON/OFF commands are supported for KMTronicUDP devices!")
       Return
   End Select
 
-  If $bKMTronicUDPDebug Then Main.WriteDebugLog(LogLabel & "Switching port " & aScan[1] & "' of device with address '" & sIp & "' '" & sCommand & "'.")
-  QueueCommand(sCmd, sIp)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Switching port '" & aScan[1] & "' of device with address '" & sIp & "' '" & sRawCmd & "'.")
+  QueueCommand(sRawCmd, sIp)
 
 End
 

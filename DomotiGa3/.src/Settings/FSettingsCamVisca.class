@@ -68,7 +68,7 @@ Public Sub btnSave_Click()
   If Main.bServer Then
     Plugin.Restart("VISCA", 1)
   Else
-    Client.ModuleRestart("VISCA")
+    Client.Plugin_Restart("VISCA")
   Endif
 
   Me.Close
@@ -128,6 +128,16 @@ Private Sub EnableDisableSettings()
   spbCameraAddress.Enabled = chkEnabled.Value
   txtVideoDevice.Enabled = chkEnabled.Value
   chkDebug.Enabled = chkEnabled.Value
+  btnSerial.Enabled = chkEnabled.Value
 
 End
 
+Public Sub btnSerial_Click()
+
+  Dim sSerialPort As String
+
+  sSerialPort = FToolsSerialPorts.Run()
+  If sSerialPort Then txtSerialPort.Text = sSerialPort
+  btnSave.Enabled = True
+
+End

@@ -1,185 +1,205 @@
 # Gambas Form File 3.0
 
 { Form Form
-  MoveScaled(0,0,76,72)
+  MoveScaled(0,0,67,76)
   Background = Color.TextBackground
   { FrameSettingsGenericIO Frame
-    MoveScaled(1,0,74,71)
+    MoveScaled(1,1,65,74)
     Text = ("GenericIO Settings")
-    { TextLblModuleEnabled TextLabel
-      MoveScaled(51,3,17,3)
-      Text = ("Module Enabled")
-      Alignment = Align.Right
-    }
-    { chkEnabled CheckBox
-      MoveScaled(69,3,3,2)
-    }
-    { TextLblInterfaceType TextLabel
-      MoveScaled(2,7,13,3)
-      Text = ("InterfaceType")
-      Alignment = Align.Normal
-    }
-    { cmbType ComboBox
-      MoveScaled(15,7,20,3)
-      ReadOnly = True
-      List = [("tcp"), ("serial")]
-    }
-    { TextLblSerialPort TextLabel
-      MoveScaled(2,11,12,3)
-      Text = ("Serial Port")
-      Alignment = Align.Normal
-    }
-    { txtSerialPort TextBox
-      MoveScaled(15,11,20,3)
-    }
-    { TextLblBaudRate TextLabel
-      MoveScaled(2,14,12,3)
-      Text = ("Baud Rate")
-      Alignment = Align.Normal
-    }
-    { cmbBaudrate ComboBox
-      MoveScaled(15,14,11,3)
-      ReadOnly = True
-      List = [("9600"), ("19200"), ("38400"), ("57600"), ("115200")]
-    }
-    { TextLblTCPHost TextLabel
-      MoveScaled(39,11,10,3)
-      Text = ("TCP Host")
-      Alignment = Align.Normal
-    }
-    { txtTCPHost TextBox
-      MoveScaled(50,11,22,3)
-    }
-    { TextLblTCPPort TextLabel
-      MoveScaled(39,14,10,3)
-      Text = ("TCP Port")
-      Alignment = Align.Normal
-    }
-    { txtTCPPort TextBox
-      MoveScaled(50,14,8,3)
-    }
-    { TextLblRegEx TextLabel
-      MoveScaled(17,19,32,3)
-      Text = ("Regex (used to extract address eg. )")
-      Alignment = Align.Normal
-    }
-    { txtRegex TextBox
-      MoveScaled(50,19,22,3)
-    }
-    { TextLblDelimiter TextLabel
-      MoveScaled(24,22,25,3)
-      Text = ("Value Field Delimiter (eg. ,)")
-      Alignment = Align.Normal
-    }
-    { txtDelimiter TextBox
-      MoveScaled(50,22,22,3)
-    }
-    { TextLblDebug TextLabel
-      MoveScaled(42,26,8,3)
-      Text = ("Debug")
-      Alignment = Align.Normal
-    }
-    { chkDebug CheckBox
-      MoveScaled(50,26,3,3)
-    }
-    { Separator1 Separator
-      MoveScaled(1,30,71,1)
-    }
-    { TextLblInfo TextLabel
-      MoveScaled(16,31,39,3)
-      Text = ("You can use test your regex below")
-      Alignment = Align.Center
-    }
-    { TextLblInputDataToTest TextLabel
-      MoveScaled(3,36,21,3)
-      Font = Font["Bold"]
-      Text = ("Input Data to Test")
-      Alignment = Align.Right
-    }
-    { txtInputTest TextBox
-      MoveScaled(25,36,47,3)
-    }
-    { TextLblDeviceAddressField TextLabel
-      MoveScaled(3,39,21,3)
-      Font = Font["Bold"]
-      Text = ("Device Address Field")
-      Alignment = Align.Right
-    }
-    { txtDeviceAddress TextBox
-      MoveScaled(25,39,47,3)
-    }
-    { TextLblAddressMatch TextLabel
-      MoveScaled(8,44,16,3)
-      Text = ("Address Match")
-      Alignment = Align.Right
-    }
-    { txtAddressMatch TextBox
-      MoveScaled(25,44,47,3)
-      NoTabFocus = True
-      ReadOnly = True
-    }
-    { TextLblValue1 TextLabel
-      MoveScaled(11,47,13,3)
-      Text = ("Value1")
-      Alignment = Align.Right
-    }
-    { txtValue1 TextBox
-      MoveScaled(25,47,47,3)
-      NoTabFocus = True
-      ReadOnly = True
-    }
-    { TextLblValue2 TextLabel
-      MoveScaled(11,50,13,3)
-      Text = ("Value2")
-      Alignment = Align.Right
-    }
-    { txtValue2 TextBox
-      MoveScaled(25,50,47,3)
-      NoTabFocus = True
-      ReadOnly = True
-    }
-    { TextLblValue3 TextLabel
-      MoveScaled(11,53,13,3)
-      Text = ("Value3")
-      Alignment = Align.Right
-    }
-    { txtValue3 TextBox
-      MoveScaled(25,53,47,3)
-      NoTabFocus = True
-      ReadOnly = True
-    }
-    { TextLblValue4 TextLabel
-      MoveScaled(11,56,13,3)
-      Text = ("Value4")
-      Alignment = Align.Right
-    }
-    { txtValue4 TextBox
-      MoveScaled(25,56,47,3)
-      NoTabFocus = True
-      ReadOnly = True
-    }
-    { TextLblBattery TextLabel
-      MoveScaled(11,59,13,3)
-      Text = ("Battery")
-      Alignment = Align.Right
-    }
-    { txtBattery TextBox
-      MoveScaled(25,59,47,3)
-      NoTabFocus = True
-      ReadOnly = True
-    }
     { btnDefaults Button
-      MoveScaled(2,65,12,4)
+      MoveScaled(1,69,12,4)
       Text = ("Defaults")
     }
     { btnSave Button
-      MoveScaled(47,65,12,4)
+      MoveScaled(38,69,12,4)
       Enabled = False
       Text = ("Save")
     }
     { btnCancel Button
-      MoveScaled(60,65,12,4)
+      MoveScaled(51,69,12,4)
       Text = ("Cancel")
+    }
+    { TabPanel1 TabPanel
+      MoveScaled(0,8,64,60)
+      Count = 2
+      Index = 0
+      Text = ("Main Settings")
+      { TextLblInterfaceType TextLabel
+        MoveScaled(2,6,15,4)
+        Text = ("InterfaceType")
+        Alignment = Align.Normal
+      }
+      { cmbType ComboBox
+        MoveScaled(18,6,22,4)
+        ReadOnly = True
+        List = [("tcp"), ("serial")]
+      }
+      { txtSerialPort TextBox
+        MoveScaled(18,21,22,4)
+      }
+      { TextLblSerialPort TextLabel
+        MoveScaled(2,21,15,4)
+        Text = ("Serial Port")
+        Alignment = Align.Normal
+      }
+      { TextLblBaudRate TextLabel
+        MoveScaled(2,26,15,4)
+        Text = ("Baud Rate")
+        Alignment = Align.Normal
+      }
+      { cmbBaudrate ComboBox
+        MoveScaled(18,26,11,4)
+        ReadOnly = True
+        List = [("9600"), ("19200"), ("38400"), ("57600"), ("115200")]
+      }
+      { txtTCPHost TextBox
+        MoveScaled(18,11,22,4)
+      }
+      { TextLblTCPHost TextLabel
+        MoveScaled(2,11,15,4)
+        Text = ("TCP Host")
+        Alignment = Align.Normal
+      }
+      { TextLblTCPPort TextLabel
+        MoveScaled(2,16,15,4)
+        Text = ("TCP Port")
+        Alignment = Align.Normal
+      }
+      { TextLblDebug TextLabel
+        MoveScaled(2,31,15,4)
+        Text = ("Debug")
+        Alignment = Align.Normal
+      }
+      { chkDebug CheckBox
+        MoveScaled(18,31,3,4)
+      }
+      { btnSerial Button
+        MoveScaled(40,21,4,4)
+        Picture = Picture["images/points.png"]
+      }
+      { txtTCPPort ValueBox
+        MoveScaled(18,16,8,4)
+      }
+      Index = 1
+      Text = ("RegEx Settings")
+      { TextLblRegEx TextLabel
+        MoveScaled(2,2,32,4)
+        Text = ("Regex (used to extract address eg. )")
+        Alignment = Align.Normal
+      }
+      { txtRegex TextBox
+        MoveScaled(35,2,27,4)
+      }
+      { txtDelimiter TextBox
+        MoveScaled(35,7,27,4)
+      }
+      { TextLblDelimiter TextLabel
+        MoveScaled(2,7,32,4)
+        Text = ("Value Field Delimiter (eg. ,)")
+        Alignment = Align.Normal
+      }
+      { TextLblInfo TextLabel
+        MoveScaled(10,11,39,4)
+        Text = ("You can use test your regex below")
+        Alignment = Align.Center
+      }
+      { txtInputTest TextBox
+        MoveScaled(22,15,40,4)
+      }
+      { TextLblDeviceAddressField TextLabel
+        MoveScaled(2,20,19,4)
+        Font = Font["Bold"]
+        Text = ("Device Address Field")
+        Alignment = Align.Normal
+      }
+      { txtDeviceAddress TextBox
+        MoveScaled(22,20,40,4)
+      }
+      { TextLblInputDataToTest TextLabel
+        MoveScaled(2,15,19,4)
+        Font = Font["Bold"]
+        Text = ("Input Data to Test")
+        Alignment = Align.Normal
+      }
+      { TextLblAddressMatch TextLabel
+        MoveScaled(2,25,19,4)
+        Text = ("Address Match")
+        Alignment = Align.Normal
+      }
+      { txtAddressMatch TextBox
+        MoveScaled(22,25,40,4)
+        NoTabFocus = True
+        ReadOnly = True
+      }
+      { txtValue1 TextBox
+        MoveScaled(22,30,40,4)
+        NoTabFocus = True
+        ReadOnly = True
+      }
+      { TextLblValue1 TextLabel
+        MoveScaled(2,30,19,4)
+        Text = ("Value1")
+        Alignment = Align.Normal
+      }
+      { TextLblValue2 TextLabel
+        MoveScaled(2,35,19,4)
+        Text = ("Value2")
+        Alignment = Align.Normal
+      }
+      { txtValue2 TextBox
+        MoveScaled(22,35,40,4)
+        NoTabFocus = True
+        ReadOnly = True
+      }
+      { TextLblValue3 TextLabel
+        MoveScaled(2,40,19,4)
+        Text = ("Value3")
+        Alignment = Align.Normal
+      }
+      { txtValue3 TextBox
+        MoveScaled(22,40,40,4)
+        NoTabFocus = True
+        ReadOnly = True
+      }
+      { TextLblValue4 TextLabel
+        MoveScaled(2,45,19,4)
+        Text = ("Value4")
+        Alignment = Align.Normal
+      }
+      { txtValue4 TextBox
+        MoveScaled(22,45,40,4)
+        NoTabFocus = True
+        ReadOnly = True
+      }
+      { TextLblBattery TextLabel
+        MoveScaled(2,50,19,4)
+        Text = ("Battery")
+        Alignment = Align.Normal
+      }
+      { txtBattery TextBox
+        MoveScaled(22,50,40,4)
+        NoTabFocus = True
+        ReadOnly = True
+      }
+      Index = 0
+    }
+    { TextLblDebug3 TextLabel
+      MoveScaled(0,3,15,4)
+      Text = ("Instance")
+      Alignment = Align.Normal
+    }
+    { cmbInstance ComboBox
+      MoveScaled(16,3,15,4)
+      ReadOnly = True
+      Sorted = True
+    }
+    { TextLblModuleEnabled TextLabel
+      MoveScaled(41,3,17,4)
+      Text = ("Module Enabled")
+      Alignment = Align.Normal
+    }
+    { chkEnabled CheckBox
+      MoveScaled(59,3,3,4)
     }
   }
 }

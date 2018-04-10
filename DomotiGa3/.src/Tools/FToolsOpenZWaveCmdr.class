@@ -1,0 +1,2060 @@
+' Gambas class file
+
+' Description:
+' FToolsOpenZWaveCmdr.class
+' Show and use Z-Wave functionality.
+
+' Development Status:
+' Works.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+' Define timers for Z-Wave Commander messages, the "real" timers are defined in COpenZWave.class
+' because the Commander doesn't have a garantueed lifetime during the Z-Wave lifetime
+Private tControllerCommandMessage As Timer
+Private tUserCodeEnrollMessage As Timer
+Public tRefreshTabInfo As Timer
+Public iRefreshTabInfo As Integer
+
+Private $Error As String
+Private $InstanceList As New Integer[]
+Private $cControllerInfo As JSONCollection
+Private $cNodeInfo As JSONCollection
+Private $iSelectedNode As Integer
+Private $iSelectedInstance As Integer
+Private $cNodeList As New JSONCollection
+Private $cConfigList As New JSONCollection
+
+' Only used in server mode
+Private $hOpenZWave As Object
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' initialize buttons and fill in current values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Form_Open()
+
+  Dim iInstance As Integer
+  Dim cControllerList As Collection
+  Dim iCnt As Integer
+
+  Me.Move(FMain.X + 50, FMain.Y + 70)
+
+  ' Check if we can/should show the Open Z-Wave Commander
+  If Main.bServer Then
+    If Not Plugin.IsPluginEnabled("OpenZWave", 0) Then
+      Message.Info(("OpenZWave Z-Wave interface is not enabled"))
+      Try Me.Close
+      Return
+    Endif
+  Endif
+
+  ' Create/define the Open Z-Wave node table
+  With tbvNodeList
+    .Columns.Count = 12
+    .Columns[0].Title = ("I")
+    .Columns[1].Title = ("Node")
+    .Columns[2].Title = ("Specific Type")
+    .Columns[3].Title = ("State")
+    .Columns[4].Title = ("Manufacturer")
+    .Columns[5].Title = ("Model")
+    .Columns[6].Title = ("Lastseen")
+    .Columns[7].Title = ("Value1")
+    .Columns[8].Title = ("Value2")
+    .Columns[9].Title = ("Value3")
+    .Columns[10].Title = ("Value4")
+    .Columns[11].Title = ("")
+
+    For iCnt = 0 To 9
+      .Columns[iCnt].Width = tbvNodeList.Font.TextWidth(.Columns[iCnt].Title) + .Font.Size
+    Next
+  End With
+
+  ' TabPanel - Node info table
+  With tbvNodeInfo
+    .Columns.Count = 2
+    .Columns[0].Title = ("Desc")
+    .Columns[1].Title = ("Detail")
+  End With
+
+  ' Create/define the configuration table
+  With tbvConfig
+    .Columns.Count = 4
+    .Columns[0].Title = ("I")
+    .Columns[0].Width = 25
+    .Columns[1].Title = ("Saved")
+    .Columns[1].Width = 0 'This column will NOT be shown, is for internal use
+    .Columns[1].Resizable = False ' This column will NOT be shown, is for internal use
+    .Columns[2].Title = ("Configuration")
+    .Columns[3].Title = ("Value")
+  End With
+
+  ' Create/define the association table
+  With tbvAssociation
+    .Columns.Count = 3
+    .Columns[0].Title = ("I")
+    .Columns[0].Width = 25
+    .Columns[1].Title = ("Group Name")
+    .Columns[2].Title = ("Assigned Node(s)")
+  End With
+
+  ' Create/define the usercode table
+  With tbvUserCode
+    .Columns.Count = 4
+    .Columns[0].Title = ("Number")
+    .Columns[0].Width = 0 'This column will NOT be shown, is for internal use
+    .Columns[0].Resizable = False ' This column will NOT be shown, is for internal use
+    .Columns[1].Title = ("Code")
+    .Columns[2].Title = ("Active")
+    .Columns[3].Title = ("UserCode")
+  End With
+
+  ' Server will need to get the information locally, because JSON-RPC may/may not be available
+  If Main.bServer Then
+    ' fill the combo list with the list of enabled instances
+    $InstanceList = Plugin.GetPluginEnabledList("OpenZWave")
+
+  Else
+    cControllerList = Client.ToolsOpenZWaveGet("list")
+
+    ' Don't continue if we get an empty response
+    If cControllerList = Null Or If Not cControllerList.Exist("count") Then
+      Message.Error(("Received an empty or invalid response from the JSON-RPC server.\nPlease consult the server logfile for more information"))
+      Try Me.Close
+      Return
+    Endif
+
+    ' Check if we received the valid fields and handle errors
+    If cControllerList["count"] = 0 Then
+      Message.Info(("OpenZWave Z-Wave interface is not enabled"))
+      Try Me.Close
+      Return
+    Endif
+
+    If Not cControllerList.Exist("instance_id") Then
+      Message.Error(("Missing controller list in response from the JSON-RPC server.\nPlease consult the server logfile for more information"))
+      Try Me.Close
+      Return
+    Endif
+
+    If TypeOf(cControllerList["instance_id"]) <> gb.Object Then
+      Message.Error(("Controller list is invalid in response from the JSON-RPC server.\nPlease consult the server logfile for more information"))
+      Try Me.Close
+      Return
+    Endif
+
+    ' Copy the instance list to an internal variable
+    $InstanceList = cControllerList["instance_id"]
+  Endif
+
+  ' loop through the list and fill the combo list
+  cmbList.Clear()
+  For Each iInstance In $InstanceList
+    cmbList.Add("instance #" & iInstance)
+  Next
+
+  ' Auto-enable the first instance
+  cmbList.Index = 0
+
+  ' Set node info tab as default
+  TabPanelOpenZWaveCmdr.Index = 0
+
+  ' Auto-hide all, except info+node
+  For iCnt = 0 To (TabPanelOpenZWaveCmdr.Count - 1)
+    If TabPanelOpenZWaveCmdr[iCnt].Text <> "Info" And If TabPanelOpenZWaveCmdr[iCnt].Text <> "Controller" Then
+      TabPanelOpenZWaveCmdr[iCnt].Visible = False
+    Endif
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Change the OpenZWave instance (list)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub cmbList_Click()
+
+  Dim cData As New JSONCollection
+  Dim iHomeId, iRow, iRowCnt, iRowAdd, jCnt As Integer
+  Dim bIsRunning As Boolean
+  Dim cNodeInfo As New JSONCollection
+  Dim cInstance, cValue As JSONCollection
+
+  ' Reset to blank, we use this variable to detect if an internal error happened
+  $Error = ""
+
+  If Main.bServer Then
+    Try $hOpenZWave = Plugin.GetPluginObject("OpenZWave", $InstanceList[cmbList.Index]).Interface
+    If Error Then
+      $Error = "OpenZWave Object Instance '" & $InstanceList[cmbList.Index] & "' doesn't exist\nPlease report this as a bug"
+    Else
+      cData.Add("controller", "command")
+      $cControllerInfo = $hOpenZWave.JsonRpc_Tools_OpenZWave_Get(cData)
+      If $cControllerInfo = Null Then
+        $Error = "OpenZWave Object Instance '" & $InstanceList[cmbList.Index] & "' reported an empty controller info.\nPlease report this as a bug"
+      Else
+        If Not $cControllerInfo.Exist("instance_id") Then
+          $Error = "OpenZWave Object Instance '" & $InstanceList[cmbList.Index] & "' doesn't have an instance id.\nPlease report this as a bug"
+        Endif
+      Endif
+    Endif
+  Else
+    $cControllerInfo = Client.ToolsOpenZWaveGet("controller", $InstanceList[cmbList.Index])
+
+    ' Report an invalid JSON-RPC response - this shouldn't happen at this stage
+    If $cControllerInfo = Null Or If Not $cControllerInfo.Exist("instance_id") Then
+      $Error = "Received an empty or invalid response from the JSON-RPC server.\nPlease consult the server logfile for more information"
+    Endif
+  Endif
+
+  ' If we got an error, show the error button
+  If $Error Then
+    txtStatus.Text = ("Not Connected")
+    txtStatus.Foreground = &HFF0000
+    btnShowError.Visible = True
+
+    Message.Error($Error)
+  Else
+
+    Try bIsRunning = $cControllerInfo["running"]
+
+    If bIsRunning Then
+      txtStatus.Text = ("Connected")
+      txtStatus.Foreground = &H00FF00
+      btnShowError.Visible = False
+      $Error = ""
+    Else
+      txtStatus.Text = ("Not Connected")
+      txtStatus.Foreground = &HFF0000
+      btnShowError.Visible = True
+
+      Try $Error = $cControllerInfo["errortext"]
+    Endif
+  Endif
+
+  ' Set On/Off/Slide off as default
+  tbvNodeList.Enabled = False
+  btnNodeOn.Enabled = False
+  btnNodeOff.Enabled = False
+  slDim.Enabled = False
+
+  ' Disable all config tab items
+  tbvConfig.Visible = False
+  FrConfigEmptyInfo.Visible = True
+  txtConfigHelp.Visible = False
+  frConfigHelp.Visible = False
+  btnConfigSave.Visible = False
+  lbConfigParam.Visible = False
+  lbConfigValue.Visible = False
+  lbConfigSize.Visible = False
+  vbConfigParam.Visible = False
+  vbConfigValue.Visible = False
+  cmbConfigSize.Visible = False
+  btnConfigSet.Visible = False
+  txtConfigInfo.Visible = False
+  frConfigInfo.Visible = False
+
+  ' We don't have a group list, remove all buttons
+  tbvAssociation.Visible = False
+  lbAssociationGroup.Visible = False
+  cmbAssociationGroup.Visible = False
+  lbAssociationNode.Visible = False
+  cmbAssociationNode.Visible = False
+  btnAddAssociation.Visible = False
+  btnRemoveAssociation.Visible = False
+  FrAssociationEmptyInfo.Visible = True
+
+  ' Disable UserCode buttons
+  tbvUserCode.Visible = False
+  btnUserCodeEnroll.Visible = False
+  btnUserCodeRemove.Visible = False
+  FrUserCodeEmptyInfo.Visible = True
+
+  ' Disable all nodes, because we don't know the node YET
+  btnRequestBasicReport.Enabled = False
+  btnRequestDynamicReport.Enabled = False
+  btnRequestNodeNeighborUpdate.Enabled = False
+  btnRefreshNodeInfo.Enabled = False
+  btnRequestVersionReport.Enabled = False
+  btnRequestMeterReport.Enabled = False
+  btnRemoveFailedNode.Enabled = False
+  btnReplaceFailedNode.Enabled = False
+
+  Try iHomeId = $cControllerInfo["homeid"]
+  Try txtControllerID.Text = $cControllerInfo["controllerid"]
+
+  ' Allow/Disallow the controller commands if we don't have a homeid
+  txtHomeID.Text = IIf(iHomeId <> 0, "0x" & Right(Hex(iHomeId), 8), "Unknown")
+  btnIncludeDevice.Enabled = (iHomeId <> 0)
+  btnExcludeDevice.Enabled = (iHomeId <> 0)
+  btnCancelControllerCommand.Enabled = (iHomeId <> 0)
+  btnSoftResetController.Enabled = (iHomeId <> 0)
+  btnHardResetController.Enabled = (iHomeId <> 0)
+  btnRequestBasicReportAll.Enabled = (iHomeId <> 0)
+  btnRequestDynamicReportAll.Enabled = (iHomeId <> 0)
+  btnRequestHealNetwork.Enabled = (iHomeId <> 0)
+
+  ' Only try to fill the table if we got valid data
+  If $cControllerInfo <> Null And If $cControllerInfo["count"] > 0 Then
+
+    ' Don't show the window if all is good
+    Try txtAllQueried.Visible = Not $cControllerInfo["allqueried"]
+    If Error Then txtAllQueried.Visible = True
+
+    tbvNodeList.Enabled = True
+    tbvNodeList.Rows.Count = $cControllerInfo["count"]
+    iRow = 0
+
+    For Each cNodeInfo In $cControllerInfo["nodeinfo"]
+
+      ' Add the rest of the node info to the table
+      tbvNodeList[iRow, 0].Text = ""
+      tbvNodeList[iRow, 1].Text = cNodeInfo["node_id"]
+      tbvNodeList[iRow, 2].Text = cNodeInfo["specific"]
+
+      If cNodeInfo["querystage"] = "Complete" Then
+        tbvNodeList[iRow, 3].Text = cNodeInfo["state"]
+      Else
+        If cNodeInfo["state"] = "Alive" Then
+          tbvNodeList[iRow, 3].Text = cNodeInfo["state"] & " (Interview)"
+        Else
+          tbvNodeList[iRow, 3].Text = cNodeInfo["state"]
+        Endif
+      Endif
+
+      tbvNodeList[iRow, 4].Text = cNodeInfo["manufacturername"]
+      tbvNodeList[iRow, 5].Text = cNodeInfo["productname"]
+      tbvNodeList[iRow, 6].Text = cNodeInfo["lastseen"]
+
+      If $cNodeList.Exist("current") Then
+        If tbvNodeList[iRow, 1].Text = $cNodeList["current"] Then
+          tbvNodeList.Row = iRow
+          $cNodeList["found"] = True
+        Endif
+      Endif
+
+      If cNodeInfo.Exist("instances") Then
+
+        ' Add a right arrowhead if number of instances is more then 1. We also check
+        ' if the number of instances are expanded in the previous tbvNodeList view
+        ' 9654 = Right Arrowhead, 9660 = Down Arrowhead
+        If cNodeInfo["instances"].Count > 1 Then
+           If $cNodeList.Exist(cNodeInfo["node_id"]) Then
+             If $cNodeList[cNodeInfo["node_id"]] Then
+               tbvNodeList[iRow, 0].Text = String.Chr(9660)
+             Else
+               tbvNodeList[iRow, 0].Text = String.Chr(9654)
+             Endif
+           Else
+             tbvNodeList[iRow, 0].Text = String.Chr(9654)
+           Endif
+        Endif
+
+        iRowCnt = 0
+
+        For Each cInstance In cNodeInfo["instances"]
+
+          ' Initialize the "values" if it is a null value
+          If Not cInstance.Exist("values") Then
+            cInstance["values"] = New Collection
+          Endif
+
+          If cInstance["instance_id"] = 1 Then
+            iRowAdd = iRow
+          Else
+            ' We should skip none-expanded nodes, or if it is the first time
+            If tbvNodeList[iRow, 0].Text <> String.Chr(9660) Then Continue
+
+            tbvNodeList.Rows.Count += 1
+            iRowCnt += 1
+            iRowAdd = iRow + iRowCnt
+
+            tbvNodeList[iRowAdd, 1].Text = cNodeInfo["node_id"] & ":" & cInstance["instance_id"]
+          Endif
+
+          If $cNodeList.Exist("current") Then
+            If tbvNodeList[iRowAdd, 1].Text = $cNodeList["current"] Then
+              tbvNodeList.Row = iRowAdd
+              $cNodeList["found"] = True
+            Endif
+          Endif
+
+          For Each cValue In cInstance["values"]
+
+            If Not cValue.Exist("valuenum") Then Continue
+
+            Select cValue["valuenum"]
+                Case 1
+                tbvNodeList[iRowAdd, 7].Text = cValue["value"]
+              Case 2
+                tbvNodeList[iRowAdd, 8].Text = cValue["value"]
+              Case 3
+                tbvNodeList[iRowAdd, 9].Text = cValue["value"]
+              Case 4
+                tbvNodeList[iRowAdd, 10].Text = cValue["value"]
+            End Select
+          Next
+
+        Next
+
+        ' Add any possible instance rows to the total
+        iRow += iRowCnt
+
+      Endif
+
+      ' Make column widther if needed
+      For jCnt = 0 To 10
+        If (tbvNodeList.Font.TextWidth(tbvNodeList[iRow, jCnt].Text) + tbvNodeList.Font.Size) > tbvNodeList.Columns[jCnt].Width Then
+          tbvNodeList.Columns[jCnt].Width = tbvNodeList.Font.TextWidth(tbvNodeList[iRow, jCnt].Text) + tbvNodeList.Font.Size
+        Endif
+      Next
+
+      ' Reset last column to zero, else the dynamic resize can go wrong
+      tbvNodeList.Columns[11].Width = 0
+
+      iRow += 1
+    Next
+
+    If Not $cNodeList.Exist("found") Then
+      tbvNodeList.Row = 0
+    Endif
+
+  Else
+
+    If $cControllerInfo <> Null Then
+      ' Don't show the window if all is good
+      Try txtAllQueried.Visible = Not $cControllerInfo["allqueried"]
+      If Error Then txtAllQueried.Visible = True
+    Endif
+
+    tbvNodeList.Enabled = False
+    tbvNodeList.Rows.Count = 0
+    $iSelectedNode = 0
+    $iSelectedInstance = 1
+    $cNodeInfo = Null
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' When clicked or change node
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tbvNodeList_Change()
+
+  EnableControls(tbvNodeList.Row)
+  UpdateTabPanel()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' When clicked on row, for the multi-instance support
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tbvNodeList_Click()
+
+  Dim cInstance As JSONCollection
+  Dim cValue As JSONCollection
+  Dim iRow As Integer
+
+  ' Only check the first column, with the instance info
+  If tbvNodeList.Column = 0 Then
+
+    Select tbvNodeList[tbvNodeList.Row, tbvNodeList.Column].Text
+
+      Case String.Chr(9654) ' arrowhead right
+        ' We have > 1 instances with values, add the rows
+        tbvNodeList[tbvNodeList.Row, 0].Text = String.Chr(9660)
+        tbvNodeList.Rows.Insert(tbvNodeList.Row + 1, $cNodeInfo["instances"].Count - 1)
+        iRow = tbvNodeList.Row
+
+        For Each cInstance In $cNodeInfo["instances"]
+  
+          If cInstance["instance_id"] > 1 And If cInstance.Exist("values") Then
+
+            iRow += 1
+            tbvNodeList[iRow, 1].Text = tbvNodeList[tbvNodeList.Row, 1].Text & ":" & cInstance["instance_id"]
+            For Each cValue In cInstance["values"]
+              Select cValue["valuenum"]
+                Case 1
+                  tbvNodeList[iRow, 7].Text = cValue["value"]
+                Case 2
+                  tbvNodeList[iRow, 8].Text = cValue["value"]
+                Case 3
+                  tbvNodeList[iRow, 9].Text = cValue["value"]
+                Case 4
+                  tbvNodeList[iRow, 10].Text = cValue["value"]
+              End Select
+            Next
+          Endif
+        Next
+
+      Case String.Chr(9660) ' arrowhead down
+        tbvNodeList[tbvNodeList.Row, 0].Text = String.Chr(9654)
+        tbvNodeList.Rows.Remove(tbvNodeList.Row + 1, $cNodeInfo["instances"].Count - 1)
+    End Select
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' When clicked on the tab strip, update the node info
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub TabPanelOpenZWaveCmdr_Click()
+
+  UpdateTabPanel()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Node id can have changed, enable correct buttons
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub EnableControls(iRow As Integer)
+
+  Dim cNodeInfo As JSONCollection
+  Dim sGeneric As String
+  Dim sStr As String
+
+  $iSelectedNode = 0
+  $iSelectedInstance = 1
+
+  If iRow = -1 And If tbvNodeList.Rows.Count >= 1 Then
+    tbvNodeList.Row = 0
+    iRow = 0
+  Endif
+
+  If iRow >= 0 Then
+    If InStr(tbvNodeList[iRow, 1].Text, ":") Then
+      Try $iSelectedNode = Mid$(tbvNodeList[iRow, 1].Text, 1, InStr(tbvNodeList[iRow, 1].Text, ":") - 1)
+      Try $iSelectedInstance = Mid$(tbvNodeList[iRow, 1].Text, InStr(tbvNodeList[iRow, 1].Text, ":") + 1)
+    Else
+      Try $iSelectedNode = tbvNodeList[iRow, 1].Text
+    Endif
+  Endif
+
+  ' Don't allow anything if the homeid is empty
+  If txtHomeID.Text = "Unknown" Then Return
+
+  ' Find the nodeinfo
+  $cNodeInfo = Null
+  For Each cNodeInfo In $cControllerInfo["nodeinfo"]
+    If cNodeInfo["node_id"] = $iSelectedNode Then
+      $cNodeInfo = cNodeInfo
+      Break
+    Endif
+  Next
+
+  If $cNodeInfo Then
+    sGeneric = $cNodeInfo["generic"]
+  Else
+    ' Something is wrong, disable everything
+    sGeneric = "Non Interoperable"
+  Endif
+
+  Select sGeneric
+    Case "Generic Controller", "Static Controller"
+      btnNodeOn.Enabled = False
+      btnNodeOff.Enabled = False
+      slDim.Value = 0
+      slDim.Enabled = False
+      btnRequestBasicReport.Enabled = False
+      btnRequestDynamicReport.Enabled = False
+      btnRequestNodeNeighborUpdate.Enabled = True
+      btnRefreshNodeInfo.Enabled = True
+      btnRequestVersionReport.Enabled = False
+      btnRequestMeterReport.Enabled = False
+      btnRemoveFailedNode.Enabled = ($iSelectedNode <> $cControllerInfo["controllerid"])
+      btnReplaceFailedNode.Enabled = ($iSelectedNode <> $cControllerInfo["controllerid"])
+
+    Case "Binary Switch"
+      btnNodeOff.Enabled = True
+      btnNodeOn.Enabled = True
+      slDim.Value = 0
+      slDim.Enabled = False
+      btnRequestBasicReport.Enabled = True
+      btnRequestDynamicReport.Enabled = True
+      btnRequestNodeNeighborUpdate.Enabled = True
+      btnRefreshNodeInfo.Enabled = True
+      btnRequestVersionReport.Enabled = True
+      btnRequestMeterReport.Enabled = True
+      btnRemoveFailedNode.Enabled = True
+      btnReplaceFailedNode.Enabled = True
+
+    Case "Multilevel Switch"
+
+      sStr = Replace(tbvNodeList[tbvNodeList.Row, 7].Text, "Dim ", "")
+      Try slDim.Value = CInt(sStr)
+
+      btnNodeOn.Enabled = True
+      btnNodeOff.Enabled = True
+      slDim.Enabled = True
+      btnRequestBasicReport.Enabled = True
+      btnRequestDynamicReport.Enabled = True
+      btnRequestNodeNeighborUpdate.Enabled = True
+      btnRefreshNodeInfo.Enabled = True
+      btnRequestVersionReport.Enabled = True
+      btnRequestMeterReport.Enabled = True
+      btnRemoveFailedNode.Enabled = True
+      btnReplaceFailedNode.Enabled = True
+
+    Case "Semi Interoperable", "Non Interoperable"
+      btnNodeOn.Enabled = False
+      btnNodeOff.Enabled = False
+      slDim.Value = 0
+      slDim.Enabled = False
+      btnRequestBasicReport.Enabled = False
+      btnRequestDynamicReport.Enabled = False
+      btnRequestNodeNeighborUpdate.Enabled = False
+      btnRefreshNodeInfo.Enabled = False
+      btnRequestVersionReport.Enabled = False
+      btnRequestMeterReport.Enabled = False
+      btnRemoveFailedNode.Enabled = True
+      btnReplaceFailedNode.Enabled = True
+
+    Default
+      btnNodeOn.Enabled = False
+      btnNodeOff.Enabled = False
+      slDim.Value = 0
+      slDim.Enabled = False
+      btnRequestBasicReport.Enabled = True
+      btnRequestDynamicReport.Enabled = True
+      btnRequestNodeNeighborUpdate.Enabled = True
+      btnRefreshNodeInfo.Enabled = True
+      btnRequestVersionReport.Enabled = True
+      btnRequestMeterReport.Enabled = True
+      btnRemoveFailedNode.Enabled = True
+      btnReplaceFailedNode.Enabled = True
+
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add a new row to the tbvNodeInfo table
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tbvNodeInfo_AddRow(Col1 As String, Col2 As String)
+
+   Dim iWidth As Integer
+
+  ' Add new row with the 2 column data
+  tbvNodeInfo.Rows.Count += 1
+  tbvNodeInfo[tbvNodeInfo.Rows.Count - 1, 0].Text = Col1
+  tbvNodeInfo[tbvNodeInfo.Rows.Count - 1, 1].Text = Col2
+
+  ' Resize column 1
+  iWidth = tbvNodeInfo.Font.TextWidth(tbvNodeInfo[tbvNodeInfo.Rows.Count - 1, 0].Text) + tbvNodeinfo.Font.Size
+  If iWidth > tbvNodeInfo.Columns[0].Width Then tbvNodeInfo.Columns[0].Width = iWidth
+
+  ' Resize column 2
+  iWidth = tbvNodeInfo.Font.TextWidth(tbvNodeInfo[tbvNodeInfo.Rows.Count - 1, 1].Text) + tbvNodeinfo.Font.Size
+  If iWidth > tbvNodeInfo.Columns[1].Width Then tbvNodeInfo.Columns[1].Width = iWidth
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Update Tab, controller, config, group, usercode, etc
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub UpdateTabPanel()
+
+  Dim bController, bFound As Boolean
+  Dim cData As JSONCollection
+  Dim iCnt, jCnt As Integer
+  Dim vVar As Variant
+  Dim cNodeInfo As New JSONCollection
+
+  If $iSelectedNode <= 0 Or If $cNodeInfo = Null Then
+    ' Clear the information in the tab
+    Return
+  Endif
+
+  ' Check if this node is the controller
+  bController = ($iSelectedNode = $cControllerInfo["controllerid"])
+
+  Select TabPanelOpenZWaveCmdr.Index
+
+    Case 0 ' Node Information Tab
+
+      ' Reset the tableview info
+      tbvNodeInfo.Clear
+      tbvNodeInfo.Rows.Count = 0
+      tbvNodeInfo.Columns[0].Width = 0
+      tbvNodeInfo.Columns[1].Width = 0
+
+      ' Add all usefull rows with node info
+      tbvNodeInfo_AddRow("Z-Wave-Id", $cNodeInfo["node_id"])
+      If bController Then tbvNodeInfo_AddRow("Serial Port", $cControllerInfo["serialport"])
+      If bController Then tbvNodeInfo_AddRow("Controller Type", $cControllerInfo["controllertype"])
+      tbvNodeInfo_AddRow("Manufacturer", $cNodeInfo["manufacturername"])
+      tbvNodeInfo_AddRow("Product", $cNodeInfo["productname"])
+      tbvNodeInfo_AddRow("Specific Type", $cNodeInfo["specific"])
+      tbvNodeInfo_AddRow("Neighbors", $cNodeInfo["neighbors"])
+      tbvNodeInfo_AddRow("Supported Classes", $cNodeInfo["commandclass"])
+      If $cNodeInfo["querystage"] = "Complete" Then
+        tbvNodeInfo_AddRow("Interview Stage", $cNodeInfo["querystage"])
+      Else
+        If $cNodeInfo["listening"] Then
+          tbvNodeInfo_AddRow("Interview Stage", $cNodeInfo["querystage"] & " (Interview Not Completed)")
+        Else
+          tbvNodeInfo_AddRow("Interview Stage", $cNodeInfo["querystage"] & " (Interview Not Completed - Wake-Up device)")
+        Endif
+      Endif
+      If Not bController Then tbvNodeInfo_AddRow("State", $cNodeInfo["state"])
+      If Not bController Then tbvNodeInfo_AddRow("Last Seen", $cNodeInfo["lastseen"])
+      tbvNodeInfo_AddRow("SDK Version", $cNodeInfo["sdkversion"])
+      If Not bController Then tbvNodeInfo_AddRow("Application Version", $cNodeInfo["applicationversion"])
+      If Not bController Then tbvNodeInfo_AddRow("Library Version", $cNodeInfo["libraryversion"])
+      tbvNodeInfo_AddRow("Listening", IIf($cNodeInfo["listening"], "True", "False (sleeping)"))
+      tbvNodeInfo_AddRow("Frequent Listening", IIf($cNodeInfo["frequentlistening"], "True", "False"))
+      tbvNodeInfo_AddRow("Beaming", IIf($cNodeInfo["beaming"], "True", "False"))
+      tbvNodeInfo_AddRow("Routing", IIf($cNodeInfo["routing"], "True", "False"))
+      tbvNodeInfo_AddRow("Security", IIf($cNodeInfo["security"], "True", "False"))
+      tbvNodeInfo_AddRow("Max Baud Rate", $cNodeInfo["maxbaudrate"])
+      tbvNodeInfo_AddRow("Basic Type", $cNodeInfo["basic"])
+      tbvNodeInfo_AddRow("Generic Type", $cNodeInfo["generic"])
+      tbvNodeInfo_AddRow("Custom Name", $cNodeInfo["customname"])
+      tbvNodeInfo_AddRow("Custom Location", $cNodeInfo["customlocation"])
+      If bController Then tbvNodeInfo_AddRow("OZW Version", $cControllerInfo["ozwversion"])
+      If bController Then tbvNodeInfo_AddRow("Wrapper Version", $cControllerInfo["wrapperversion"])
+
+      ' If this is the controller, add Driver statistics
+      If bController Then
+        If $cControllerInfo.Exist("statistics") Then
+          For Each vVar In $cControllerInfo["statistics"]
+            tbvNodeInfo_AddRow("Stat: " & $cControllerInfo["statistics"].Key, vVar)
+          Next
+        Else
+          tbvNodeInfo_AddRow("Stats", "Not Available")
+        Endif
+      Else
+        ' Add node statistics
+        If $cNodeInfo.Exist("statistics") Then
+          For Each vVar In $cNodeInfo["statistics"]
+            tbvNodeInfo_AddRow("Stat: " & $cNodeInfo["statistics"].Key, vVar)
+          Next
+        Else
+          tbvNodeInfo_AddRow("Stats", "Not Available")
+        Endif
+      Endif
+
+    Case 1 ' Controller
+
+    Case 2 ' Configuration
+
+      tbvConfig.Clear
+      tbvConfig.Rows.Count = 0
+      FrConfigEmptyInfo.Visible = False
+      txtConfigHelp.Text = ""
+
+      For jCnt = 2 To 3
+        tbvConfig.Columns[jCnt].Width = tbvConfig.Font.TextWidth(tbvConfig.Columns[jCnt].Title) + tbvConfig.Font.Size
+      Next
+
+      bFound = False
+
+      ' The config is received in the nodeinfo request
+      If $cNodeInfo.Exist("config") Then
+        For Each cData In $cNodeInfo["config"]
+          bFound = True
+
+          Inc tbvConfig.Rows.Count
+
+          ' Don't display a value if it is writeonly, then the open-zwave library couldn't retrieve any useable value 
+          If cData["writeonly"] Then
+            tbvConfig[tbvConfig.Rows.Count - 1, 1].Text = ""
+          Else
+            tbvConfig[tbvConfig.Rows.Count - 1, 1].Text = cData["value"] ' Old value - not visible
+          Endif
+
+          tbvConfig[tbvConfig.Rows.Count - 1, 0].Text = cData["index"]
+          tbvConfig[tbvConfig.Rows.Count - 1, 2].Text = cData["label"]
+          tbvConfig[tbvConfig.Rows.Count - 1, 3].Text = tbvConfig[tbvConfig.Rows.Count - 1, 1].Text
+
+          ' Try to find previous config row, else we reset to row 1
+          If $cConfigList.Exist("current") Then
+            If tbvConfig[tbvConfig.Rows.Count - 1, 0].Text = $cConfigList["current"] Then
+              tbvConfig.Row = tbvConfig.Rows.Count - 1
+              $cConfigList.Add(True, "found")
+            Endif
+          Endif
+        Next
+
+        ' Display the help info or reset it to a row -1
+        If $cConfigList.Exist("found") Then
+          tbvConfig_Click()
+        Else
+          tbvConfig.Row = -1
+        Endif
+      Endif
+
+      ' We don't have a config list, hide the table & save button
+      tbvConfig.Visible = bFound
+      txtConfigHelp.Visible = bFound
+      frConfigHelp.Visible = bFound
+      btnConfigSave.Visible = bFound
+      lbConfigParam.Visible = Not bFound
+      lbConfigValue.Visible = Not bFound
+      lbConfigSize.Visible = Not bFound
+      vbConfigParam.Visible = Not bFound
+      vbConfigValue.Visible = Not bFound
+      cmbConfigSize.Visible = Not bFound
+      btnConfigSet.Visible = Not bFound
+      txtConfigInfo.Visible = Not bFound
+      frConfigInfo.Visible = Not bFound
+
+      ' Make columns widther if needed, skip column 0
+      For iCnt = 0 To (tbvConfig.Rows.Count - 1)
+
+        For jCnt = 2 To 3
+          If (tbvConfig.Font.TextWidth(tbvConfig[iCnt, jCnt].Text) + tbvConfig.Font.Size) > tbvConfig.Columns[jCnt].Width Then
+            tbvConfig.Columns[jCnt].Width = tbvConfig.Font.TextWidth(tbvConfig[iCnt, jCnt].Text) + tbvNodeList.Font.Size
+          Endif
+        Next
+      Next
+
+    Case 3 ' Association
+
+      tbvAssociation.Clear
+      tbvAssociation.Rows.Count = 0
+
+      For jCnt = 1 To 2
+        tbvAssociation.Columns[jCnt].Width = tbvAssociation.Font.TextWidth(tbvAssociation.Columns[jCnt].Title) + tbvAssociation.Font.Size
+      Next
+
+      ' Empty the comboboxes
+      cmbAssociationGroup.Clear
+      cmbAssociationNode.Clear
+
+      bFound = False
+
+      ' The groups are received in the nodeinfo request
+      If $cNodeInfo.Exist("group") Then
+        For Each cData In $cNodeInfo["group"]
+          bFound = True
+
+          Inc tbvAssociation.Rows.Count
+          tbvAssociation[tbvAssociation.Rows.Count - 1, 0].Text = cData["group"]
+          tbvAssociation[tbvAssociation.Rows.Count - 1, 1].Text = cData["label"]
+          cmbAssociationGroup.Add(cData["label"])
+
+          ' The associated nodes are in an array of nodes (integer)
+          If cData["association"] Then
+            For Each iCnt In cData["association"]
+              tbvAssociation[tbvAssociation.Rows.Count - 1, 2].Text &= IIf(tbvAssociation[tbvAssociation.Rows.Count - 1, 2].Text, ", " & iCnt, iCnt)
+            Next
+          Endif
+        Next
+
+        ' Create a combobox with a nodelist if we found a group
+        If bFound Then
+          For Each cNodeInfo In $cControllerInfo["nodeinfo"]
+
+            ' Exclude myself from the list
+            If cNodeInfo["node_id"] <> $cNodeInfo["node_id"] Then
+              cmbAssociationNode.Add(cNodeInfo["node_id"])
+            Endif
+          Next
+
+          ' Now add possible nodes which don't exist in the current list
+          If cmbAssociationGroup.Text Then
+            For Each cData In $cNodeInfo["group"]
+              If cData["label"] = cmbAssociationGroup.Text And If cData.Exist("association") Then
+                For Each iCnt In cData["association"]
+                  If cmbAssociationNode.Find(iCnt) = -1 Then
+                    cmbAssociationNode.Add(iCnt)
+                  Endif
+                Next
+                Break
+              Endif
+            Next
+
+          Endif
+        Endif
+      Endif
+
+      tbvAssociation.Visible = bFound
+      lbAssociationGroup.Visible = bFound
+      cmbAssociationGroup.Visible = bFound
+      lbAssociationNode.Visible = bFound
+      cmbAssociationNode.Visible = bFound
+      btnAddAssociation.Visible = bFound
+      btnRemoveAssociation.Visible = bFound
+      FrAssociationEmptyInfo.Visible = Not bFound
+
+      ' Make columns widther if needed, skip column 0
+      For iCnt = 0 To (tbvAssociation.Rows.Count - 1)
+        For jCnt = 1 To 2
+          If (tbvAssociation.Font.TextWidth(tbvAssociation[iCnt, jCnt].Text) + tbvAssociation.Font.Size) > tbvAssociation.Columns[jCnt].Width Then
+            tbvAssociation.Columns[jCnt].Width = tbvAssociation.Font.TextWidth(tbvAssociation[iCnt, jCnt].Text) + tbvAssociation.Font.Size
+          Endif
+        Next
+      Next
+
+    Case 4 ' Wake-Up
+
+      Try vbWakeUpInterval.Value = CInt($cNodeInfo["wakeup_interval"])
+
+      If vbWakeUpInterval.Value = -1 Then
+        vbWakeUpInterval.Enabled = False
+        vbWakeUpInterval.Value = 0
+      Else
+        vbWakeUpInterval.Enabled = True
+      Endif
+
+    Case 5 ' UserCode
+
+      tbvUserCode.Clear
+      tbvUserCode.Rows.Count = 0
+
+      For jCnt = 1 To 3
+        tbvUserCode.Columns[jCnt].Width = tbvUserCode.Font.TextWidth(tbvUserCode.Columns[jCnt].Title) + tbvUserCode.Font.Size
+      Next
+
+      bFound = False
+
+          ' The usercodes are received in the nodeinfo request
+      If $cNodeInfo.Exist("usercode") Then
+        For Each cData In $cNodeInfo["usercode"]
+          bFound = True
+
+          Inc tbvUserCode.Rows.Count
+          tbvUserCode[tbvUserCode.Rows.Count - 1, 0].Text = cData["usercode"]
+          tbvUserCode[tbvUserCode.Rows.Count - 1, 1].Text = cData["label"]
+          tbvUserCode[tbvUserCode.Rows.Count - 1, 3].Text = cData["value"]
+          tbvUserCode[tbvUserCode.Rows.Count - 1, 2].Text = cData["text"]
+        Next
+      Endif
+
+      tbvUserCode.Visible = bFound
+      btnUserCodeEnroll.Visible = bFound
+      btnUserCodeRemove.Visible = bFound
+      btnUserCodeRemove.Enabled = Not bFound
+      FrUserCodeEmptyInfo.Visible = Not bFound
+
+      ' Make columns widther if needed, skip column 0
+      For iCnt = 0 To (tbvUserCode.Rows.Count - 1)
+        For jCnt = 1 To 3
+          If (tbvUserCode.Font.TextWidth(tbvUserCode[iCnt, jCnt].Text) + tbvUserCode.Font.Size) > tbvUserCode.Columns[jCnt].Width Then
+            tbvUserCode.Columns[jCnt].Width = tbvUserCode.Font.TextWidth(tbvUserCode[iCnt, jCnt].Text) + tbvUserCode.Font.Size
+          Endif
+        Next
+      Next
+
+    Default
+      ' ERROR
+
+  End Select
+
+  ' We can't configure the controller
+  TabPanelOpenZWaveCmdr[2].Visible = Not bController
+
+  ' Hide the association tab, if we don't have groups
+  TabPanelOpenZWaveCmdr[3].Visible = $cNodeInfo.Exist("group")
+
+  ' Hide the Wake-Up tab, if we don't a wake-up (none sleeping device)
+  TabPanelOpenZWaveCmdr[4].Visible = $cNodeInfo["wakeup"]
+
+  ' Hide the User Code tab, if we don't have groups
+  TabPanelOpenZWaveCmdr[5].Visible = $cNodeInfo.Exist("usercode")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Edit configuration value and handle type=list
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tbvConfig_Click()
+
+  Dim cConfig As Collection
+  Dim tbText As TextBox
+  Dim sList As New String[]
+  Dim sB, sStr As String
+
+  ' Clear the Help info
+  txtConfigHelp.Text = ""
+
+  If Not $cNodeInfo.Exist("config") Then Return
+  If tbvConfig.Row = -1 Then Return
+
+  For Each cConfig In $cNodeInfo["config"]
+
+    If cConfig["index"] = tbvConfig[tbvConfig.Row, 0].Text Then
+
+      sList = Split(cConfig["help"], " ")
+
+      sStr = ""
+      For Each sB In sList
+        If txtConfigHelp.Font.TextWidth(sStr & " " & sB) + (tbvNodeList.Font.Size * 2) < txtConfigHelp.Width Then
+          If sStr = "" Then
+            sStr = sB
+          Else
+            sStr &= " " & sB
+          Endif
+        Else
+          If txtConfigHelp.Text = "" Then
+            txtConfigHelp.Text = sStr
+            sStr = ""
+          Else
+            txtConfigHelp.Text &= "\n" & sStr
+            sStr = ""
+          Endif
+        Endif
+      Next
+
+      If sStr <> "" Then
+        If txtConfigHelp.Text = "" Then
+          txtConfigHelp.Text = sStr
+        Else
+          txtConfigHelp.Text &= "\n" & sStr
+        Endif
+      Endif
+
+      ' Reset the position to 1, else the help is unreadable
+      If txtConfigHelp.Length >= 1 Then txtConfigHelp.Pos = 1
+
+      ' Only edit the value column
+      If tbvConfig.Column <> 3 Then Return
+
+      ' Stop edit if the value is read-only
+      If cConfig["readonly"] Then Return
+
+      Select cConfig["type"]
+        Case "list"
+          tbvConfig.Edit(cConfig["list"], True)
+        Case "bool"
+          sList.Clear
+          sList.Add("True")
+          sList.Add("False")
+          tbvConfig.Edit(sList, True)
+        Default
+          ' We define a ValueBox, to only allow numeric values. The Z-Wave configuration has numeric values
+          ' We also align to the left, else it is unreadable
+          tbtext = New TextBox(tbvconfig) As "tbText"
+          tbText.Alignment = Align.Left
+          tbText.MaxLength = 10
+          tbvConfig.EditWith(tbText)
+      End Select
+
+      Break
+    Endif
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Change configuration value, not saved yet
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tbvConfig_Save(Row As Integer, Column As Integer, Value As String)
+
+  ' Save in Table & sending to the node will only be done if pressing "Save"
+  tbvConfig[Row, Column].Text = Value
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tbtext_KeyPress()
+
+  ' We only allow 0 .. 9 and none alphanumeric keys
+  If Not ((Key.Code >= 48 And Key.Code <= 57) Or Key.Code < 0 Or Key.Code > 255) Then
+    Stop Event
+  Endif
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Insert event, to cancel the edit of the last cell
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tbvConfig_Insert()
+
+  ' We need to send a cancel, else at the last cell, it will stay in edit mode
+  tbvConfig.Cancel
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Save the change configuration
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnConfigSave_Click()
+
+  Dim jCnt As Integer
+  Dim bChanged As Boolean
+  Dim cData As New JSONCollection
+  Dim cConfig As New JSONCollection
+
+  ' This can never work without a config array
+  If Not $cNodeInfo.Exist("config") Then Return
+
+  ' Save made settings
+  For jCnt = 0 To (tbvConfig.Rows.Count - 1)
+
+    ' Check if the value really has changed, then we sync it to the device
+    If tbvConfig[jCnt, 1].Text <> tbvConfig[jCnt, 3].Text Then
+
+      For Each cConfig In $cNodeInfo["config"]
+
+        If cConfig["index"] = tbvConfig[jCnt, 0].Text Then
+
+          If Main.bServer Then
+
+            Select cConfig["type"]
+              ' If it is a list type, we need to send a string - else a numeric value
+              Case "list"
+                $hOpenZWave.SetConfigParamList($iSelectedNode, CInt(tbvConfig[jCnt, 0].Text), tbvConfig[jCnt, 3].Text)
+              Case "bool"
+                If tbvConfig[jCnt, 3].Text = "True" Then
+                  $hOpenZWave.SetConfigParam($iSelectedNode, CInt(tbvConfig[jCnt, 0].Text), 1)
+                Else
+                  $hOpenZWave.SetConfigParam($iSelectedNode, CInt(tbvConfig[jCnt, 0].Text), 0)
+                Endif
+              Default
+                $hOpenZWave.SetConfigParam($iSelectedNode, CInt(tbvConfig[jCnt, 0].Text), CInt(tbvConfig[jCnt, 3].Text))
+            End Select
+
+          Else
+            cData["command"] = "setconfig"
+            cData["instance_id"] = $InstanceList[cmbList.Index]
+            cData["node_id"] = $iSelectedNode
+            cData["index"] = CInt(tbvConfig[jCnt, 0].Text)
+            cData["type"] = cConfig["type"]
+
+            Select cConfig["type"]
+              ' If it is a list type, we need to send a string - else a numeric value
+              Case "list"
+                cData["value"] = tbvConfig[jCnt, 3].Text
+              Case "bool"
+                If tbvConfig[jCnt, 3].Text = "True" Then
+                  cData["value"] = True
+                Else
+                  cData["value"] = False
+                Endif
+              Default
+                cData["value"] = CInt(tbvConfig[jCnt, 3].Text)
+            End Select
+
+            Client.ToolsOpenZWaveSet(cData)
+          Endif
+
+          Break
+        Endif
+      Next
+
+      ' Save the set value now
+      tbvConfig[jCnt, 1].Text = tbvConfig[jCnt, 3].Text
+
+      bChanged = True
+    Endif
+
+  Next
+
+  ' Start timer for refresh if a value has changed
+  If bChanged Then
+    tRefreshTabInfo = New Timer As "tRefreshTabInfo"
+    tRefreshTabInfo.Delay = 3000
+    tRefreshTabInfo.Start
+    iRefreshTabInfo = 1
+
+    If $cNodeInfo["listening"] Then
+      txtMessage.Text = "Configuration parameters send to the node"
+    Else
+      txtMessage.Text = "Configuration parameters send to the node, please wake it up now!"
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tbvUserCode_Click()
+
+  ' If the sStr is empty, then no UserCode registered
+  If (Left(tbvUserCode[tbvUserCode.Row, 3].Text, 4)) = "0x00" Then
+    btnUserCodeRemove.Enabled = False
+  Else
+    btnUserCodeRemove.Enabled = True
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnUserCodeEnroll_Click()
+
+  Dim cData As New JSONCollection
+
+  ' Send the command to open-zwave wrapper + start 30 sec timer
+  ' If the button is pressed twice, the timer restarts
+  If Main.bServer Then
+    $hOpenZWave.SetNodeUserCodeStart($iSelectedNode)
+  Else
+    cData["command"] = "addusercode"
+    cData["instance_id"] = $InstanceList[cmbList.Index]
+    cData["node_id"] = $iSelectedNode
+    Client.ToolsOpenZWaveSet(cData)
+  Endif
+
+  ' Start timer, we will cancel this command after 30 seconds
+  Try tUserCodeEnrollMessage.Stop
+  tUserCodeEnrollMessage = New Timer As "tUserCodeEnrollMessage"
+  tUserCodeEnrollMessage.Delay = 30000
+  tUserCodeEnrollMessage.Start
+  txtMessage.Text = "Start enrollment mode, hold the tag in front of the device or enter code"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tUserCodeEnrollMessage_Timer()
+
+  Dim cData As New JSONCollection
+
+  If Main.bServer Then
+    $hOpenZWave.SetNodeUserCodeStop()
+  Else
+    cData["command"] = "cancelusercode"
+    cData["instance_id"] = $InstanceList[cmbList.Index]
+    Client.ToolsOpenZWaveSet(cData)
+  Endif
+
+  tUserCodeEnrollMessage.Stop
+  txtMessage.Text = "30 seconds has expired, enrollment mode cancelled"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Remove UserCode from the node
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnUserCodeRemove_Click()
+
+  Dim cData As New JSONCollection
+
+  If (Left(tbvUserCode[tbvUserCode.Row, 3].Text, 4)) = "0x00" Then
+    txtMessage.Text = "UserCode can't be removed, because it isn't enrolled"
+  Else
+    ' Send the Remove UserCode to the Z-Wave device
+    txtMessage.Text = " Removal command send, it will be applied when the device wakes up"
+
+    If Main.bServer Then
+      $hOpenZWave.SetNodeUserCodeRemove($iSelectedNode, CInt(tbvUserCode[tbvUserCode.Row, 0].Text))
+    Else
+      cData["command"] = "removeusercode"
+      cData["instance_id"] = $InstanceList[cmbList.Index]
+      cData["node_id"] = $iSelectedNode
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnClose_Click()
+
+  Me.Close
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Turn node/instance On
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnNodeOn_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+    txtMessage.Text = "On command send to node " & $iSelectedNode & ", instance " & $iSelectedInstance
+
+    If Main.bServer Then
+      $hOpenZWave.SetValue($iSelectedNode, $iSelectedInstance, &HFF)
+    Else
+      cData["command"] = "setvalue"
+      cData["instance_id"] = $InstanceList[cmbList.Index]
+      cData["node_id"] = $iSelectedNode
+      cData["index"] = $iSelectedInstance
+      cData["value"] = &HFF
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Turn node/instance Off
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnNodeOff_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+    txtMessage.Text = "Off command send to node " & $iSelectedNode & ", instance " & $iSelectedInstance
+
+    If Main.bServer Then
+      $hOpenZWave.SetValue($iSelectedNode, $iSelectedInstance, &H0)
+    Else
+      cData["command"] = "setvalue"
+      cData["instance_id"] = $InstanceList[cmbList.Index]
+      cData["node_id"] = $iSelectedNode
+      cData["index"] = $iSelectedInstance
+      cData["value"] = &H0
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+  
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Dim a node/instance 0-100%
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub slDim_MouseUp()
+
+  Dim cData As New JSONCollection
+
+  If slDim.Enabled And If $iSelectedNode >= 1 Then
+    txtMessage.Text = "Dim=" & slDim.Value & " request send to node " & $iSelectedNode
+
+    If Main.bServer Then
+      $hOpenZWave.SetValue($iSelectedNode, $iSelectedInstance, slDim.Value)
+    Else
+      cData["command"] = "setvalue"
+      cData["instance_id"] = $InstanceList[cmbList.Index]
+      cData["node_id"] = $iSelectedNode
+      cData["index"] = $iSelectedInstance
+      cData["value"] = slDim.Value
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Request basic report from node
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnRequestBasicReport_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+    txtMessage.Text = "Requested basic report for node " & $iSelectedNode
+
+    If Main.bServer Then
+      $hOpenZWave.RequestBasicReport($iSelectedNode)
+    Else
+      cData["command"] = "basicreport"
+      cData["instance_id"] = $InstanceList[cmbList.Index]
+      cData["node_id"] = $iSelectedNode
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Request node capabilities
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnRequestCapabilities_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+    txtMessage.Text = "Requested capabilities for node " & $iSelectedNode
+
+    If Main.bServer Then
+      $hOpenZWave.RequestNodeCapabilities($iSelectedNode)
+    Else
+      cData["command"] = "nodecapability"
+      cData["instance_id"] = $InstanceList[cmbList.Index]
+      cData["node_id"] = $iSelectedNode
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Refresh the nodelist information of the current controller instance
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnRefresh_Click()
+
+  Dim iRow As Integer
+  Dim iNode As Integer
+  Dim iInstance As Integer
+
+  $cNodeList = New JSONCollection
+  $cConfigList = New JSONCollection
+
+  ' Store our current position and size in the tbvNodeList
+  If tbvNodeList.Row >= 0 Then $cNodeList.Add(tbvNodeList[tbvNodeList.Row, 1].Text, "current")
+  $cNodeList.Add(tbvNodeList.Rows.Count, "count")
+
+  ' Check if we are in the config tab, then save the current row
+  If TabPanelOpenZWaveCmdr.Index = 2 Then
+    If tbvConfig.Row >= 0 Then $cConfigList.Add(tbvConfig[tbvConfig.Row, 0].Text, "current")
+    $cConfigList.Add(tbvConfig.Rows.Count, "count")
+  Endif
+
+  ' Store the current list of nodes and instances. This is required
+  ' to not restart at Line 1 during a refresh
+  For iRow = 0 To (tbvNodeList.Rows.Count - 1)
+    If InStr(tbvNodeList[iRow, 1].Text, ":") Then
+      iNode = Mid$(tbvNodeList[iRow, 1].Text, 1, InStr(tbvNodeList[iRow, 1].Text, ":") - 1)
+      iInstance = Mid$(tbvNodeList[iRow, 1].Text, InStr(tbvNodeList[iRow, 1].Text, ":") + 1)
+    Else
+      iNode = tbvNodeList[iRow, 1].Text
+      iInstance = 1
+    Endif
+
+    ' Set to False if 1 instance, if multi-instance set to True
+    If iInstance = 1 Then
+      $cNodeList.Add(False, iNode)
+    Else
+      $cNodeList.Add(True, iNode)
+    Endif
+  Next
+
+  ' Store the current list of configuration items. This is required
+  ' to not restart at Line 1 during a refresh
+  For iRow = 0 To (tbvConfig.Rows.Count - 1)
+    $cConfigList.Add(True, tbvConfig[iRow, 0].Text)
+  Next
+
+  cmbList_Click()
+
+  If tbvNodeList.Row >= 0 Then
+    EnableControls(tbvNodeList.Row)
+  Endif
+
+  UpdateTabPanel()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Cancel the possible activate controllercommand
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnCancelControllerCommand_Click()
+
+  Dim cData As New JSONCollection
+
+  ' Try to stop the timer, if configured
+  Try tControllerCommandMessage.Stop
+
+  If Main.bServer Then
+  If $hOpenZWave.CancelControllerCommand() Then
+    txtMessage.Text = "Cancelled controller command"
+  Else
+    txtMessage.Text = "Controller was already in normal operation mode"
+  Endif
+  Else
+    cData.Add("cancelcontrollercommand", "command")
+    cData.Add($InstanceList[cmbList.Index], "instance_id")
+    Client.ToolsOpenZWaveSet(cData)
+    txtMessage.Text = "Cancelled controller command"
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Start inclusion of a device, the button needs to be pressed on the device to complete
+' Will be automatic cancelled after 30 seconds
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnIncludeDevice_Click()
+
+  Dim cData As New JSONCollection
+
+  If Main.bServer Then
+    If $hOpenZWave.IncludeDevice() Then
+      txtMessage.Text = "Press button on device to add!"
+
+      ' Start timer, we will cancel this command after 30 seconds
+      tControllerCommandMessage = New Timer As "tControllerCommandMessage"
+      tControllerCommandMessage.Delay = 30000
+      tControllerCommandMessage.Start
+    Else
+      txtMessage.Text = "Controller already in add/remove mode, press cancel first"
+    Endif
+  Else
+    cData.Add("includedevice", "command")
+    cData.Add($InstanceList[cmbList.Index], "instance_id")
+    Client.ToolsOpenZWaveSet(cData)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Start exclusion of a device, the button needs to be pressed on the device to complete
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnExcludeDevice_Click()
+
+  Dim cData As New JSONCollection
+
+  If Main.bServer Then
+    If $hOpenZWave.ExcludeDevice() Then
+      txtMessage.Text = "Press button on device to remove!"
+
+      ' Start timer, we will cancel this command after 30 seconds
+      tControllerCommandMessage = New Timer As "tControllerCommandMessage"
+      tControllerCommandMessage.Delay = 30000
+      tControllerCommandMessage.Start
+    Else
+      txtMessage.Text = "Controller already in add/remove mode, press cancel first"
+    Endif
+  Else
+    cData.Add("excludedevice", "command")
+    cData.Add($InstanceList[cmbList.Index], "instance_id")
+    Client.ToolsOpenZWaveSet(cData)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Request the node to update its neighborhood
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnRequestNodeNeighborUpdate_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+
+    If Main.bServer Then
+      txtMessage.Text = "Requesting neighborhood update for node " & $iSelectedNode
+      $hOpenZWave.RequestNodeNeighborUpdate($iSelectedNode)
+    Else
+      cData.Add("updateneighbor", "command")
+      cData.Add($InstanceList[cmbList.Index], "instance_id")
+      cData.Add($iSelectedNode, "node_id")
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add association/device to a group
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnAddAssociation_Click()
+
+  Dim cData As New JSONCollection
+  Dim iGroup As Integer
+  Dim iNode As Integer
+
+  If $iSelectedNode = 0 Then Return
+
+  ' Stop if the group information is unavailable
+  If Not $cNodeInfo.Exist("group") Then Return
+
+  iGroup = 0
+
+  ' Search in the list for the group id
+  For Each cData In $cNodeInfo["group"]
+
+    If cData["label"] = cmbAssociationGroup.Current.Text Then
+      Try iGroup = CInt(cData["group"])
+      Break
+    Endif
+  Next
+
+  ' Stop if we didn't find the group id
+  If iGroup = 0 Then
+    txtMessage.Text = "ERROR: Requested group id is 0"
+    Return
+  Endif
+
+  iNode = 0
+  Try iNode = CInt(cmbAssociationNode.Current.Text)
+
+  ' Stop if the node id is invalid
+  If iNode = 0 Then
+    txtMessage.Text = "ERROR: Requested node id is 0"
+    Return
+  Endif
+
+  txtMessage.Text = "Adding association for node " & $iSelectedNode & " - group " & iGroup & " and node " & iNode
+
+  If Main.bServer Then
+    $hOpenZWave.AddAssociation($iSelectedNode, iGroup, iNode)
+  Else
+    cData = New JSONCollection
+    cData.Add("addassociation", "command")
+    cData.Add($InstanceList[cmbList.Index], "instance_id")
+    cData.Add($iSelectedNode, "node_id")
+    cData.Add(iGroup, "group")
+    cData.Add(iNode, "addnode")
+    Client.ToolsOpenZWaveSet(cData)
+  Endif
+
+  ' Start timer for refresh
+  tRefreshTabInfo = New Timer As "tRefreshTabInfo"
+  tRefreshTabInfo.Delay = 1000
+  tRefreshTabInfo.Start
+  iRefreshTabInfo = 1
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Remove association from group
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnRemoveAssociation_Click()
+
+  Dim cData As New JSONCollection
+  Dim iGroup As Integer
+  Dim iNode As Integer
+
+  If $iSelectedNode = 0 Then Return
+
+  ' Stop if the group information is unavailable
+  If Not $cNodeInfo.Exist("group") Then Return
+
+  iGroup = 0
+
+  ' Search in the list for the group id
+  For Each cData In $cNodeInfo["group"]
+
+    If cData["label"] = cmbAssociationGroup.Current.Text Then
+      Try iGroup = CInt(cData["group"])
+      Break
+    Endif
+  Next
+
+  ' Stop if we didn't find the group id
+  If iGroup = 0 Then
+    txtMessage.Text = "ERROR: Requested group id is 0"
+    Return
+  Endif
+
+  iNode = 0
+  Try iNode = CInt(cmbAssociationNode.Current.Text)
+
+  ' Stop if the node id is invalid
+  If iNode = 0 Then
+    txtMessage.Text = "ERROR: Requested node id is 0"
+    Return
+  Endif
+
+
+  txtMessage.Text = "Removing association for node " & $iSelectedNode & " - group " & iGroup & " and node " & iNode
+
+  If Main.bServer Then
+    $hOpenZWave.RemoveAssociation($iSelectedNode, iGroup, iNode)
+  Else
+    cData = New JSONCollection
+    cData["command"] = "removeassociation"
+    cData["instance_id"] = $InstanceList[cmbList.Index]
+    cData["node_id"] = $iSelectedNode
+    cData["group"] = iGroup
+    cData["removenode"] = iNode
+    Client.ToolsOpenZWaveSet(cData)
+  Endif
+
+  ' Start timer for refresh
+  tRefreshTabInfo = New Timer As "tRefreshTabInfo"
+  tRefreshTabInfo.Delay = 1000
+  tRefreshTabInfo.Start
+  iRefreshTabInfo = 1
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tRefreshTabInfo_Timer()
+
+  btnRefresh_Click()
+  Me.Refresh()
+
+  iRefreshTabInfo = iRefreshTabInfo + 1
+  If iRefreshTabInfo >= 5 Then
+    tRefreshTabInfo.Stop
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Request Dynamic report (all values, including meter)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnRequestDynamicReport_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+
+    If Main.bServer Then
+      txtMessage.Text = "Requesting dynamic update for node " & $iSelectedNode
+      $hOpenZWave.RequestNodeDynamicReport($iSelectedNode)
+    Else
+      cData["command"] = "dynamicreport"
+      cData["instance_id"] = $InstanceList[cmbList.Index]
+      cData["node_id"] = $iSelectedNode
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Refresh the node information, rediscover it
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnRefreshNodeInfo_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+
+    If Main.bServer Then
+      txtMessage.Text = "Requesting RefreshInfo for node " & $iSelectedNode
+      $hOpenZWave.RefreshNodeInfo($iSelectedNode)
+    Else
+      cData["command"] = "nodeinfo"
+      cData["instance_id"] = $InstanceList[cmbList.Index]
+      cData["node_id"] = $iSelectedNode
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Request version information, like library/application of the device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnRequestVersionReport_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+
+    If Main.bServer Then
+      txtMessage.Text = "Requesting version report for node " & $iSelectedNode
+      $hOpenZWave.RequestNodeVersionReport($iSelectedNode)
+    Else
+      cData["command"] = "versionreport"
+      cData["instance_id"] = $InstanceList[cmbList.Index]
+      cData["node_id"] = $iSelectedNode
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Request meter e.g. kWh values from the device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnRequestMeterReport_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+
+    If Main.bServer Then
+      txtMessage.Text = "Requesting meter report for node " & $iSelectedNode
+      $hOpenZWave.RequestNodeMeterReport($iSelectedNode)
+    Else
+      cData["command"] = "meterreport"
+      cData["instance_id"] = $InstanceList[cmbList.Index]
+      cData["node_id"] = $iSelectedNode
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Soft reset controller, data isn't lost
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnSoftResetController_Click()
+
+  Dim cData As New JSONCollection
+
+  If Message.Question(("Are you sure that you want to SOFT Reset the Z-Wave controller?"), ("Yes"), ("No")) = 1 Then
+    txtMessage.Text = "Controller is beeing Soft Reset (Reboot)"
+
+    If Main.bServer Then
+      $hOpenZWave.ControllerSoftReset()
+    Else
+      cData.Add("softreset", "command")
+      cData.Add($InstanceList[cmbList.Index], "instance_id")
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Hard reset controller, ALL data will be lost
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnHardResetController_Click()
+
+  Dim cData As New JSONCollection
+
+  If Message.Question("Are you sure that you want to HARD Reset the Z-Wave controller?\n*** *ALL* the data will be erased from the controller ***", ("Yes"), ("No")) = 1 Then
+    txtMessage.Text = "Controller is beeing HARD Reset (*ALL* data erased)"
+
+    If Main.bServer Then
+      $hOpenZWave.ControllerHardReset()
+    Else
+      cData.Add("hardreset", "command")
+      cData.Add($InstanceList[cmbList.Index], "instance_id")
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnRequestBasicReportAll_Click()
+
+  Dim cData As New JSONCollection
+
+  txtMessage.Text = "Requested basic report for all nodes"
+
+  If Main.bServer Then
+    $hOpenZWave.RequestBasicReport(0)
+  Else
+      cData.Add("basicreport", "command")
+      cData.Add($InstanceList[cmbList.Index], "instance_id")
+      cData.Add(0, "node_id")
+      Client.ToolsOpenZWaveSet(cData)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnRequestDynamicReportAll_Click()
+
+  Dim cData As New JSONCollection
+
+  txtMessage.Text = "Requested dynamic report for all nodes"
+
+  If Main.bServer Then
+    $hOpenZWave.RequestNodeDynamicReport(0)
+  Else
+      cData.Add("dynamicreport", "command")
+      cData.Add($InstanceList[cmbList.Index], "instance_id")
+      cData.Add(0, "node_id")
+      Client.ToolsOpenZWaveSet(cData)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tControllerCommandMessage_Timer()
+
+  txtMessage.Text = "30 seconds have expired, cancelling controller command"
+  tControllerCommandMessage.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Check if node is failed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnHasNodeFailed_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+    txtMessage.Text = "Trying to check for failed node " & $iSelectedNode
+
+    If Main.bServer Then
+      $hOpenZWave.HasNodeFailed($iSelectedNode)
+    Else
+      cData.Add("checknode", "command")
+      cData.Add($InstanceList[cmbList.Index], "instance_id")
+      cData.Add($iSelectedNode, "node_id")
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Remove a failed node, it *needs* to be on the controller failed list, else it will not work
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnRemoveFailedNode_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+    txtMessage.Text = "Trying to remove failed node " & $iSelectedNode
+
+    If Main.bServer Then
+      $hOpenZWave.RemoveFailedNode($iSelectedNode)
+    Else
+      cData.Add("removenode", "command")
+      cData.Add($InstanceList[cmbList.Index], "instance_id")
+      cData.Add($iSelectedNode, "node_id")
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Replace a failed node with the same device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnReplaceFailedNode_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+    txtMessage.Text = "Trying to replace failed node " & $iSelectedNode
+
+    If Main.bServer Then
+      $hOpenZWave.ReplaceFailedNode($iSelectedNode)
+    Else
+      cData.Add("replacenode", "command")
+      cData.Add($InstanceList[cmbList.Index], "instance_id")
+      cData.Add($iSelectedNode, "node_id")
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Heal the Z-Wave network, requesting a neighborhood update of all nodes
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnRequestHealNetwork_Click()
+
+  Dim cData As New JSONCollection
+
+  txtMessage.Text = "Healing the Z-Wave network"
+
+  If Main.bServer Then
+    $hOpenZWave.HealNetwork()
+  Else
+    cData.Add("healnetwork", "command")
+    cData.Add($InstanceList[cmbList.Index], "instance_id")
+    Client.ToolsOpenZWaveSet(cData)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Set/change config item
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnConfigSet_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+    txtMessage.Text = "Setting config parameter " & vbConfigParam.Value & " for node " & $iSelectedNode & " to " & vbConfigParam.Value
+
+    If Main.bServer Then
+      $hOpenZWave.SetConfigParam($iSelectedNode, vbConfigParam.Value, vbConfigValue.Value, cmbConfigSize.Text)
+    Else
+      cData.Add("setvalue", "command")
+      cData.Add($InstanceList[cmbList.Index], "instance_id")
+      cData.Add($iSelectedNode, "node_id")
+      cData.Add(vbConfigParam.Value, "index")
+      cData.Add(vbConfigValue.Value, "value")
+      cData.Add(CInt(cmbConfigSize.Text), "size")
+      Client.ToolsOpenZWaveSet(cData)
+    Endif
+
+  Endif
+
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Set/change wakeup interval of the device, normally it takes a while before it is picked up
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnSetWakeUpInterval_Click()
+
+  Dim cData As New JSONCollection
+
+  If $iSelectedNode >= 1 Then
+
+    If vbWakeUpInterval.Value > 0 Then
+      txtMessage.Text = "Setting Wake-Up interval " & vbWakeUpInterval.Value & " seconds for node " & $iSelectedNode
+
+      If Main.bServer Then
+        $hOpenZWave.SetNodeWakeUpInterval($iSelectedNode, vbWakeUpInterval.Value)
+      Else
+        cData.Add("wakeupinterval", "command")
+        cData.Add($InstanceList[cmbList.Index], "instance_id")
+        cData.Add($iSelectedNode, "node_id")
+        cData.Add(CInt(vbWakeUpInterval.Value), "value")
+        Client.ToolsOpenZWaveSet(cData)
+      Endif
+
+    Else
+      txtMessage.Text = "Wake-Up interval has to be 1 or greater"
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Show the error message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub btnShowError_Click()
+
+  Message.Error($Error)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Update the Association list, based on the available and assigned nodeid
+' It is possible a node doesn't exist anymore, and we can't remove it anymore
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub cmbAssociationGroup_Click()
+
+  Dim cNodeInfo As JSONCollection
+  Dim cData As JSONCollection
+  Dim iCnt As Integer
+
+  ' Clear the association node list
+  cmbAssociationNode.Clear
+
+  ' Check if we got a valid node record and an association group name
+  If $cNodeInfo And If cmbAssociationGroup.Text Then
+
+    ' Loop through all the nodes and add it to the list
+    For Each cNodeInfo In $cControllerInfo["nodeinfo"]
+      ' Exclude myself from the list
+      If cNodeInfo["node_id"] <> $cNodeInfo["node_id"] Then
+        cmbAssociationNode.Add(cNodeInfo["node_id"])
+      Endif
+    Next
+
+    ' Now add possible nodes which don't exist in the current list
+    For Each cData In $cNodeInfo["group"]
+      If cData["label"] = cmbAssociationGroup.Text And If cData.Exist("association") Then
+        For Each iCnt In cData["association"]
+          If cmbAssociationNode.Find(iCnt) = -1 Then
+            cmbAssociationNode.Add(iCnt)
+          Endif
+        Next
+        Break
+      Endif
+    Next
+
+  Endif
+
+End

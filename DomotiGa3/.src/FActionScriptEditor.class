@@ -65,10 +65,10 @@ End
 
 Public Sub LoadVariables(sParent As String)
 
-  Dim vValue As Variant
+  Dim cGV As CGlobalVarEntry
 
   tvVariables.Add(Left(sParent, 3), sParent)
-  For Each vValue In Main.GlobalVar
+  For Each cGV In Main.GlobalVar
     LoadItem(Main.GlobalVar.Key, Main.GlobalVar.Key, Left(sParent, 3))
   Next
 
@@ -76,14 +76,13 @@ End
 
 Public Sub LoadDevices(sParent As String)
 
-  Dim iCount As Integer
   Dim rResult As Result
   Dim sKey As String
 
   tvVariables.Add(Left(sParent, 3), sParent)
 
   rResult = Devices.GetDevicesAndValues(["sortOrder": "name"])
-  
+
   If Not rResult Then
     LoadItem("ERROR", "Error: table 'devices' not found!", Left(sParent, 3))
     Return
@@ -141,6 +140,9 @@ Public Sub LoadMacros(sParent As String)
     tvVariables.Add("Macro_" & rResult!name, "Macro_" & rResult!name,, Left(sParent, 3))
     rResult.MoveNext
   Next
+
+Catch
+
 End
 
 Public Sub LoadThermostats()
@@ -169,7 +171,7 @@ Public Sub LoadThermostats()
     tvVariables.Add("Hea_" & rResult!id, rResult!name,, sSubKey)
     rResult.MoveNext
   Next
- 
+
 End
 
 Public Sub LoadFunctions(sParent As String)
@@ -405,11 +407,5 @@ Public Sub tMessage_Timer()
 
   txtEvalResult.Text = ""
   tMessage.Stop
-
-End
-
-Public Sub Frame3_MouseDown()
-
-  
 
 End

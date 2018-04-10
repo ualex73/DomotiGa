@@ -227,7 +227,7 @@ Public Sub btnSave_Click()
   If Main.bServer Then
     Main.Restart_Astro()
   Else
-    Client.ModuleRestart("Astro")
+    Client.Plugin_Restart("Astro")
   Endif
   Me.Close
 
@@ -236,18 +236,6 @@ End
 Public Sub btnCancel_Click()
 
   Me.Close
-
-End
-
-Public Sub vbLatitude_Change()
-
-  btnSave.Enabled = True
-
-End
-
-Public Sub vbLongitude_Change()
-
-  btnSave.Enabled = True
 
 End
 

@@ -23,19 +23,22 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
-Public sProgramVersion As String = "1.0.014"
+Public sProgramVersion As String = "1.0.024"
 Public sBaseDir As String
 Public sSettings As String = "server-domotiga.conf"
 Public bExitProgram As Boolean ' exit program flag
 Public sLanguage As String
 Public bAllowAutoUpgrade As Boolean
 Public bAutoDeviceCreate As Boolean
+Public bLogAllValueUpdates As Boolean
 
 ' Client/Server
 Public bServer As Boolean = True
-Public hBroadcastEvent As UdpSocket
-Public aBroadcastAddrs As New String[]
-Public sOurIPAddress As String
+Public sOtherServer As String
+
+' IP/Broadcast addresses
+Public aBroadcastAddr As New String[]
+Public aIPAddr As New String[]
 
 ' Debug
 Public bMainDebug As Boolean
@@ -60,6 +63,7 @@ Public hMainLogFile As File  ' main log file
 Public hSpeakLogFile As File ' speak log file
 Public hDebugLogFile As File ' debug log file
 Public sLogPrefix As String
+Private sLastWriteLog As String
 
 ' Collection with Global Variables (these survive a program restart)
 Public GlobalVar As New Collection
@@ -78,6 +82,7 @@ Public tMainSleep As Timer
 
 ' MySQL
 Public sSQLHost As String
+Public iSQLPort As Integer
 Public sSQLUser As String
 Public sSQLPass As String
 Public sSQLDatabase As String
@@ -141,29 +146,13 @@ Public bEmailSSL As Boolean
 Public bGTranslateEnabled As Boolean = False ' use Google Translate
 Public sGTranslateAPIKey As String ' Google Translate (paid) API key
 
-' VideoServer
-Public bVideoServerEnabled As Boolean
-Public sVideoServerAddress As String
-Public iVideoServerPort As Integer
-Public sVideoServerUser As String
-Public sVideoServerPassword As String
-Public bVideoServerDebug As Boolean
-Public sVideoServerChannel1 As String
-Public sVideoServerChannel2 As String
-Public sVideoServerChannel3 As String
-Public sVideoServerChannel4 As String
-
 ' RRDTool
 Public bRRDToolEnabled As Boolean
 Public iRRDToolPollTime As Integer
+Public iRRDToolWidth As Integer
+Public iRRDToolHeight As Integer
 Public sRRDToolRRA As String
 Public bRRDToolDebug As Boolean
-
-' TV Guide
-Public bTVGuideEnabled As Boolean
-Public sTVGuideXMLGrabCommand As String
-Public sTVGuideXMLFile As String
-Public bTVGuideDebug As Boolean
 
 ' Server Stats
 Public bServerStatsEnabled As Boolean
@@ -173,16 +162,6 @@ Public bServerStatsDebug As Boolean
 ' WakeOnLan
 Public hBroadcast As UdpSocket
 
-' XMLRPC
-Public bXMLRPCEnabled As Boolean
-Public iXMLRPCMaxConn As Integer
-Public iXMLRPCHTTPPort As Integer
-Public bXMLRPCDebug As Boolean
-Public hXMLRPC As CXMLRPC
-
-' Broadcast UDP
-Public bBroadcastUDPEnabled As Boolean
-
 ' CallerID
 Public bCallerIDEnabled As Boolean
 Public sCallerIDCountryCode As String
@@ -191,23 +170,6 @@ Public sCallerIDNationalPrefix As String
 Public sCallerIDInternationalPrefix As String
 Public bCallerIDAutoCreateContacts As Boolean
 Public bCallerIDDebug As Boolean
-
-' TemperatureNu
-Public bTemperaturNuEnabled As Boolean
-Public sTemperaturNuCity As String
-Public sTemperaturNuId As Integer
-Public iTemperaturNuPushTime As Integer
-Public bTemperaturNuDebug As Boolean
-Public iTemperaturNuDeviceId As Integer
-Public sTemperaturNuDeviceValue As String
-
-' WeatherBug
-Public bWeatherBugEnabled As Boolean
-Public sWeatherBugID As String
-Public sWeatherBugCity As String
-Public sWeatherBugCityCode As String
-Public sWeatherBugCountryName As String
-Public bWeatherBugDebug As Boolean
 
 ' xPL
 Public bxPLEnabled As Boolean
@@ -224,11 +186,6 @@ Public bRFXComxPLGlobalX10 As Boolean
 Public bRFXComxPLDebug As Boolean
 Public hRFXComxPL As CRFXComxPL
 
-' Shell
-Public bShellEnabled As Boolean
-Public iShellPollTime As Integer
-Public bShellDebug As Boolean
-
 ' XBMC xPL
 Public bXBMCxPLEnabled As Boolean
 Public sXBMCxPLRXAddress As String
@@ -236,12 +193,8 @@ Public sXBMCxPLTXAddress As String
 Public bXBMCxPLDebug As Boolean
 Public hXBMCxPL As CXBMCxPL
 
-' WeatherUnderground
-Public bWeatherUGEnabled As Boolean
-Public sWeatherUGApiKey As String
-Public sWeatherUGCity As String
-Public iWeatherUGRefresh As Integer
-Public bWeatherUGDebug As Boolean
+' SendUDP
+Public hSendUDP As UdpSocket
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' this is where domotiga starts
@@ -252,13 +205,20 @@ Public Function Main() As Boolean
   Dim sBackTrace, sTrace As String
   Dim iSleep, iSleepTimer As Integer
 
+  ' Detect our IP and broadcast address(es)
+  aIPAddr = Util.Detect_IPAddr()
+  aBroadcastAddr = Util.Detect_BroadcastAddr()
+
   ' determine basedir
-  If Exist(Application.Path &/ "logs") Then
-    sBaseDir = Application.Path
-  Else If Exist(Mid$(Application.Path &/ "logs", 1, RInStr(Application.Path, "/")))
-    sBaseDir = Mid$(Application.Path, 1, RInStr(Application.Path, "/"))
-  Else
-    Main.WriteLog("ERROR: Couldn't determine DomotiGaServer's base directory.")
+  sBaseDir = Application.Path
+  If InStr(sBaseDir, "/" & Application.Name) Then
+    If RInStr(sBaseDir, "/") = InStr(sBaseDir, "/" & Application.Name, RInStr(sBaseDir, "/")) Then
+      sBaseDir = Left(sBaseDir, RInStr(sBaseDir, "/") - 1)
+    Endif
+  Endif
+
+  If Not Exist(sBaseDir) Then
+    Print "ERROR: Couldn't determine DomotiGaServer's base directory."
     Quit
   Endif
 
@@ -266,17 +226,24 @@ Public Function Main() As Boolean
   ParseArgs()
 
   ' load program settings
-  Main.GetConfig()
+  GetConfig()
+  
+  ' Check if pid exists
+  sOtherServer = Util.CheckDomotiGaPid()
+
+  ' Create pid file if not exists
+  If sOtherServer <> Application.Name Then Util.CreateDomotiGaPid()
 
   ' set language
   System.Language = sLanguage
 
   ' start different sections
-  Main.Setup_BroadcastAddrs()
-  Main.Setup_Logfiles()
-  Main.DisplayProgramInfo()
-  Main.WriteLog("[Main] Checking directory structure ...")
-  Main.CreateDirectoryTree()
+  Setup_Logfiles()
+
+  ' Check directory structure and create if required
+  CreateDirectoryTree()
+
+  DisplayProgramInfo()
 
   ' connect to the mysql database
   iSleep = 0
@@ -324,17 +291,17 @@ Public Function Main() As Boolean
 
   If Main.bMainDebug Then Main.WriteLog("[Main] Main Debug enabled.")
   SetGlobalVar("Tagline", Main.Random_Text("remarks_tags"))
-  Main.WriteLog("[Main] The current tagline is '" & GetGlobalVar("Tagline") & "'")
+  WriteLog("[Main] The current tagline is '" & GetGlobalVar("Tagline") & "'")
   If bSoundEnabled Then Sounds.PlaySnd("click.wav")
 
   If GetGlobalVar("EmailCount") Then Main.iNewMails = GetGlobalVar("EmailCount")
   If GetGlobalVar("CallCount") Then Main.iNewCalls = GetGlobalVar("CallCount")
   If GetGlobalVar("VoiceMailCount") Then Main.iNewVoicemails = GetGlobalVar("VoiceMailCount")
 
-  ' Catch CTRL-Z signal
-  'Signal[Signal.SIGINT].Catch
-  ' Catch kill -TERM signal
-  'Signal[Signal.SIGTERM].Catch
+  ' Catch Control-C -TERM signal
+  Signal[Signal.SIGINT].Catch
+  ' Catch default kill signal
+  Signal[Signal.SIGTERM].Catch
 
   ' exit program
 
@@ -342,7 +309,7 @@ Catch ' error trap
   For Each sBackTrace In Error.Backtrace
     sTrace &= sBackTrace & "\n"
   Next
-  Main.WriteLog("ERROR: " & Error.Text & " " & Error.Code & " at\n" & sTrace)
+  Main.WriteLog("ERROR: '" & Error.Text & "' '" & Error.Code & "' at\n" & sTrace)
   Main.WriteLog("Program abort.")
   Quit
 
@@ -352,15 +319,28 @@ End
 ' Catch Linux signals
 ' http://en.wikipedia.org/wiki/Signal_(computing)
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'Public Sub Application_Signal(iSignal As Integer)
+Public Sub Application_Signal(iSignal As Integer)
+
+  Dim sSignal As String
+
+  Select Case iSignal
+    Case Signal.SIGTERM
+      sSignal = "SIGTERM"
+    Case Signal.SIGINT
+      sSignal = "SIGINT"
+    Case Else
+      sSignal = "<Unknown signal " & iSignal & ">"
+  End Select
+  Print "Received signal " & sSignal & ", exit " & Application.Name
+  WriteLog("[Main] Received signal " & sSignal & ", exit " & Application.Name)
 
   ' Reset signal handler
-  'Signal[iSignal].Reset
+  Signal[iSignal].Reset
 
   ' We want to exit the program
-  'bExitProgram = True
+  bExitProgram = True
 
-'End
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' parse command line arguments
@@ -376,7 +356,7 @@ Private Function ParseArgs()
       If sArg = "-d" Then
         ' start as a daemon in the background
         Application.Daemon = True
-      Else If sArg = "-h" Then
+      Else If sArg = "-h" Or If sArg = "--help" Then
         ' display help info
         Print Application.Name & " version " & sProgramVersion
         Print "Copyright(C) 2008-" & Year(Now) & " Ron Klinkien"
@@ -420,6 +400,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function ConnectDatabase() As Boolean
 
+  Dim sVersion As String
+
   ' try to close the connection first
   Try hDB.Close
 
@@ -427,11 +409,22 @@ Public Function ConnectDatabase() As Boolean
   With hDB
     .Type = "mysql"
     .Host = sSQLHost
+    .Port = iSQLPort
     .Login = sSQLUser
     .Password = sSQLPass
     .Name = sSQLDatabase
     .Open
   End With
+
+  WriteLog("[MySQL] Database on host '" & sSQLHost & "'.")
+  WriteLog("[MySQL] Port used " & iSQLPort & ".")
+  If hDB.Type = "mysql" Then
+    sVersion = Format(hDB.Version, "000000")
+    Try sVersion = CInt(Mid(sVersion, 1, 2)) & "." & CInt(Mid(sVersion, 3, 2)) & "." & CInt(Mid(sVersion, 5, 2))
+    WriteLog("[MySQL] Version is " & sVersion & ".")
+  Else
+    WriteLog("[MySQL] Version is " & hDB.Version & ".")
+  Endif
 
   ' all ok
   Return True
@@ -458,24 +451,15 @@ End
 '-------------------------------------------------------
 ' update the mysql database
 '-------------------------------------------------------
-Public Function UpdateDatabase() As Boolean
+Public Sub UpdateDatabase() As Boolean
 
-  Dim rResult As Result
-  Dim sSalt, sMD5 As String
+  ' We assume all passwords are already encrypted in MD5 format
 
-  rResult = Main.hDB.Exec("SELECT username, password FROM users WHERE NOT ISNULL(password) AND (length(password) != 33 OR (length(password) = 33 AND substring(password,1,3) != 'MD5'))")
-  ' update the 'users' table in database: set all passwords to an md5 hash
-  For Each rResult
-    sMD5 = Crypt.MD5(rResult!password)
-    sSalt = Right$(Left$(sMD5, 11), 8)
-    sMD5 = Right$(sMD5, 22)
-    Main.hDB.Exec("UPDATE users SET password = &1 WHERE username = &2", "MD5" & sSalt & sMD5, rResult!username)
-    Main.WriteLog("[Main] MySQL users table password changed to MD5 hash for user '" & rResult!username & "'")
-  Next
+  ' Do nothing, no DB changes are required
   Return True
 
 Catch ' some errors in update db
-  Main.WriteLog("[Main] MySQL Update ERROR: " & ERROR.Text)
+  Main.WriteLog("[Main] MySQL update ERROR: " & Error.Text)
   Return False
 
 End
@@ -485,7 +469,9 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub DisplayProgramInfo()
 
-  Dim sUptime, sModified As String
+  Dim sUptime As String
+  Dim sModified As String
+  Dim sId As String
 
   With Stat(Application.Path)
     sModified = Format$(.LastModified, "yyyy-mm-dd hh:nn:ss")
@@ -494,12 +480,31 @@ Public Sub DisplayProgramInfo()
   Exec ["uptime"] To sUptime
   WriteLog("[Main]  ---- Program Restart ----")
   WriteLog("[Main] Starting " & Application.Name & " V" & Main.sProgramVersion & " last updated on " & sModified)
-  WriteLog("[Main] Running on host '" & System.Host & "' (pid " & Application.Id & ") as user '" & System.User.Name & "' (id " & System.User.Id & ")" & " with language " & System.Language)
+  WriteLog("[Main] Running on host '" & System.Host & "' (pid " & Application.Id & ") as user '" & System.User.Name & "' (id " & System.User.Id & ").")
+  WriteLog("[Main] Detected IP " & IIf(aIPAddr.Count > 1, "Addresses", "Address") & " '" & aIPAddr.Join(", ") & "'.")
+  WriteLog("[Main] Detected Broadcast " & IIf(aBroadcastAddr.Count > 1, "Addresses", "Address") & " '" & aBroadcastAddr.Join(", ") & "'.")
+  WriteLog("[Main] System language is '" & System.Language & "' on architecture '" & System.Architecture & "'.")
   WriteLog("[Main] Program base directory is '" & sBaseDir & "'.")
   WriteLog("[Main] Database settings are loaded from '" & sSettings & "'.")
   WriteLog("[Main] Active logfiles are '" & sMainLogFile & "', '" & sSpeakLogFile & "' and '" & sDebugLogFile & "'.")
   WriteLog("[Main] Running on Gambas version " & GetGambasVersion())
   WriteLog("[Main] Server uptime is " & Left$(Replace$(sUptime, "  ", " "), -1))
+
+  ' If we detect another instance running, report it now
+  If sOtherServer Then
+    WriteLog("[Main] *******************************************************************************")
+    WriteLog("[Main] WARNING: Other " & sOtherServer & " instance is detected. Running multiple instances can cause issues.") 
+    WriteLog("[Main] *******************************************************************************")
+  Endif
+
+  ' If we aren't super-user, check for the 'dailout' group and give warning if needed
+  If System.User.Id Then
+    Exec ["id"] To sId
+    If InStr(sId, "(dialout)") = 0 Then
+      WriteLog("[Main] WARNING: User '" & System.User.Name & "' doesn't have the group 'dialout' in its profile, most likely serial/USB ports can't accessed")
+    Endif
+  Endif
+
 
   ' check if started as superuser
   If System.User.Id = 0 Then
@@ -511,22 +516,22 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' create main directory structure if incomplete
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub CreateDirectoryTree()
+Private Sub CreateDirectoryTree()
 
-  If Not Exist(sBaseDir) Then
-    WriteLog("[Main] Creating default directory structure.")
-    Try Mkdir (sBaseDir)
-    Try Mkdir (sBaseDir &/ "logs")
-    Try Mkdir (sBaseDir &/ "www")
-    Try Mkdir (sBaseDir &/ "icons")
-    Try Mkdir (sBaseDir &/ "images")
-    Try Mkdir (sBaseDir &/ "sounds")
-    Try Mkdir (sBaseDir &/ "rrd")
-    Try Mkdir (sBaseDir &/ "rrd/graphs")
-    Try Mkdir (sBaseDir &/ "tvguide")
-    Try Mkdir (sBaseDir &/ "tvguide/imdb")
-    Try Mkdir (sBaseDir &/ "tvguide/cache")
-  Endif
+  Dim sStr As String
+  Dim bFirst As Boolean
+
+  For Each sStr In ["logs", "icons", "icons/devices", "sounds", "rrd", "rrd/graphs", "tvguide", "certificate"]
+    If Not Exist(sBaseDir &/ sStr) Then
+      If Not bFirst Then
+        bFirst = True
+        WriteLog("[Main] Creating default directory structure.")
+      Endif
+
+      Try Mkdir (sBaseDir &/ sStr)
+      WriteLog("[Main] Creating directory '" & sBaseDir &/ sStr & "'.")
+    Endif
+  Next
 
 End
 
@@ -535,11 +540,20 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SetConfig()
 
-  SetConfigValue("MySQL/Host", sSQLHost)
-  SetConfigValue("MySQL/User", sSQLUser)
-  SetConfigValue("MySQL/Password", sSQLPass)
-  SetConfigValue("MySQL/Database", sSQLDatabase)
-  SetConfigValue("Program/Language", sLanguage)
+  Dim hSettings As Settings
+
+  hSettings = New Settings(sBaseDir &/ sSettings)
+  hSettings["MySQL/Host"] = sSQLHost
+  hSettings["MySQL/Port"] = iSQLPort
+  hSettings["MySQL/User"] = sSQLUser
+  hSettings["MySQL/Password"] = sSQLPass
+  hSettings["MySQL/Database"] = sSQLDatabase
+  hSettings["Program/Language"] = sLanguage
+
+  Try hSettings.Save
+  If Error Then
+    Print "ERROR: Unable to write to file '" & sBaseDir &/ sSettings & "'. Please check the file permissions"
+  Endif
 
 End
 
@@ -555,16 +569,24 @@ Public Sub GetConfig()
   If Not Exist(sBaseDir &/ sSettings) Then
     hSettings = New Settings(sBaseDir &/ sSettings)
     hSettings["MySQL/Host"] = "localhost"
+    hSettings["MySQL/Port"] = 3306
     hSettings["MySQL/User"] = "domouser"
     hSettings["MySQL/Password"] = "kung-fu"
     hSettings["MySQL/Database"] = "domotiga"
     hSettings["Program/Language"] = "en_US.UTF-8"
-    hSettings.Save
+
+    Try hSettings.Save
+    If Error Then
+      Print "ERROR: Unable to write to file '" & sBaseDir &/ sSettings & "'. Please check the file permissions"
+      Quit
+    Endif
+
     ' re-load
     GetConfig()
     Main.WriteLog("[Main] Couldn't open config file called '" & Main.sSettings & "'. Created one with default settings!")
   Else
     sSQLHost = GetConfigValue("MySQL/Host", "localhost")
+    iSQLPort = GetConfigValue("MySQL/Port", 3306)
     sSQLUser = GetConfigValue("MySQL/User", "domouser")
     sSQLPass = GetConfigValue("MySQL/Password", "kung-fu")
     sSQLDatabase = GetConfigValue("MySQL/Database", "domotiga")
@@ -593,6 +615,7 @@ Public Sub GetSettings()
   iMainFlushTime = rResult!flushtime
   iLogBuffer = rResult!logbuffer
   bAutoDeviceCreate = rResult!autodevicecreate
+  bLogAllValueUpdates = rResult!logallvalueupdates
   sLogPrefix = rResult!logprefix
 
   ' Sound
@@ -641,46 +664,20 @@ Public Sub GetSettings()
   sEmailPassword = rResult!password
   bEmailSSL = rResult!sslenabled
 
-  ' VideoServer
-  rResult = GetSettingTable("videoserver")
-  bVideoServerEnabled = rResult!enabled
-  sVideoServerAddress = rResult!tcphost
-  iVideoServerPort = rResult!tcpport
-  sVideoServerUser = rResult!user
-  sVideoServerPassword = rResult!password
-  bVideoServerDebug = rResult!debug
-  sVideoServerChannel1 = rResult!channel1
-  sVideoServerChannel2 = rResult!channel2
-  sVideoServerChannel3 = rResult!channel3
-  sVideoServerChannel4 = rResult!channel4
-
   ' RRDTool
   rResult = GetSettingTable("rrdtool")
   bRRDToolEnabled = rResult!enabled
   iRRDToolPollTime = rResult!polltime
+  iRRDToolWidth = rResult!width
+  iRRDToolHeight = rResult!height
   sRRDToolRRA = rResult!rra
   bRRDToolDebug = rResult!debug
-
-  ' XML TVGuide
-  rResult = GetSettingTable("tvguide")
-  bTVGuideEnabled = rResult!enabled
-  sTVGuideXMLGrabCommand = rResult!xmlgrabcmd
-  sTVGuideXMLFile = rResult!xmlfile
-  bTVGuideDebug = rResult!debug
 
   ' Server Stats
   rResult = GetSettingTable("serverstats")
   bServerStatsEnabled = rResult!enabled
   sServerStatsName = rResult!servername
   bServerStatsDebug = rResult!debug
-
-  ' XMLRPC
-  rResult = GetSettingTable("xmlrpc")
-  bXMLRPCEnabled = rResult!enabled
-  iXMLRPCMaxConn = rResult!maxconn
-  iXMLRPCHTTPPort = rResult!httpport
-  bXMLRPCDebug = rResult!debug
-  bBroadcastUDPEnabled = rResult!broadcastudp
 
   ' CallerID
   rResult = GetSettingTable("callerid")
@@ -691,25 +688,6 @@ Public Sub GetSettings()
   sCallerIDInternationalPrefix = rResult!prefixinternational
   bCallerIDAutoCreateContacts = rResult!autocreatecontacts
   bCallerIDDebug = rResult!debug
-
-  ' TemperaturNu
-  rResult = GetSettingTable("temperaturnu")
-  bTemperaturNuEnabled = rResult!enabled
-  sTemperaturNuCity = rResult!city
-  sTemperaturNuId = rResult!apikey
-  iTemperaturNuPushTime = rResult!pushtime
-  iTemperaturNuDeviceId = rResult!deviceid
-  sTemperaturNuDeviceValue = rResult!devicevalue
-  bTemperaturNuDebug = rResult!debug
-
-  ' WeatherBug
-  rResult = GetSettingTable("weatherbug")
-  bWeatherBugEnabled = rResult!enabled
-  sWeatherBugID = rResult!weatherbugid
-  sWeatherBugCity = rResult!city
-  sWeatherBugCityCode = rResult!citycode
-  sWeatherBugCountryName = rResult!countryname
-  bWeatherBugDebug = rResult!debug
 
   ' xPL
   rResult = GetSettingTable("xpl")
@@ -726,12 +704,6 @@ Public Sub GetSettings()
   bRFXComxPLGlobalX10 = rResult!globalx10
   bRFXComxPLDebug = rResult!debug
 
-  ' Shell
-  rResult = GetSettingTable("shell")
-  bShellEnabled = rResult!enabled
-  iShellPollTime = rResult!polltime
-  bShellDebug = rResult!debug
-
   ' XBMC xPL
   rResult = GetSettingTable("xbmcxpl")
   bXBMCxPLEnabled = rResult!enabled
@@ -739,32 +711,11 @@ Public Sub GetSettings()
   sXBMCxPLTXAddress = rResult!txaddress
   bXBMCxPLDebug = rResult!debug
 
-  ' Weather Underground
-  rResult = GetSettingTable("weatherug")
-  bWeatherUGEnabled = rResult!enabled
-  sWeatherUGApiKey = rResult!apikey
-  sWeatherUGCity = rResult!city
-  iWeatherUGRefresh = rResult!polltime
-  bWeatherUGDebug = rResult!debug
-
 Catch
   WriteLog("[Main] ERROR: " & Error.Text & " " & Error.Code & " while loading settings at " & Error.Where & "!\nIs your database version correct?")
 
   CloseAll()
   Quit
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' set a value in the config file
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SetConfigValue(sKey As String, vValue As Variant)
-
-   Dim hSettings As Settings
-
-   hSettings = New Settings(sBaseDir &/ sSettings)
-   hSettings[sKey] = vValue
-   hSettings.Save
 
 End
 
@@ -799,6 +750,9 @@ Public Sub WriteLog(sText As String, Optional bStrip As Boolean)
   Endif
   Main.BroadcastEvent("[MainLog]" & sLogPrefix & sText)
 
+  ' Store the last line, preventing duplicates in WriteDebugLog
+  sLastWriteLog = sText
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -825,7 +779,7 @@ Public Sub WriteDebugLog(sText As String, Optional bStrip As Boolean)
 
   If Not bStrip Then sText &= "\n"
   sText = Format$(Now, "yyyy/mm/dd hh:nn:ss") & " " & sText
-  Print sText;
+  If sLastWriteLog <> sText Then Print sText;
   If hDebugLogFile Then
     Print #hDebugLogFile, sText;
     Flush #hDebugLogFile
@@ -835,9 +789,9 @@ Public Sub WriteDebugLog(sText As String, Optional bStrip As Boolean)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' display text on console and save to log without date/time (for RFXCom)
+' display text on console and save to log without date/time header
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub WriteRFXDebugLog(sText As String, Optional bStrip As Boolean)
+Public Sub WriteDebugLogChars(sText As String, Optional bStrip As Boolean)
 
   If Not bStrip Then sText = Format$(Now, "yyyy/mm/dd hh:nn:ss") & " " & sText
   Print sText;
@@ -892,21 +846,11 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub CloseAll()
 
+  ' not a real plugin yet
+  Try hxPL.Disconnect 
+
   ' stop all running timers
   StopTimers()
-
-  ' XBMCxPl close
-  Try hXBMCxPL = Null
-  ' shell
-  Try Shell.tShell.Stop
-  ' xpl close
-  Try hxPL.Disconnect
-  ' UDP broadcast server close
-  Try hBroadcastEvent.Close
-  ' rfxcom close
-  Try hRFXComxPL = Null
-  ' xmlrpc close
-  Try hXMLRPC.Disconnect
 
   ' Stop all plugins
   Plugin.StopAll()
@@ -929,24 +873,21 @@ Public Sub Setup()
   GetSettings() ' read all settings from database
   RestoreGlobalVars() ' restore globalvars from database
   If Not bMainDebug Then WriteLog("[Main] NOTE: All disabled module log entries are muted, enable main debug if you want to see them!")
-  Setup_IPAddr() ' get our ip address
+
+  ' Start broadcast for Client/Server
+  Plugin.Register("broadcastudp")
+  Plugin.Restart("broadcastudp")
+
   Setup_Email() ' e-mail SMTP client
   Setup_Sound() ' built in sound player
   Setup_VoiceText() ' text2speech support
   Setup_Thermostat() ' Thermostat function
   Setup_RRDTool() ' RRDTool graphing framework
-  Setup_XMLRPC() ' XML-RPC server
-  Setup_VideoServer() ' IP9100 videoserver
-  Setup_TVGuide() ' XMLTV guide
   Setup_ServerStats() ' Server Statistics
-  Setup_TemperaturNu() ' TemperaturNu support
-  Setup_WeatherBug() ' WeatherBug support
   Setup_xPL() ' xPL support
   Setup_RFXComxPL() ' RFXCom xPL support
-  Setup_Shell() ' Shell support
   Setup_Calendar() 'Calendar planning support
   Setup_XBMCxPL() ' XBMC control via xPL
-  Setup_WeatherUG() ' Weather Underground support
 
   ' Register all plugins
   Plugin.Init()
@@ -1001,10 +942,10 @@ Public Sub Setup_Logfiles()
   Try Close #hSpeakLogFile
   Try Close #hDebugLogFile
 
-  sMainLogFile As String = "server-main-" & Format(Now, "yyyy-mm") & ".log"
-  sSpeakLogFile As String = "server-speak-" & Format(Now, "yyyy-mm") & ".log"
-  sDebugLogFile As String = "server-debug-" & Format(Now, "yyyy-mm") & ".log"
-  sDomoZWaveFile As String = "server-domozwave-"
+  sMainLogFile = "server-main-" & Format(Now, "yyyy-mm") & ".log"
+  sSpeakLogFile = "server-speak-" & Format(Now, "yyyy-mm") & ".log"
+  sDebugLogFile = "server-debug-" & Format(Now, "yyyy-mm") & ".log"
+  sDomoZWaveFile = "server-domozwave-"
 
   ' If "logs" doesn't exist, try to create it first
   If Exist(sBaseDir &/ "logs") = False Then
@@ -1081,9 +1022,9 @@ Private Sub Setup_Astro()
 
   ' update Sunset/Sunrise triggers in database
   aSplitTime = Split(GetGlobalVar("Sunset"), ":")
-  rResult = hDB.Exec("UPDATE triggers t SET t.param1 = &1 WHERE t.name = 'Time is Sunset' ", Format(aSplitTime[1], "#") & " " & Format(aSplitTime[0], "#") & " * * *")
+  rResult = hDB.Exec("UPDATE triggers t SET t.param1 = &1 WHERE t.name = 'Time is Sunset' ", Format(aSplitTime[1], "0") & " " & Format(aSplitTime[0], "0") & " * * *")
   aSplitTime = Split(GetGlobalVar("Sunrise"), ":")
-  rResult = hDB.Exec("UPDATE triggers t SET t.param1 = &1 WHERE t.name = 'Time is Sunrise' ", Format(aSplitTime[1], "#") & " " & Format(aSplitTime[0], "#") & " * * *")
+  rResult = hDB.Exec("UPDATE triggers t SET t.param1 = &1 WHERE t.name = 'Time is Sunrise' ", Format(aSplitTime[1], "0") & " " & Format(aSplitTime[0], "0") & " * * *")
 
   If (sAstroTwilight = "civil") Then iTwilight = 1
   If (sAstroTwilight = "nautical") Then iTwilight = 2
@@ -1144,76 +1085,12 @@ Public Sub Restart_Astro()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' start xmlrpc
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Setup_XMLRPC()
-
-  If bXMLRPCEnabled Then
-    If bXMLRPCDebug Then WriteLog("[Plugin] XML-RPC server enabled.")
-    If bServer Then
-      ' create a new xmlrpc class instance
-      hXMLRPC = New CXMLRPC
-
-      ' set the properties
-      hXMLRPC.MaxConn = iXMLRPCMaxconn
-      hXMLRPC.HTTPPort = iXMLRPCHTTPPort
-      hXMLRPC.XMLRPCDebug = bXMLRPCDebug
-
-      ' start xmlrpc server
-      If hXMLRPC.Connect() Then
-      Else
-      Endif
-
-      If bBroadcastUDPEnabled Then
-        WriteLog("[XMLRPC] UDP Broadcasts are enabled on Port " & Str(iXMLRPCHTTPPort + 10000))
-      Else
-        WriteLog("[XMLRPC] UDP Broadcasts are disabled.")
-      Endif
-
-      ' Setup Broadcast UDP socket
-      hBroadcastEvent = New UdpSocket As "BroadcastUDP"
-      hBroadcastEvent.Broadcast = True
-      hBroadcastEvent.Port = 0
-      hBroadcastEvent.Bind()
-      Try hBroadcastEvent.TargetPort = iXMLRPCHTTPPort + 10000
-      If Error Then
-        hBroadcastEvent = Null
-        WriteLog("[XMLRPC] ERROR: UDP Broadcast server FAILED to start on Port " & Str(iXMLRPCHTTPPort + 10000))
-      Endif
-
-    Endif
-  Else
-    If bMainDebug Then WriteLog("[Plugin] XML-RPC server disabled.")
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' restart xmlrpc server after settings change
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Restart_XMLRPC()
-
-  If hXMLRPC Then
-    hXMLRPC.Disconnect
-    hXMLRPC = Null
-  Endif
-
-  ' Also re-init the BroadcastUDP
-  If hBroadcastEvent Then
-    hBroadcastEvent = Null
-  Endif
-
-  Setup_XMLRPC()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' check if e-mail client is enabled
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Setup_Email()
 
   If bEmailEnabled Then
-    WriteLog("[Plugin] e-mail client enabled.", bMainDebug)
+    WriteLog("[Plugin] e-mail client enabled.")
   Else
     If bMainDebug Then WriteLog("[Plugin] e-mail client disabled.")
   Endif
@@ -1278,36 +1155,13 @@ Public Sub Restart_VoiceText()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' capture video images from videoserver
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Setup_VideoServer()
-
-  If bVideoServerEnabled Then
-    WriteLog("[Plugin] IP9100 VideoServer support enabled.")
-  Else
-    If bMainDebug Then WriteLog("[Plugin] IP9100 VideoServer support disabled.")
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' restart videoserver after settings change
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Restart_VideoServer()
-
-  ' not much todo now
-   Setup_VideoServer()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' check if rrdtool support is enabled
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Setup_RRDTool()
 
     If bRRDToolEnabled Then
       If bServer Then
-        If ProgramExist("rrdtool") Then
+        If Util.ProgramExist("rrdtool") Then
           RRDTool.Run()
           WriteLog("[Plugin] RRDTool support enabled.")
         Else
@@ -1336,28 +1190,6 @@ Public Sub Restart_RRDTool()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' check if tvguide support is enabled
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Setup_TVGuide()
-
-  If bTVGuideEnabled Then
-    WriteLog("[Plugin] TV Guide support enabled.")
-  Else
-    If bMainDebug Then WriteLog("[Plugin] TV Guide support disabled.")
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' restart tvguide after settings change
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Restart_TVGuide()
-
-  Setup_TVGuide()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' check if server statistics is enabled
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Setup_ServerStats()
@@ -1378,83 +1210,6 @@ End
 Public Sub Restart_ServerStats()
 
   Setup_ServerStats()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' check if TemperaturNu support is enabled
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Setup_TemperaturNu()
-
-  If bTemperaturNuEnabled Then
-    WriteLog("[Plugin] TemperaturNu support enabled.")
-    ' start timer
-    If bServer Then
-      If Main.iTemperaturNuPushTime Then
-        TemperaturNu.Run()
-      Endif
-    Endif
-  Else
-    Try TemperaturNu.tTemperaturNu.Stop
-    If bMainDebug Then WriteLog("[Plugin] TemperaturNu support disabled.")
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' restart TemperaturNu after settings change
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Restart_TemperaturNu()
-
-  Setup_TemperaturNu()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' check if weatherbug support is enabled
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Setup_WeatherBug()
-
-  If bWeatherBugEnabled Then
-    WriteLog("[Plugin] WeatherBug support enabled.")
-  Else
-    If bMainDebug Then WriteLog("[Plugin] WeatherBug support disabled.")
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' restart weatherbug after settings change
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Restart_WeatherBug()
-
-  ' not much todo now
-  Setup_WeatherBug()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' check if weatherug support is enabled
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Setup_WeatherUG()
-
-  If bWeatherUGEnabled Then
-    WriteLog("[Plugin] Weather Underground support enabled.")
-    WeatherUG.Run()
-  Else
-    Try WeatherUG.tWeatherUG.Stop
-    If bMainDebug Then WriteLog("[Plugin] Weather Undergound support disabled.")
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' restart weatherug after settings change
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Restart_WeatherUG()
-
-  ' not much todo now
-  Setup_WeatherUG()
 
 End
 
@@ -1495,8 +1250,8 @@ Private Sub Setup_xPL()
       hxPL = New CxPL
       ' set the properties
       With hxPL
-        .TargetHost = aBroadcastAddrs[0]
-        .OurIPAddress = sOurIPAddress
+        .TargetHost = aBroadcastAddr[0]
+        .OurIPAddress = aIPAddr[0]
         .HeartBeatTime = ixPLHeartBeatTime
         .xPLDebug = bxPLDebug
       End With
@@ -1569,33 +1324,6 @@ Public Sub Restart_RFXComxPL()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' get device values from shell command/script
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Setup_Shell()
-
-  If bShellEnabled Then
-    WriteLog("[Plugin] Shell support enabled.")
-    ' start timer
-    If bServer Then Shell.Run()
-  Else
-    Try Shell.tShell.Stop
-    If bMainDebug Then WriteLog("[Plugin] Shell support disabled.")
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' restart shell after settings change
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Restart_Shell()
-
-  Try Shell.tShell.Stop
-  ' not much todo now
-  Setup_Shell()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect with XBMC xpl
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Setup_XBMCxPL()
@@ -1640,6 +1368,7 @@ Public Sub Check_for_Action()
 
   If bExitProgram Then
     CloseAll()
+    If sOtherServer <> Application.Name Then Util.DeleteDomotiGaPid()
     Quit
   Endif
 
@@ -1690,51 +1419,6 @@ Public Sub Caps(sString As String) As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Encode String as Html, normally to be used with XML-RPC
-' We support XML 1.0 Fith Edition and XML 1.1
-' http://en.wikipedia.org/wiki/XML#Characters_and_escaping
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub HtmlEncode(sStr As String, Optional sOnlyFirstLine As Boolean = False) As String
-
-  ' In certain scenarios we only want the first line in the Html string and remove the rest
-  If sOnlyFirstLine Then
-    ' Remove &H0A - line feed
-    If String.InStr(sStr, Chr(10)) > 0 Then
-      sStr = String.Left(sStr, String.InStr(sStr, Chr(10)) - 1)
-    Endif
-
-    ' Remove &H0D - carriage return
-    If String.InStr(sStr, Chr(13)) > 0 Then
-      sStr = String.Left(sStr, String.InStr(sStr, Chr(13)) - 1)
-    Endif
-  Endif
-
-  sStr = Replace(sStr, "&", "&amp;")
-  sStr = Replace(sStr, "<", "&lt;")
-  sStr = Replace(sStr, ">", "&gt;")
-  sStr = Replace(sStr, "'", "&apos;")
-  sStr = Replace(sStr, "\"", "&quot;")
-
-  Return sStr
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Decode String as Html, normally to be used with XML-RPC
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub HtmlDecode(sStr As String) As String
-
-  sStr = Replace(sStr, "&amp;", "&")
-  sStr = Replace(sStr, "&lt;", "<")
-  sStr = Replace(sStr, "&gt;", ">")
-  sStr = Replace(sStr, "&apos;", "'")
-  sStr = Replace(sStr, "&quot;", "\"")
-
-  Return sStr
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' start basic timers
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SetupTimers()
@@ -1762,11 +1446,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopTimers()
 
-  WriteLog("Stopping running timers.")
-  ' weatherug
-  Try WeatherUG.tWeatherUG.Stop
-  ' temperaturnu timer
-  Try TemperaturNu.tTemperaturNu.Stop
+  WriteLog("[Main] Stopping running timers.")
   ' thermostat timer
   Try Thermostat.tThermostat.Stop
   ' serverstats timer
@@ -1975,7 +1655,7 @@ Private Sub SetGlobalVars()
           Endif ' new month
         Endif ' new day loop
       Else
-        ' check if it's dark or light
+        ' check if it's dark or light - this needs to be done after the Hour & Minute change
         If (Time_Less_Than(GetGlobalVar("Sunrise")) Or Time_Greater_Than(GetGlobalVar("Sunset"))) Then
           SetGlobalVar("Dark", True)
         Else
@@ -2013,16 +1693,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetGlobalVar(sVar As String) As Variant
 
-  ' The GlobalVar is a Collection, which doesn't support empty strings.
-  ' For this we internally store it as a "<EMPTY>", but return a "".
-  ' If the sVar doesn't exist, we return NULL.
-
   If GlobalVar.Exist(sVar) Then
-    If GlobalVar[sVar] = "<EMPTY>" Then
-      Return ""
-    Else
-      Return GlobalVar[sVar]
-    Endif
+    Return GlobalVar[sVar].Value
   Else
     Return Null
   Endif
@@ -2037,65 +1709,131 @@ Public Sub SetGlobalVar(sVar As String, vValue As Variant, Optional bBroadcast A
   Dim vTemp As Variant
   Dim rResult As Result
   Dim bGlobalVarExist As Boolean
+  Dim iDataType As Integer
+
+  ' Check if GlobalVar exists
+  bGlobalVarExist = GlobalVar.Exist(sVar)
 
   ' Don't call GetGlobalVar, we don't want a loop
-  If GlobalVar.Exist(sVar) Then
-    If TypeOf(GlobalVar[sVar]) = gb.String Then
-      If GlobalVar[sVar] = "<EMPTY>" Then
-        vTemp = ""
-      Else
-        vTemp = GlobalVar[sVar]
-      Endif
-    Else
-      vTemp = GlobalVar[sVar]
+  If bGlobalVarExist Then
+    vTemp = Main.GlobalVar[sVar].Value
+
+    ' Check if we have a system variable, this can *never* change datatype
+    ' Also if iDataType=0, it can't change either
+    If Main.GlobalVar[sVar].SystemVar Or If iDataType = 0 Then
+      iDataType = Main.GlobalVar[sVar].DataType
     Endif
+
   Else
     vTemp = Chr(0) & "NEVEREXISTS" & Chr(0)
+    If iDataType = 0 Then iDataType = TypeOf(vValue)
   Endif
+
+  ' Convert the input to the correct datatype
+  Select iDataType
+    Case gb.Boolean
+      If TypeOf(vValue) = gb.String Then
+        If UCase(vValue) = "TRUE" Or If UCase(vValue) = "T" Or If (vValue) = "1" Then
+          vValue = True
+        Else
+          vValue = False
+        Endif
+      Else
+        Try vValue = CBool(CInt(vValue))
+        If Error Then
+          If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to Boolean datatype")
+          Return False
+        Endif
+      Endif
+
+    Case gb.Byte, gb.Short, gb.Integer, gb.Long, gb.Single, gb.Float ' JSON Numeric
+
+      ' Convert it first to Float datatype
+      If TypeOf(vValue) = gb.String Then vValue = Replace(vValue, ",", ".")
+      Try vValue = CFloat(vValue)
+      If Error Then
+        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to numeric (float) datatype")
+        Return False
+      Endif
+      iDataType = gb.Float
+
+      ' Convert to Integer if it is a whole number
+      If CInt(vValue) = vValue Then
+        Try vValue = CInt(vValue)
+        iDataType = gb.Integer
+      Endif
+
+    Case gb.Date
+      Try vValue = CDate(vValue)
+      If Error Then
+        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to Date datatype")
+        Return False
+      Endif
+
+    Case gb.String, gb.Null
+      Try vValue = CStr(vValue)
+      If Error Then
+        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to String datatype")
+        Return False
+      Endif
+
+    Default ' nothing matches - don't continue
+      If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' has invalid datatype=" & iDataType & ", detected=" & TypeOf(vValue))
+      Return False
+  End Select
 
   If Events.CheckCondition(vTemp, "<>", vValue, True) Then
 
-    ' First check if the GlobalVar exist
-    ' If vValue is blank, it is removed from the collection
-    bGlobalVarExist = GlobalVar.Exist(sVar)
-    GlobalVar[sVar] = vValue
+    ' Create GlobalVar entry
+    If Not bGlobalVarExist Then Main.GlobalVar.Add(CreateGlobalVarEntry(False, False, False, iDataType), sVar)
 
-    ' Never look for trigger for the uptime or tagline
-    If (sVar <> "Program_Uptime" And sVar <> "Tagline") Then
+    ' Store new value in the GlobalVar, required for CheckGlobalVarEvents
+    Main.GlobalVar[sVar].Value = vValue
+    Main.GlobalVar[sVar].DataType = iDataType
+
+    ' Never look for trigger for e.g. uptime or tagline
+    If Not Main.GlobalVar[sVar].SkipEvent Then
       Events.CheckGlobalVarEvents(sVar, vValue)
       If bBroadcast Then BroadcastEvent("[GlobalVar]" & sVar & "|" & vValue)
     Endif
 
-    ' Write it to the globalvars table, but ignore second and program uptime. We don't want to write too much
-    If (sVar <> "Second" And sVar <> "Program_Uptime") Then
-      If bGlobalVarExist Then
+    ' Don't do anything if value is -1, then we don't update the database
+    If Main.GlobalVar[sVar].WriteInterval = -1 Then Return False
 
-        ' Report the GlobalVar change
-        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] '" & sVar & "' changed from '" & IIf(TypeOf(vTemp) = gb.Boolean, IIf(vTemp, "True", "False"), vTemp) & "' to '" & IIf(TypeOf(vValue) = gb.Boolean, IIf(vValue, "True", "False"), vValue) & "'")
-
-        rResult = Main.hDB.Exec("UPDATE globalvars SET value = &1, datatype = &2 WHERE var = &3", vValue, TypeOf(vValue), sVar)
+    ' Check interval - only write to database if enough time has passed
+    If Main.GlobalVar[sVar].WriteInterval > 0 Then
+      If Not Main.GlobalVar[sVar].LastUpdate Then
+        Main.GlobalVar[sVar].LastUpdate = Now()
       Else
-        ' Report the GlobalVar add
-        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] '" & sVar & "' added with value '" & IIf(TypeOf(vValue) = gb.Boolean, IIf(vValue, "True", "False"), vValue) & "'")
-
-        ' Before we do an insert, first check if it already exist - as safeguard
-        rResult = Main.hDB.Exec("SELECT * FROM globalvars where var = &1", sVar)
-
-        If rResult.Count = 0 Then
-          Try rResult = Main.hDB.Exec("INSERT INTO globalvars SET var = &1, value = &2, datatype = &3", sVar, vValue, TypeOf(vValue))
-        Else
-          rResult = Main.hDB.Exec("UPDATE globalvars SET value = &1, datatype = &2 WHERE var = &3", vValue, TypeOf(vValue), sVar)
-        Endif
+        If DateDiff(Main.GlobalVar[sVar].LastUpdate, Now(), gb.Second) < Main.GlobalVar[sVar].WriteInterval Then Return False
+        Main.GlobalVar[sVar].LastUpdate = Now()
       Endif
-
     Endif
 
-    ' Convert an empty string to "<EMPTY>" - else the Collection will remove the sVar key
-    If TypeOf(vValue) = gb.String Then
-      If vValue = "" Then
-        vValue = "<EMPTY>"
-        GlobalVar[sVar] = vValue
+    If bGlobalVarExist Then
+
+      ' Report the GlobalVar change
+      If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] '" & sVar & "' changed from '" & IIf(TypeOf(vTemp) = gb.Boolean, IIf(vTemp, "True", "False"), vTemp) & "' to '" & IIf(iDataType = gb.Boolean, IIf(vValue, "True", "False"), vValue) & "'")
+
+      rResult = Main.hDB.Exec("UPDATE globalvars SET value = &1, datatype = &2 WHERE var = &3", vValue, iDataType, sVar)
+    Else
+      ' Report the GlobalVar add
+      If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] '" & sVar & "' added with value '" & IIf(iDataType = gb.Boolean, IIf(vValue, "True", "False"), vValue) & "'")
+
+      ' Before we do an insert, first check if it already exist - as safeguard
+      rResult = Main.hDB.Exec("SELECT * FROM globalvars where var = &1", sVar)
+
+      If rResult.Count = 0 Then
+        Try rResult = Main.hDB.Exec("INSERT INTO globalvars SET var = &1, value = &2, datatype = &3", sVar, vValue, iDataType)
+      Else
+        rResult = Main.hDB.Exec("UPDATE globalvars SET value = &1, datatype = &2 WHERE var = &3", vValue, iDataType, sVar)
       Endif
+    Endif
+  Else
+
+    ' We still need to update the Value, else the DataType conversion can get lost
+    If Main.GlobalVar.Exist(sVar) Then
+      Main.GlobalVar[sVar].Value = vValue
     Endif
 
   Endif
@@ -2109,119 +1847,124 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub DelGlobalVar(sVar As String)
 
-  If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] Name='" & sVar & "' is deleted")
+  If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] '" & sVar & "' is deleted")
   If Main.GlobalVar.Exist(sVar) Then Main.GlobalVar.Remove(sVar)
   Main.hDB.Exec("DELETE FROM globalvars WHERE var = &1", sVar)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Build up a GlobalVarEntry to be used in the RestoreGlobalVars
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CreateGlobalVarEntry(System As Boolean, ReadOnly As Boolean, SkipEvent As Boolean, DataType As Integer, Optional WriteInterval As Integer = 0) As CGlobalVarEntry
+
+  Dim cGV As New CGlobalVarEntry
+
+  cGV.SystemVar = System
+  cGV.ReadOnly = ReadOnly
+  cGV.SkipEvent = SkipEvent
+  cGV.WriteInterval = WriteInterval
+  cGV.DataType = DataType
+
+  Select DataType
+    Case gb.String
+      cGV.Value = ""
+    Case gb.Integer
+      cGV.Value = CInt(0)
+    Case gb.Boolean
+      cGV.Value = False
+  End Select
+
+  Return cGV
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' restore all globalvars from database
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub RestoreGlobalVars()
+Public Sub RestoreGlobalVars(Optional bReadTable As Boolean = True)
 
   Dim rResult As Result
+  Dim cGV As CGlobalVarEntry
 
-  ' Configure all system variables. 1=ReadOnly, 2=ReadWrite
-  ' When not added - it is a custom variable, anything allowed
-  GlobalVar_System.Clear()
-  GlobalVar_System.Add(1, "Program_Start")
-  GlobalVar_System.Add(1, "Second")
-  GlobalVar_System.Add(1, "Minute")
-  GlobalVar_System.Add(1, "Program_Uptime")
-  GlobalVar_System.Add(1, "Hour")
-  GlobalVar_System.Add(1, "Day")
-  GlobalVar_System.Add(1, "Month")
-  GlobalVar_System.Add(1, "Weekday")
-  GlobalVar_System.Add(1, "Time_Of_Day")
-  GlobalVar_System.Add(1, "Year")
-  GlobalVar_System.Add(1, "Sunrise")
-  GlobalVar_System.Add(1, "Sunrise_Twilight")
-  GlobalVar_System.Add(1, "Sunset")
-  GlobalVar_System.Add(1, "Sunset_Twilight")
-  GlobalVar_System.Add(1, "Season")
-  GlobalVar_System.Add(1, "Tagline")
-  GlobalVar_System.Add(1, "Weekend")
-  GlobalVar_System.Add(1, "Dark")
-  GlobalVar_System.Add(2, "House_Mode")
-  GlobalVar_System.Add(2, "Mute")
+  ' Clear the GlobalVar collection
+  Main.GlobalVar.Clear()
 
-  ' DataTypes:
-  ' gb.Boolean = 1, gb.Byte = 2, gb.Short = 3, gb.Integer = 4, gb.Long = 5, gb.Single = 6,
-  ' gb.Float = 7, gb.Date = 8, gb.String = 9, gb.Variant = 11, gb.Null = 15, gb.Object = 16
+  ' Configure the system variables
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer), "Year")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer), "Month")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer), "Day")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer), "Hour")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer), "Minute")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer, -1), "Second")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer), "Weekday")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Time_Of_Day")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Program_Start")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, True, gb.String, 300), "Program_Uptime")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Sunrise")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Sunset")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Sunrise_Twilight")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Sunset_Twilight")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Season")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, True, gb.String, 300), "Tagline")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Boolean), "Weekend")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Boolean), "Dark")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, False, False, gb.String), "House_Mode")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, False, False, gb.Boolean), "Mute")
+
+  ' Skip reading the database is requested
+  If Not bReadTable Then Return
 
   Try rResult = Main.hDB.Exec("SELECT * FROM globalvars")
   If rResult Then
     If rResult.Count Then
       For Each rResult
-        If rResult!value = "" Then
-          Main.GlobalVar[rResult!var] = "<EMPTY>"
+        ' Exist = It is a system variable - the Datatype can't be overruled
+        If GlobalVar.Exist(rResult!var) Then
+          cGV = GlobalVar[rResult!var]
         Else
-
-          If TypeOf(rResult!datatype) <> Null Then
-
-            Select rResult!datatype
-              Case gb.Boolean
-                Try Main.GlobalVar[rResult!var] = CBool(CInt(rResult!value))
-                If Error Then
-                  Main.GlobalVar[rResult!var] = False
-
-                  ' Try to fix value like "T"
-                  If TypeOf(rResult!value) = gb.String Then
-                    If rResult!value = "T" Then Main.GlobalVar[rResult!var] = True
-                  Endif 
-                Endif
-              Case gb.Byte
-                Try Main.GlobalVar[rResult!var] = CByte(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CByte(0)
-              Case gb.Short
-                Try Main.GlobalVar[rResult!var] = CShort(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CShort(0)
-              Case gb.Integer
-                Try Main.GlobalVar[rResult!var] = CInt(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CInteger(0)
-              Case gb.Long
-                Try Main.GlobalVar[rResult!var] = CLong(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CLong(0)
-              Case gb.Single
-                Try Main.GlobalVar[rResult!var] = CSingle(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CSingle(0)
-              Case gb.Float
-                Try Main.GlobalVar[rResult!var] = CFloat(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CFloat(0)
-              Case gb.Date
-                Try Main.GlobalVar[rResult!var] = CDate(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CDate(Now())
-              Default
-                Main.GlobalVar[rResult!var] = CString(rResult!value)
-            End Select
-
+          cGV = New CGlobalVarEntry
+          If rResult!datatype Then
+            cGV.DataType = CInt(rResult!datatype)
           Else
-            Main.GlobalVar[rResult!var] = CString(rResult!value)
+            cGV.DataType = gb.String
           Endif
+
+          GlobalVar.Add(cGV, rResult!var)
         Endif
+
+        Select cGV.DataType
+          Case gb.Boolean
+            If TypeOf(rResult!value) = gb.String Then
+              If UCase(rResult!value) = "TRUE" Or If UCase(rResult!value) = "T" Or If (rResult!value) = "1" Then
+                cGV.Value = True
+              Else
+                cGV.Value = False
+              Endif
+            Else
+              Try cGV.Value = CBool(CInt(rResult!value))
+            Endif
+          Case gb.Byte, gb.Short, gb.Integer ' Also convert Byte/Short to Integer
+            Try cGV.Value = CInt(rResult!value)
+            If Error Then cGV.Value = CInteger(0)
+            cGV.DataType = gb.Integer
+          Case gb.Long, gb.Single, gb.Float ' Also convert Long & Single to Float
+            Try cGV.Value = CFloat(rResult!value)
+            If Error Then cGV.Value = CFloat(0)
+            cGV.DataType = gb.Float
+          Case gb.Date
+            Try cGV.Value = CDate(rResult!value)
+            If Error Then cGV.Value = CDate(Now())
+          Default ' if nothing matches - make it is a String
+            cGV.Value = CString(rResult!value)
+            cGV.DataType = gb.String
+        End Select
+
+        If Main.bGlobalVarDebug Then Main.WriteDebugLog("[GlobalVar] '" & rResult!var & "'restored with value '" & IIf(cGV.DataType = gb.Boolean, IIf(cGV.Value, "True", "False"), cGV.Value) & "'.")
       Next
       If Main.bMainDebug Then Main.WriteDebugLog("[Main] Globalvars Restored.")
     Endif
   Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' check if command can be found on system
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ProgramExist(sProg As String) As Boolean
-
-  Dim sTemp As String
-  Dim iPos As Integer
-
-  iPos = String.InStr(sProg, " ")
-  If iPos Then sProg = String.Left(sProg, iPos - 1)
-
-  Shell "which " & sProg To sTemp
-
-  If Not sTemp Then Return False
-  Return Not (Trim$(sTemp) Like "which: *")
 
 End
 
@@ -2309,9 +2052,9 @@ Public Sub DisplayBool(bSwitch As Boolean) As String
 
   Select bSwitch
     Case True
-        Return ("True")
+        Return "True"
     Case Else
-        Return ("False")
+        Return "False"
   End Select
 
 End
@@ -2351,94 +2094,7 @@ Public Function UptimeString(lSeconds As Long) As String
   lMins = (lSeconds Mod 3600) \ 60
   lHrs = (lSeconds Mod (3600 * 24)) \ 3600
   lDays = lSeconds \ (3600 * 24)
-  Return lDays & IIf(lDays = 1, (" day, "), (" days, ")) & lHrs & IIf(lHrs = 1, (" hr, "), (" hrs, ")) & lMins & IIf(lMins = 1, (" min,"), (" mins,")) & (" and ") & lSecs & IIf(lSecs = 1, (" sec."), (" secs."))
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return name of caller if known
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ReturnCallerID(sPhoneNo As String) As String
-
-  Dim rResult As Result
-  Dim sName As String = ("Unknown")
-
-  If Len(sPhoneNo) Then
-    rResult = Main.hDB.Exec("SELECT name, cidphone FROM contacts WHERE phoneno = &1", sPhoneNo)
-    If rResult.Count Then
-      If rResult!cidphone Then
-        sName = rResult!cidphone
-      Else
-        sName = rResult!name
-      Endif
-    Endif
-    rResult = Main.hDB.Exec("SELECT name, cidmobile FROM contacts WHERE mobileno = &1", sPhoneNo)
-    If rResult.Count Then
-      If rResult!cidmobile Then
-        sName = rResult!cidmobile
-      Else
-        sName = rResult!name
-      Endif
-    Endif
-    Return sName
-  Else
-    Return ("Hidden")
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' check if system has minimal gambas version required
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function CheckReq(iMinimalVersion As Integer) As Boolean
-
-  Dim iVer As Integer
-  Dim sVer As String
-
-  If InStr(GetGambasVersion(), " ") = 0 Then
-    sVer = GetGambasVersion()
-  Else
-    sVer = Left$(GetGambasVersion(), InStr(GetGambasVersion(), " ") - 1)
-  Endif
-
-  iVer = Val(Replace(sVer, ".", ""))
-  If iVer >= iMinimalVersion Then
-    Return False
-  Else
-    Return True
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' get ip address of this machine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Setup_IPAddr()
-
-  Dim sHost As String
-
-  ' inet 192.168.178.24/24 brd 192.168.178.255 scope global eth0
-  Shell "ip addr | grep brd | grep inet | awk -F ' ' '{print $2}' | awk -F '/' '{print $1}'" To sHost
-  sOurIPAddress = Trim(sHost)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' determine broadcast address(es) of this machine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Setup_BroadcastAddrs()
-
-  Dim aIPs, athisIP As String[]
-  Dim sHost, sIP As String
-
-  Shell "ip addr | grep brd | grep inet | awk -F ' ' '{print $4}'" To sHost
-  aIPs = Split(Trim$(sHost), " ")
-  For Each sIP In aIPs
-    athisIP = Split(sIP, ".")
-    If CInt(athisIP[0]) = 127 Then Continue
-    aBroadcastAddrs.Add(athisIP[0] & "." & athisIP[1] & "." & athisIP[2] & "." & athisIP[3])
-    Main.WriteLog("[Main] Found broadcast address '" & Trim(sHost) & "'")
-  Next
+  Return lDays & " " & IIf(lDays = 1, ("day"), ("days")) & ", " & lHrs & " " & IIf(lHrs = 1, ("hr"), ("hrs")) & ", " & lMins & " " & IIf(lMins = 1, ("min"), ("mins")) & ", " & ("and") & " " & lSecs & " " & IIf(lSecs = 1, ("sec"), ("secs")) & "."
 
 End
 
@@ -2447,35 +2103,27 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub BroadcastEvent(sMessage As String)
 
-  Dim sIP As String
-
-  ' not ready yet
-  If hBroadcastEvent = Null Then Return
-  ' broadcast msg on network(s)
-  For Each sIp In aBroadcastAddrs
-    hBroadcastEvent.TargetHost = sIp
-    Try Write #hBroadcastEvent, sMessage, Len(sMessage)
-  Next
+  Try Plugin.GetPluginObject("BroadcastUDP", 1).Interface.Send(sMessage)
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' catch errors
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub BroadcastUDP_Error()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Send UDP message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendUDP(sTargetIP As String, iUDPPort As Integer, sMsg As String)
 
-  Select Case hBroadcastEvent.Status
-    Case Net.CannotBindSocket
-      Main.WriteDebugLog("[BroadcastUDP] Unable to bind to that port.")
-    Case Net.CannotCreateSocket
-      Main.WriteDebugLog("[BroadcastUDP] The system does not allow to create a socket.")
-    Case Net.CannotRead
-      Main.WriteDebugLog("[BroadcastUDP] Error receiving data.")
-    Case Net.CannotWrite
-      Main.WriteDebugLog("[BroadcastUDP] Error sending data.")
-  End Select
+  ' get a new one
+  hSendUDP = New UdpSocket As "SendUDP"
+  hSendUDP.TargetPort = iUDPPort
 
-Catch
+  ' Now try to bind to the port
+  hSendUDP.Bind()
+  hSendUDP.TargetHost = sTargetIP
+  hSendUDP.Broadcast = False
+  Try Write #hSendUDP, sMsg, Len(sMsg)
+
+  'Print "[SendUDP] " & sTargetIP & ":" & iUDPPort & " > " & sMsg
+  Try Close #hSendUDP
 
 End
 
@@ -2499,10 +2147,10 @@ Private Sub CheckDatabaseVersion()
     ' convert 0.1.180 to 01180
     iDBVersion = Val(Replace(sDBVersion, ".", ""))
     If iDBVersion < iPrgVersion Then
-      WriteLog("The version of your database is " & sDBVersion & " but the version of the program is " & sPrgVersion & ("!"))
+      WriteLog("[Main] The version of your database is " & sDBVersion & " but the version of the program is " & sPrgVersion & ("!"))
       Repeat
         If bAllowAutoUpgrade Then
-          If Main.ProgramExist("mysql") Then
+          If Util.ProgramExist("mysql") Then
             sToVersion = Format(Str(iDBVersion + 1), "00000")
             ' make the jump to version 1.0.000
             If sToVersion = "01210" Then sToVersion = "10000"
@@ -2525,7 +2173,7 @@ Private Sub CheckDatabaseVersion()
               WriteLog("Couldn't find upgrade file " & sDumpFile & "! The Database is now at version " & sDBVersion)
               Quit
             Endif
-            WriteLog("Database has been upgraded to version " & sDBVersion)
+            WriteLog("[Main] Database has been upgraded to version " & sDBVersion)
             If iPrgVersion = iDBVersion Then Return
           Else
             WriteLog("Couldn't find MySQL program!")
@@ -2552,7 +2200,7 @@ End
 Public Sub NotifySend(sTitle As String, sText As String)
 
   If Main.bServer Then
-    If Main.bBroadcastUDPEnabled Then Main.BroadcastEvent("[NotifySend]" & sTitle & "|" & sText & "|" & sBaseDir &/ "icons" &/ "logo.png")
+    Main.BroadcastEvent("[NotifySend]" & sTitle & "|" & sText & "|" & sBaseDir &/ "icons" &/ "logo.png")
   Endif
 
 End
@@ -2589,7 +2237,6 @@ End
 
 Public Sub SendSMS(sText As String, sTo As String)
 
-
   If Plugin.IsPluginEnabled("SMS", 0) Then
     Try Plugin.GetPluginObject("SMS", 1).Interface.SendSMS(sText, sTo)
   Endif
@@ -2597,9 +2244,9 @@ Public Sub SendSMS(sText As String, sTo As String)
 End
 
 Private Sub Setup_Calendar()
-  
+
   Calendar.Init()
-  
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2607,9 +2254,8 @@ End
 ' This is to make Plugins GUI and CLI independant
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Message_Error(sLogLabel As String, sStr As String)
- 
+
   ' Replace the "\n" and add "***"
   WriteLog(sLogLabel & "ERROR: " & sStr)
 
 End
-

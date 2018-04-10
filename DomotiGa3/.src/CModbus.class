@@ -1,0 +1,1041 @@
+' Gambas class file
+
+' Description:
+' CModbus.class
+' Read and write data from/to Modbus registers.
+
+' Development Status:
+' In Development.
+
+' Links:
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "Modbus"
+Public PluginFriendlyName As String = "Modbus"
+Public PluginVersion As String = "1.01"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 9
+Public PluginRunTask As Boolean = False
+
+Public KeyName As String
+Public LogLabel As String = "[Modbus] "
+Public InterfaceId As Integer
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sInterface As String
+Private $sModbusType As String
+Private $sSerPort As String
+Private $sBaud As String
+Private $iDatabits As Integer
+Private $iStopbits As Integer
+Private $iParity As Integer
+Private $iPollTime As Integer
+Private $bDebug As Boolean
+
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
+
+Public tModbusPoll As Timer
+Public tModbusBusy As Timer
+
+Private $aRecBuf As New Byte[200]
+Private $sRecBuf As String
+Private $bRecBytes As Byte
+
+' CRC-16(CCITT) tables
+Private aCRCTable1 As New Integer[256]
+Private aCRCTable2 As New Integer[256]
+
+Private cQueue As New Collection    ' command buffer
+Private bInterfaceBusy As Boolean   ' waiting for delay timer to finish
+
+' Msg decode stuff
+Private $bExceptionRecv As Boolean
+Private $iMaxNumBytes As Integer
+Private $iCurrentNode As Integer
+Private $iCurrentRegister As Integer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+
+  $iTCPPort = cPl.Settings["tcpport"]
+  $sInterface = cPl.Settings["type"]
+  $sSerPort = cPl.Settings["serialport"]
+  $sBaud = cPl.Settings["baudrate"]
+  $iDatabits = cPl.Settings["databits"]
+  $iStopbits = cPl.Settings["stopbits"]
+  $iParity = cPl.Settings["parity"]
+  $sModbusType = cPl.Settings["modbustype"]
+  $iPollTime = cPl.Settings["polltime"]
+  $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("Modbus Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    WriteLog("ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Initialize
+  InitCRCTable()
+
+  ' Connect/Initialize connection
+  If InStr($sInterface, "tcp") Then
+    ConnectTCP()
+  Else
+    ConnectSerial()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte ' Byte[]
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  ' write to main logfile we are trying to connect
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' don't set IsRunning=True, this has to be done in _Ready
+
+  ' all went ok
+  Return True
+
+Catch ' some errors
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConnectSerial() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the port
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
+
+  ' get a new one - but store the retry counter between new instances
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = &HFF + gb.Byte ' Byte[]
+    .PortName = $sSerPort
+    .Speed = $sBaud
+    .Parity = $iParity
+    .DataBits = $iDatabits
+    .StopBits = $iStopbits
+    .FlowControl = 0
+    .Open()
+  End With
+
+  ' define timer for Interface busy
+  tModbusBusy = New Timer As "tModbusBusy"
+  tModbusBusy.Stop
+
+  ' log that we connected successfully
+  WriteLog(PluginFriendlyName & " serial interface connected to port " & $sSerPort)
+
+  Run()
+ 
+  IsRunning = True
+
+  ' all went ok
+  Return True
+
+Catch ' some errors
+  WriteLog("ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  WriteLog("ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Disconnect() As Boolean
+
+  ' Try to close the connection
+  Try hMySocket.Close
+  Try hMySerial.Close
+
+  ' Stop possible timers
+  StopTimers()
+
+  WriteLog(PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  WriteLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Stop timers
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
+
+  Try tModbusPoll.Stop
+  Try tModbusBusy.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+  StopTimers()
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+  StopTimers()
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+ ' Initialize
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got data back from MySensors gateway and parse it when it's complete
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer for polling
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  If $iPollTime = 0 Then Return
+
+  ' start poll timer for modbus
+  tModbusPoll = New Timer As "tModbusPoll"
+  tModbusPoll.Delay = $iPollTime * 1000 ' multiply for seconds
+  tModbusPoll.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices to query
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tModbusPoll_Timer()
+
+  CheckModbus()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' scan for Modbus devices
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CheckModbus()
+
+  Dim rResult As Result
+  Dim iDeviceTypeId As Integer
+
+  ' get all enabled devices of type modbus
+  rResult = Devices.FindDevicesForInterface(InterfaceId, Instance)
+  If rResult And If rResult.Available Then
+    ' loop through each modbus device
+    For Each rResult
+      If $bDebug Then WriteDebugLog("Checking device named '" & rResult!name & "' with address '" & rResult!address & "'.")
+
+      ' check devicetype and query register
+      iDeviceTypeId = Devices.FindDeviceTypeForDevice(rResult!id)
+      Select Case iDeviceTypeId
+        Case 675, 676, 677, 678 ' Read Holding Register 16-bit
+          ReadHoldingRegisters(rResult!address, &H1)
+        Case 679, 708, 709, 710 ' Read Holding Register 32-bit
+          ReadHoldingRegisters(rResult!address, &H2)
+        Case 722 ' Read Holding Register 64-bit - none-standard
+          ReadHoldingRegisters(rResult!address, &H4)
+        Case Else
+          WriteLog("ERROR: Unsupported devicetype for modbus found! (" & iDeviceTypeId & ")")
+      End Select
+
+    Next
+  Else
+    WriteLog("No enabled Modbus device(s) found in device table!")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' create 'read holding register' function 03 request
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ReadHoldingRegisters(sAddress As String, iNumRegisters As Integer)
+
+  Dim bCmd As New Byte[]
+  Dim iSlaveAddress, iAddressOffset As Integer
+  Dim aAddr As String[]
+  Dim iCRC As New Integer[2]
+  Dim bLRC As Byte
+
+  aAddr = Split(sAddress, ":")
+  If aAddr.Count = 2 Then
+    Try iSlaveAddress = Val("&H0" & aAddr[0])
+    If Error Then
+     WriteLog("ERROR: slave address has to be hex value! -> " & aAddr[0])
+     Return
+    Endif
+
+    If iSlaveAddress < 1 Or If iSlaveAddress > 247 Then
+     WriteLog("ERROR: Slave address out of range! (1-247) -> " & iSlaveAddress)
+     Return
+    Endif
+    iAddressOffset = Val("&H" & aAddr[1] & "&")
+  Else
+    WriteLog("ERROR: Device address has wrong format use slave:register! (eg 02:55) -> " & sAddress)
+    Return
+  Endif
+
+  ' input checks
+  If iAddressOffset < 0 Or If iAddressOffset > 65535 Then
+    WriteLog("ERROR: Offset address out of range! -> " & iAddressOffset)
+    Return
+  Endif
+
+  If iNumRegisters < 1 Or If iNumRegisters > 11 Then
+    WriteLog("ERROR: Number of registers out of range! -> " & iNumRegisters)
+    Return
+  Endif
+
+  bCmd.Add(iSlaveAddress) ' address of slave
+  bCmd.Add(&H03) ' function to read holding registers
+  bCmd.Add(iAddressOffset / 256) ' starting address hi
+  bCmd.Add(iAddressOffset % 256) ' starting address lo
+  bCmd.Add(iNumRegisters / 256) ' no of registers hi
+  bCmd.Add(iNumRegisters % 256) ' no of registers lo
+
+  If $sModbusType = "ASCII" Then
+    bLRC = CalculateLRC(Util.ByteToHex(bCmd, False))
+    bCmd.Add(bLRC) ' Add the LRC
+  Else
+  ' calculate and add checksum
+    iCRC = CalculateCRC(bCmd, 6)
+    bCmd.Add(iCRC[0]) ' CRC hi
+    bCmd.Add(iCRC[1]) ' CRC lo
+  Endif
+
+  QueueCommand(bCmd)
+
+Catch
+  WriteLog(" ERROR: decoding device address! '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessReceivedChar(bTemp As Byte)
+
+  Dim iLen As Integer
+
+  Main.ControlLed("Modbus", "On")
+
+  If $sModbusType = "ASCII" Then
+    If Not $sRecBuf Then ' 1st char of a packet received
+      If Chr(bTemp) <> ":" Then Return ' In ASCII mode we always receive ":" as first character
+    Endif
+
+    $sRecBuf &= Chr(bTemp)
+
+    ' Determine exception
+    If Len($sRecBuf) = 5 Then ' :XXXX
+
+      If BTst(Val("&H" & Mid($sRecBuf, 4, 2)), 7) Then
+        $bExceptionRecv = True
+        $iMaxNumBytes = 5
+      Endif
+
+    Else If Len($sRecBuf) = 7 Then ' :XXXXXX
+      If $bExceptionRecv = False Then
+        $iMaxNumBytes = Val("&H" & Mid($sRecBuf, 6, 2)) + 5
+      Endif
+    Endif
+
+    ' We got too many characters/bytes
+    If Len($sRecBuf) > ($iMaxNumBytes * 2) + 3 Then
+      WriteDebugLog("< " & $sRecBuf & " (INVALID PACKET: BUFFER OVERFLOW)")
+      $sRecBuf = ""
+      $bExceptionRecv = False
+    Endif
+
+    ' CR/LF - 0x13 + 0x10 is end of packet
+    If InStr($sRecBuf, gb.CrLf) Then
+
+      ' Remove ":" and CR/LF
+      $sRecBuf = Mid($sRecBuf, 2, Len($sRecBuf) - 3)
+
+      ' Even number is mandatory
+      If Len($sRecBuf) Mod 2 <> 0 Then
+        WriteDebugLog("< " & $sRecBuf & " (INVALID PACKET: LENGTH UNEVEN)")
+        $sRecBuf = ""
+        $bExceptionRecv = False
+        Return
+      Endif
+
+      ' Convert ASCII to internal RTU format
+      For iLen = 1 To Len($sRecBuf) Step 2
+        Try $aRecBuf[(iLen - 1) / 2] = Val("&H" & Mid($sRecBuf, iLen, 2))
+        If Error Then
+          WriteDebugLog("< " & $sRecBuf & " (INVALID PACKET: BUFFER OVERFLOW)")
+          $sRecBuf = ""
+          $bExceptionRecv = False
+          Return
+        Endif
+      Next
+
+      If $bExceptionRecv = False Then
+        Decode_Message() ' decode regular message
+      Else
+        Decode_Exception() ' decode exception message
+      Endif
+
+      $sRecBuf = ""
+      $bExceptionRecv = False
+    Endif
+
+  Else
+    If $bRecBytes = 0 Then ' 1st char of a packet received
+      If bTemp = 0 Then Return ' ignore 1st char if 0
+    Endif
+
+    Try $aRecBuf[$bRecBytes] = bTemp ' store received char
+    If Error Then
+      If $bDebug Then WriteDebugLog("< " & Util.ByteToHex($aRecBuf) & " (INVALID PACKET: BUFFER OVERFLOW)")
+      $bRecBytes = 0 ' temp hack (overflow)
+      $iMaxNumBytes = 255
+      $bExceptionRecv = False
+      Return
+    Endif
+
+    Inc $bRecBytes ' increment char counter
+
+    ' detect exception response
+    If $bRecBytes = 2 Then
+      If BTst($aRecBuf[1], 7) Then
+        $bExceptionRecv = True
+        $iMaxNumBytes = 5
+      Endif
+    Else If $bRecBytes = 3 Then
+      If $bExceptionRecv = False Then
+        $iMaxNumBytes = $aRecBuf[2] + 5
+      Endif
+    Endif
+
+    If $bRecBytes = $iMaxNumBytes Then ' all bytes of exception packet received
+
+      If $bDebug Then WriteDebugLog("< " & Util.ByteToHex($aRecBuf.Copy(0, $bRecBytes)))
+
+      If $bExceptionRecv = False Then
+        Decode_Message() ' decode regular message
+      Else
+        Decode_Exception() ' decode exception message
+      Endif
+
+      $bRecBytes = 0  ' set to zero to receive next message
+      $iMaxNumBytes = 255
+      $bExceptionRecv = False
+      $iCurrentNode = 0
+      $iCurrentRegister = 65535
+    Endif
+
+  Endif
+
+Catch
+  WriteLog("ERROR: ProcessReceivedChar '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Decode response message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Decode_Message()
+
+  Dim iDeviceId, iDeviceTypeId As Integer
+  Dim vValue As Variant
+  Dim iFunction As Integer = $aRecBuf[1]
+  Dim iCRC As New Integer[2]
+  Dim bLRC As Byte
+  Dim sAddress As String
+
+  sAddress = Hex($aRecBuf[0]) & ":" & Hex($iCurrentRegister)
+
+  If $sModbusType = "ASCII"
+    ' calc LRC
+    bLRC = CalculateLRC(Mid($sRecBuf, 1, Len($sRecBuf) - 1))
+  Else
+    ' calc CRC
+    iCRC = CalculateCRC($aRecBuf, $iMaxNumBytes - 2)
+  Endif
+
+  If $bDebug Then
+    WriteLog("Received '" & Decode_Function() & "' response:")
+    WriteLog("Slave ID: " & Hex($aRecBuf[0], 2))
+    WriteLog("Register: " & Hex($iCurrentRegister))
+    WriteLog("Function: " & Hex(iFunction, 2))
+    WriteLog("Address: " & sAddress)
+    If $sModbusType = "ASCII" Then
+      WriteLog("Checksum Recv: " & Hex($aRecBuf[$iMaxNumBytes - 1], 2))
+      WriteLog("Checksum Calc: " & Hex(bLRC, 2))
+    Else
+      WriteLog("Checksum Recv: " & Hex($aRecBuf[$iMaxNumBytes - 2], 2) & Hex($aRecBuf[$iMaxNumBytes - 1], 2))
+      WriteLog("Checksum Calc: " & Hex(iCRC[0], 2) & Hex(iCRC[1], 2))
+    Endif
+  Endif
+
+  If $sModbusType = "ASCII" Then
+    ' check LRC
+    If (bLRC <> $aRecBuf[$iMaxNumBytes - 1]) Then
+      WriteLog("ERROR: Invalid Checksum, discarding.")
+      Return
+    Endif
+  Else
+    ' check CRC
+    If (iCRC[0] & iCRC[1]) <> ($aRecBuf[$iMaxNumBytes - 2] & $aRecBuf[$iMaxNumBytes - 1]) Then
+      WriteLog("ERROR: Invalid Checksum, discarding.")
+      Return
+    Endif
+  Endif
+
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId)
+  If iDeviceId Then
+    iDeviceTypeId = Devices.FindDeviceTypeForDevice(iDeviceId)
+    Select iDeviceTypeId
+      Case 675, 676, 677, 678 ' Read Holding Register 16-bit
+        If $aRecBuf[2] <> 2 Then
+          WriteLog("ERROR: Devicetype is using 16-bit, but received data is not!")
+          Return
+        Endif
+
+        ' calculate value
+        vValue = ($aRecBuf[3] * 256) + $aRecBuf[4]
+
+        If $bDebug Then
+          WriteDebugLog("Value Size: " & $aRecBuf[2] & " Bytes, 16-bits integer.")
+          WriteDebugLog("Value RAW: " & Hex($aRecBuf[3], 2) & Hex($aRecBuf[4], 2))
+          WriteDebugLog("Value: " & vValue)
+        Endif
+
+        ' set device value
+        If iDeviceId Then
+          If $bDebug Then WriteDebugLog("Updating device with id: " & iDeviceId)
+          Devices.ValueUpdate(iDeviceId, 1, vValue)
+        Endif
+
+      Case 679, 708, 709 ' Read Holding Register 32-bit
+        If $aRecBuf[2] <> 4 Then
+          WriteDebugLog("ERROR: Devicetype is using 32-bit, but received data is not!")
+          Return
+        Endif
+
+        ' calculate value
+        vValue = CInt(Val("&H" & Util.ByteToHex($aRecBuf.Copy(3, 4), False)))
+
+        If $bDebug Then
+          WriteDebugLog("Value Size: " & $aRecBuf[2] & " Bytes, 32-bits integer.")
+          WriteDebugLog("Value RAW: " & Hex($aRecBuf[3], 2) & Hex($aRecBuf[4], 2) & Hex($aRecBuf[5], 2) & Hex($aRecBuf[6], 2))
+          WriteDebugLog("Value: " & vValue)
+        Endif
+
+        ' set device value
+        If iDeviceId Then
+          If $bDebug Then WriteDebugLog("Updating device id '" & iDeviceId & "' with value '" & vValue & "'")
+          Devices.ValueUpdate(iDeviceId, 1, vValue)
+        Endif
+      Case 710 ' Read Holding Register 32-bit IEEE
+        If $aRecBuf[2] <> 4 Then
+          WriteDebugLog("ERROR: Devicetype is using 32-bit IEEE, but received data is not!")
+          Return
+        Endif
+
+        ' calculate value
+        vValue = Single@(Chr($aRecBuf[6]) & Chr($aRecBuf[5]) & Chr($aRecBuf[4]) & Chr($aRecBuf[3]))
+        ' Lets normalize it with 6 digits, but this is a guestimate
+        vValue = Format(vValue, "0.000000")
+
+        If $bDebug Then
+          WriteDebugLog("Value Size: " & $aRecBuf[2] & " Bytes, 32-bits integer IEEE.")
+          WriteDebugLog("Value RAW: " & Hex($aRecBuf[3], 2) & Hex($aRecBuf[4], 2) & Hex($aRecBuf[5], 2) & Hex($aRecBuf[6], 2))
+          WriteDebugLog("Value: " & vValue)
+        Endif
+
+        ' set device value
+        If iDeviceId Then
+          If $bDebug Then WriteDebugLog("Updating device id '" & iDeviceId & "' with value '" & vValue & "'")
+          Devices.ValueUpdate(iDeviceId, 1, vValue)
+        Endif
+
+      Case 722, 723, 724, 725 ' Read Holding Register 64-bit
+        If $aRecBuf[2] <> 8 Then
+          WriteDebugLog("ERROR: Devicetype is using 64-bit, but received data is not!")
+          Return
+        Endif
+
+        ' Currently we only support signed 64-bit
+        vValue = CLong(Val("&H" & Util.ByteToHex($aRecBuf.Copy(3, 8), False)))
+
+        ' 723 has correction *0.1, 724 has correction *0.01 and 725 has correction *0.001
+        If iDeviceTypeId = 723 Then vValue = Format(vValue * 0.1, "0.0")
+        If iDeviceTypeId = 724 Then vValue = Format(vValue * 0.01, "0.00")
+        If iDeviceTypeId = 725 Then vValue = Format(vValue * 0.001, "0.000")
+
+        If $bDebug Then
+          WriteDebugLog("Value Size: " & $aRecBuf[2] & " Bytes, 64-bits integer.")
+          WriteDebugLog("Value RAW: " & Util.ByteToHex($aRecBuf.Copy(3, 8), False))
+          WriteDebugLog("Value: " & vValue)
+        Endif
+
+        ' set device value
+        If iDeviceId Then
+          If $bDebug Then WriteDebugLog("Updating device id '" & iDeviceId & "' with value '" & vValue & "'")
+          Devices.ValueUpdate(iDeviceId, 1, vValue)
+        Endif
+
+      Case Else
+        WriteLog("ERROR: Unsupported devicetype for modbus found! (" & iDeviceTypeId & ")")
+    End Select
+
+  Else
+    ' device not found?
+  Endif
+
+Catch
+  WriteLog("ERROR: decoding message! '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Decode_Function() As String
+
+  Dim sMsg As String
+
+  Select $aRecBuf[1]
+    Case 1, 129
+      sMsg = "Read Coil Status"
+    Case 2, 130
+      sMsg = "Read Input Status"
+    Case 3, 131
+      sMsg = "Read Holding Registers"
+    Case 4, 132
+      sMsg = "Read Input Registers"
+    Case 5, 133
+      sMsg = "Force Single Coil"
+    Case 6, 134
+      sMsg = "Preset Single Register"
+    Case 15, 143
+      sMsg = "Force Multiple Coils"
+    Case 16, 144
+      sMsg = "Preset Multiple Registers"
+    Case Else
+      sMsg = "Unknown"
+  End Select
+
+  Return sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' decode exception response message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Decode_Exception()
+
+  Dim sMsg As String
+  Dim iFunction As Integer = BClr($aRecBuf[1], 7)
+  Dim iCode As Integer = $aRecBuf[2]
+  Dim iCRC As New Integer[2]
+  Dim bLRC As Byte
+
+  Select iCode
+    Case 1
+      sMsg = "Illegal Function"
+    Case 2
+      sMsg = "Illegal Data Address"
+    Case 3
+      sMsg = "Illegal Data Value"
+    Case 4
+      sMsg = "Slave Device Failure"
+    Case 5
+      sMsg = "Acknowledge"
+    Case 6
+      sMsg = "Slave Device Busy"
+    Case 7
+      sMsg = "Negative Acknowledge"
+    Case 8
+      sMsg = "Memory Parity Error"
+    Case 10
+      sMsg = "Gateway Path Unavailable"
+    Case 11
+      sMsg = "Gateway Target Device Failed to Respond"
+    Case Else
+      sMsg = "Unknown"
+  End Select
+
+  If $bDebug Then
+    WriteDebugLog("Received Response:")
+    WriteDebugLog("Slave ID: " & Hex($aRecBuf[0], 2))
+    WriteDebugLog("Function: " & Hex(iFunction, 2))
+    WriteDebugLog("Exception: " & sMsg & " (" & Hex(iCode, 2) & ")")
+
+    If $sModbusType = "ASCII" Then
+      bLRC = CalculateLRC(Mid($sRecBuf, 1, Len($sRecBuf) - 1))
+      WriteDebugLog("Checksum Recv: " & Hex($aRecBuf[3], 2))
+      WriteDebugLog("Checksum Calc: " & Hex(bLRC, 2))
+    Else
+      iCRC = CalculateCRC($aRecBuf, $iMaxNumBytes - 2)
+      WriteDebugLog("Checksum Recv: " & Hex($aRecBuf[3], 2) & Hex($aRecBuf[4], 2))
+      WriteDebugLog("Checksum Calc: " & Hex(iCRC[0], 2) & Hex(iCRC[1], 2))
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send a command to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub WriteCommand(bBuffer As Byte[], sKey As String)
+
+  If $bDebug Then WriteLog("> " & Util.ByteToHex(bBuffer))
+
+  If $sModbusType = "ASCII" Then
+    If $sInterface = "tcp" Then
+      ' send the message to the tcp stream
+      hMySocket.Write(":" & Util.ByteToHexbBuffer(bBuffer, False) & gb.CrLf)
+    Else
+      ' send the message to the serial port
+      hMySerial.Write(":" & Util.ByteToHexbBuffer(bBuffer, False) & gb.CrLf)
+    Endif
+  Else
+    If $sInterface = "tcp" Then
+      ' send the message to the tcp stream
+      hMySocket.Write(bBuffer)
+    Else
+      ' send the message to the serial port
+      hMySerial.Write(bBuffer)
+    Endif
+  Endif
+
+  ' store node and register
+  $iCurrentNode = bBuffer[0]
+  $iCurrentRegister = (bBuffer[2] * 256) + bBuffer[3]
+
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  tModbusBusy.Delay = 1000 ' 1000msec (initial test value)
+  tModbusBusy.Start
+  bInterfaceBusy = True
+
+Catch
+  WriteLog("ERROR : WriteCommand '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return the LRC
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CalculateLRC(sBuf As String) As Byte
+
+  Dim iLen As Integer
+  Dim bLRC As Byte = 0
+
+  ' Convert all ascii to bytes and add them together
+  For iLen = 1 To Len(sBuf) Step 2
+    bLRC += Val("&H" & Mid(sBuf, iLen, 2))
+  Next
+
+  ' Substract 256 - our value to get final value
+  bLRC = 256 - bLRC
+
+  Return bLRC
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' returns the CRC of the iLen no. of bytes in bBuf
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function CalculateCRC(bBuf As Byte[], iLen As Integer) As Integer[]
+
+  Dim iCnt, iCar As Integer
+  Dim iCRC As Byte[] = [CByte(&HFF), CByte(&HFF)]
+
+  For iCnt = 0 To iLen - 1 ' for each byte
+    iCar = bBuf[iCnt]
+    iCar = iCar Xor iCRC[0]
+    iCRC[0] = iCRC[1] Xor aCRCTable2[iCar]
+    iCRC[1] = aCRCTable1[iCar]
+  Next
+
+  Return iCRC
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' init the CRC tables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub InitCRCTable()
+
+  Dim iCRC, iMask, iBit, iMem As Integer
+
+  For iMask = 0 To 255
+    iCRC = iMask
+    For iBit = 0 To 7
+      iMem = iCRC And &H0001&
+      iCRC /= 2
+      If (iMem) Then iCRC = iCRC Xor &HA001&
+    Next
+    aCRCTable2[iMask] = iCRC And &HFF
+    aCRCTable1[iMask] = Lsr(iCRC, 8)
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' interface busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tModbusBusy_Timer()
+
+  bInterfaceBusy = False
+  tModbusBusy.Stop
+
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If $bDebug Then WriteDebugLog("Sending command from Queue (count = " & cQueue.Count & ")")
+    DoQueue()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueueCommand(aPacket As Byte[])
+
+  If Not IsRunning Then
+    WriteLog("ERROR: Can't send command, because plugin is in error state!")
+    Return
+  Endif
+
+  ' add command to queue
+  cQueue.Add(aPacket, Rnd)
+
+  ' if controller is not busy process it
+  If bInterfaceBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DoQueue()
+
+  Dim aPacket As Byte[] = Null
+
+  For Each aPacket In cQueue
+    WriteCommand(aPacket, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Send Command
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Dim iDeviceId As Integer
+  Dim sType As String
+
+  sCmd = sCmd
+
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId)
+  If iDeviceId Then
+    sType = Devices.FindTypeForDevice(iDeviceId)
+  Endif
+
+  Select UCase(sType)
+    ' Case "XXX"
+    '   Coil(sType, sAddress, sCmd)
+    Case Else
+      WriteLog("ERROR: The '" & sType & "' function is not (yet) supported by this plugin!")
+      Return
+  End Select
+
+End

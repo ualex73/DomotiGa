@@ -1,13 +1,11 @@
 ' Gambas class file
 
-' Gambas Class file
-
 ' Description:
 ' CHDDTemp.class
 ' Support for HDDTemp harddisk temperature monitoring.
 
 ' Development Status:
-' Working.
+' Working
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -18,7 +16,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "HDDTemp"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "HDDTemp"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -27,6 +24,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[HDDTemp] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -47,17 +45,17 @@ Public hHDDTemp As Socket
 Private dTimeHighTemp As Date
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StartPlugin(cPl As CPluginEntry)
-  
+
   KeyName = cPl.KeyName
   Instance = cPl.Instance
   If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
-  
+
   ' Copy configuration items locally
   $bEnabled = cPl.Settings["enabled"]
   $sTCPHost = cPl.Settings["tcphost"]
@@ -66,7 +64,15 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $iThreshold = cPl.Settings["threshold"]
   $bDebug = cPl.Settings["debug"]
 
-  ' Initialize 
+  InterfaceId = Devices.FindInterface("HDDTemp Socket")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Initialize
   Run()
 
   IsRunning = True
@@ -74,7 +80,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -113,7 +119,7 @@ Private Sub CheckHDDTemp()
   hHDDTemp.Connect($sTCPHost, $iTCPPort)
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -158,8 +164,8 @@ Public Sub hHDDTemp_Read()
           If Error Then Continue
           If $bDebug Then Main.WriteDebugLog(LogLabel & "Device '" & sDevice & "' has a temperature of " & sTemp & "°C")
           ' find device in database
-          iDeviceId = Devices.Find(Instance, sDevice, Devices.FindInterface("HDDTemp Socket"), "HDDTEMP")
-          If iDeviceId Then Devices.ValueUpdateExt(iDeviceId, 1, sTemp, Devices.ValueType_Temperature)
+          iDeviceId = Devices.Find(Instance, sDevice, InterfaceId, "HDDTEMP")
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sTemp, Devices.ValueType_Temperature)
           ' send warning message per e-mail if threshold is reached
           ' limit the amount of emails to one per 30 minutes
           If (CFloat(sTemp) > $iThreshold) And (DateDiff(dTimeHighTemp, Now(), gb.Minute) > 30) Then
@@ -180,7 +186,16 @@ Public Sub hHDDTemp_Read()
   Next
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hHDDTemp_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 

@@ -2,7 +2,7 @@
 
 ' Description:
 ' Mail.module
-' Support for sending e-mails via SMTP and fetching Gmail RSS.
+' Support for sending e-mails via SMTP.
 
 ' Development Status:
 ' Working.
@@ -16,12 +16,11 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Mail"
-Public PluginType As Integer = Plugin.Type_Module
 Public PluginFriendlyName As String = "Mail"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
-Public PluginMaxInstances As Byte = 1
+Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[Mail] "
@@ -36,10 +35,11 @@ Public ErrorWhere As String
 Public Sub SendMail(sSubject As String, sBody As String, Optional sTo As String) As Boolean
 
   Dim hMsg As New SmtpClient
+  Dim sMimeType As String
 
   ' if mail is disabled, return
   If Not Main.bEmailEnabled Then
-    Main.WriteDebugLog(LogLabel & "Email is disabled")
+    Main.WriteDebugLog(LogLabel & "Email is disabled.")
     Return False
   Endif
 
@@ -54,21 +54,41 @@ Public Sub SendMail(sSubject As String, sBody As String, Optional sTo As String)
     Main.WriteDebugLog("[Mail] From address: " & Main.sEmailFromAddress)
     Main.WriteDebugLog("[Mail] SMTP server: " & Main.sEmailSMTPServer)
     Main.WriteDebugLog("[Mail] SMTP Port: " & Main.iEmailSMTPPort)
+    Main.WriteDebugLog("[Mail] TLS/SSL: " & Main.DisplayBool(Main.bEmailSSL))
     If sTo Then Main.WriteDebugLog("[Mail] To Address: " & sTo)
     Main.WriteDebugLog("[Mail] Subject: " & sSubject)
     Main.WriteDebugLog("[Mail] Body: " & sBody)
   Endif
 
   hMsg.Subject = sSubject
-  hMsg.Add(sBody & "\n\n" & ("-- \nPowered by ") & Application.Name & " V" & Main.sProgramVersion & "\n")
   hMsg.From = Main.sEmailFromAddress
   hMsg.Host = Main.sEmailSMTPServer
   hMsg.Port = Main.iEmailSMTPPort
 
-  ' Both username and password need to be available
-  If Main.sEmailUserName & Main.sEmailPassword Then
+  ' Set MIME type to HTML if there is something like <tag ... </tag in the message
+  If Regexp.Match(sBody, "<(\\w+).*</\\1", RegExp.DotAll) Then
+    sMimeType = "text/html"
+  Else
+    sMimeType = "text/plain"
+  Endif
+  hMsg.Add(sBody & "\n\n" & ("-- \nPowered by ") & Application.Name & " V" & Main.sProgramVersion & "\n", sMimeType)
+
+  ' both username and password need to be available
+  If Len(Main.sEmailUserName) And If Not Len(Main.sEmailPassword) Then
+    Main.WriteDebugLog(LogLabel & "Password missing for authentication.")
+    Return False
+  Else If Not Len(Main.sEmailUserName) And If Len(Main.sEmailPassword) Then
+    Main.WriteDebugLog(LogLabel & "Username missing for authentication.")
+    Return False
+  Else If Len(Main.sEmailUserName) And If Len(Main.sEmailPassword) Then
     hMsg.User = Main.sEmailUserName
     hMsg.Password = Main.sEmailPassword
+    If Main.bEMailDebug Then
+      Main.WriteDebugLog("[Mail] Authentication with Username: " & Main.sEmailUserName)
+      Main.WriteDebugLog("[Mail] Password is not logged.")
+    Endif
+  Else
+    Main.WriteDebugLog(LogLabel & "No authentication used.")
   Endif
 
   If Main.bEmailSSL Then
@@ -79,14 +99,14 @@ Public Sub SendMail(sSubject As String, sBody As String, Optional sTo As String)
   If Not Error Then
     Main.WriteLog("[Mail] Just sent an e-mail message with subject '" & sSubject & "' to '" & sTo & "'.")
   Else
-    Main.WriteLog("[Mail] Error '" & Error.Text & "' occured when sending e-mail with subject '" & sSubject & "' to '" & sTo & "'.")
+    Main.WriteLog("[Mail] Error '" & Error.Text & "' occured when sending e-mail with subject '" & sSubject & "' to recipient '" & sTo & "'.")
     Return False
   Endif
 
   Return True
 
 Catch
-  Main.WriteLog("[Mail] Error '" & Error.Text & "' occured when sending e-mail message with subject '" & sSubject & "' to '" & sTo & "'.")
+  Main.WriteLog("[Mail] Error '" & Error.Text & "' occured when sending e-mail message with subject '" & sSubject & "' to recipient '" & sTo & "'.")
   Return False
 
 End

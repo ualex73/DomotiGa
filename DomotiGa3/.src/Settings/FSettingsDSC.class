@@ -65,7 +65,7 @@ Public Sub btnSave_Click()
   If Main.bServer Then
     Plugin.Restart("DSC", 1)
   Else
-    Client.ModuleRestart("DSC")
+    Client.Plugin_Restart("DSC")
   Endif
 
   FMain.UpdateStatusPanel()
@@ -179,6 +179,16 @@ Private Sub EnableDisableSettings()
   btnArm_Away.Enabled = chkEnabled.Value
   cmbType.Enabled = chkEnabled.Value
   txtMasterCode.Enabled = chkEnabled.Value
+  btnSerial.Enabled = chkEnabled.Value
 
 End
 
+Public Sub btnSerial_Click()
+
+  Dim sSerialPort As String
+
+  sSerialPort = FToolsSerialPorts.Run()
+  If sSerialPort Then txtSerialPort.Text = sSerialPort
+  btnSave.Enabled = True
+
+End

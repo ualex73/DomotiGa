@@ -1,0 +1,74 @@
+' Gambas class file
+
+' Description:
+' FWeather.class
+' Form which will show the other Weather forms like WeatherUnderground, OpenWeatherMap, forecast.io, etc
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+Private $hWeather As Form
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Form opening
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Form_Open()
+
+  cmbWeatherInstance.Clear()
+
+  If Plugin.IsPluginEnabled("ForecastIo", 0) Then
+    cmbWeatherInstance.Add("forecast.io")
+  Endif
+
+  If Plugin.IsPluginEnabled("OpenWeatherMap", 0) Then
+    cmbWeatherInstance.Add("OpenWeatherMap")
+  Endif
+
+  If Plugin.IsPluginEnabled("WeatherUnderground", 0) Then
+    cmbWeatherInstance.Add("WeatherUnderground")
+  Endif
+
+  cmbWeatherInstance.Index = 0
+
+  ' Not yet implemented
+  lblSearch.Visible = False
+  txtSearch.Visible = False
+  btnSearch.Visible = False
+  btnView.Visible = False
+  cmbResults.Visible = False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Form resizing
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Form_Resize()
+
+  Try $hWeather.Resize(Me.ClientWidth, Me.ClientHeight)
+  PnlWeather.Resize(Me.ClientWidth, Me.ClientHeight)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub cmbWeatherInstance_Click()
+
+  Select cmbWeatherInstance.Text
+    Case "WeatherUnderground"
+      $hWeather = New FWeatherUnderground(PnlWeather)
+      Form_Resize()
+    Case "OpenWeatherMap"
+      $hWeather = New FOpenWeatherMap(PnlWeather)
+      Form_Resize()
+    'Case "forecast.io"
+      '$hWeather = New FForecastIo(PnlWeather)
+      'Form_Resize()
+    Default
+      TextAreaMsg.Visible = True
+      TextAreaMsg.Text = ("No Weather services are available, please enable one first.\nUse the Menu Modules => Weather.")
+  End Select
+
+End

@@ -56,7 +56,7 @@ Public Sub btnSave_Click()
   If Main.bServer Then
     Plugin.Restart("IRMan", 1)
   Else
-    Client.ModuleRestart("IRMan")
+    Client.Plugin_Restart("IRMan")
   Endif
 
   Me.Close
@@ -104,6 +104,16 @@ Private Sub EnableDisableSettings()
 
   txtSerialPort.Enabled = chkEnabled.Value
   chkDebug.Enabled = chkEnabled.Value
+  btnSerial.Enabled = chkEnabled.Value
 
 End
 
+Public Sub btnSerial_Click()
+
+  Dim sSerialPort As String
+
+  sSerialPort = FToolsSerialPorts.Run()
+  If sSerialPort Then txtSerialPort.Text = sSerialPort
+  btnSave.Enabled = True
+
+End

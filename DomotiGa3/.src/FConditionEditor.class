@@ -44,6 +44,7 @@ Public Sub Form_Open()
     Endif
     If rResult.Count = 1 Then
       txtConditionName.Text = rResult!name
+      txtConditionId.Text = rResult!id
       txtDescription.Text = rResult!description
       taFormula.Text = rResult!formula
     Else
@@ -162,13 +163,30 @@ End
 
 Public Sub btnDeleteCondition_Click()
 
-  Dim iId As Integer
+  Dim iConditionId As Integer
+  Dim rEvents As Result
+  Dim sEventList As String
 
-  Select Message.Question(("Are you sure that you want to delete this condition?"), ("Yes"), ("No"))
+  ' check if condition is used in events
+  iConditionId = GetConditionId(txtConditionName.Text)
+  If iConditionId Then
+    rEvents = Main.hDB.Exec("SELECT name FROM events WHERE condition1_id = &1 OR condition2_id = &1", iConditionId)
+    If rEvents
+      If rEvents.Available
+        sEventList = "This condition is in use by " & IIf(rEvents.Count > 1, "these events", "this event") & ":\n"
+        For Each rEvents
+          sEventList &= "'" & rEvents!name & "'\n"
+        Next
+      Else
+        sEventList = ("This condition is not used in any event.") & "\n"
+      Endif
+    Endif
+  Endif
+
+  Select Message.Question(sEventList & "\n" & ("Are you sure that you want to delete this condition?"), ("Yes"), ("No"))
     Case 1
-      iId = GetConditionId(txtConditionName.Text)
-      If iId Then
-        Main.hDB.Exec("DELETE FROM conditions WHERE id = &1", iId)
+      If iConditionId Then
+        Main.hDB.Exec("DELETE FROM conditions WHERE id = &1", iConditionId)
       Endif
       If FEventEditor.Id Then
         If FEventEditor.iEditingCondition = 1 Then
@@ -218,14 +236,12 @@ End
 
 Public Sub LoadDevices(sParent As String)
 
-  Dim iCount As Integer
-  Dim rDevices As Result
   Dim sKey As String
 
   tvVariables.Add(Left(sParent, 3), sParent)
 
-  rResult = Devices.GetDevicesAndValues(["sortOrder": "name"])
-  
+  rResult = Devices.GetDevicesAndValues(["sortOrder": "name,device_values.valuenum"])
+
   If Not rResult Then
     LoadItem("ERROR", "Error: table 'devices' not found!", Left(sParent, 3))
     Return
@@ -240,7 +256,8 @@ Public Sub LoadDevices(sParent As String)
       LoadItem("BatteryStatus", "BatteryStatus", sKey)
     Endif
     LoadItem("Value" & rResult!device_value_valuenum, "Value" & rResult!device_value_valuenum, sKey)
-  Next  
+    LoadItem("Value" & rResult!device_value_valuenum & "_ LastChanged", "Value" & rResult!device_value_valuenum & "_ LastChanged", sKey)
+  Next
 
 End
 
@@ -459,6 +476,7 @@ End
 Public Sub btnEval_Click()
 
   Dim sToEval As String
+  Dim cData As New JSONCollection
 
   ' if a part of the formula is selected, we only elvaluate this part
   If taFormula.Selection.Length = 0 Then
@@ -467,7 +485,13 @@ Public Sub btnEval_Click()
     sToEval = taFormula.Selection.Text
   Endif
 
-  txtEvalResult.Text = Events.EvalFormula(sToEval)
+  If Main.bServer Then
+    txtEvalResult.Text = Events.EvalFormula(sToEval)
+  Else
+    cData.Add(sToEval, "evaluate")
+    txtEvalResult.Text = Client.Condition_Eval(cData)
+  Endif
+
   tMessage.Start
 
 End

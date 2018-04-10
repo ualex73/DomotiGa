@@ -19,15 +19,15 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "RFXComTX"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "RFXCom Transmitter"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
-Public PluginMaxInstances As Byte = 1
+Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[RFXComTX] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -43,7 +43,7 @@ Private $sInterface As String
 Private $sSerPort As String
 Private $sBaud As String
 Private $bHandshake As Boolean
-Private $bRFXComTXDebug As Boolean
+Private $bDebug As Boolean
 Private $iRelayPort As Integer
 Private $bDisableX10 As Boolean
 Private $bEnableARC As Boolean
@@ -53,15 +53,11 @@ Private $bRFXmitter As Boolean
 Private $sInterfaceType As String
 Private $bRelayEnabled As Boolean
 
-Public hRFXComTX As New Socket
-Public hRFXComTXSer As New SerialPort
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
 Public hRFXComTXRelay As New ServerSocket
 Public hRelayTXClient As Object[]
 Public hRelayTXSocket As New Socket
-Public tRFXComTXConnect As Timer
-Private iConnectRetry As Integer = 0 ' retries
-Private iConnectDelay As Integer = 60000 ' 1 minute
-Private bFailedWriteRetry As Boolean = True
 
 Public tRFXComTXBusy As Timer
 Private cQueue As New Collection    ' command buffer
@@ -73,12 +69,10 @@ Const GETSW As Byte = &H30
 Const MODERFXCOM As Byte = &H33
 Const MODERFXCOMNOREC As Byte = &H37
 
-Private bMessage As Boolean
 Private bProtocol As Byte = MODERFXCOM
-Private bAck As Boolean = False
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -104,17 +98,22 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bEnableHarrison = cPl.Settings["enableharrison"]
   $bEnableKoppla = cPl.Settings["enablekoppla"]
   $bRFXmitter = cPl.Settings["rfxmitter"]
-  $bRFXComTXDebug = cPl.Settings["debug"]
- 
+  $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("RFXCom Transmitter")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
     ConnectTCP()
   Else
     ConnectSerial()
   Endif
-
-  ' Previously in the code it was check if the RFXComTX object was created, but
-  ' that was useless for TCP connections (they never fail while the TCP will setup)
 
   ' Start RFXCom Relaying
   If $bRelayEnabled Then
@@ -130,7 +129,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -139,128 +138,21 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Return "transmitter" or "xmitter"
+' Easy helper for WriteLog
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub DisplayTransmitterType() As String
+Private Sub WriteLog(sLog As String)
 
-  If $bRFXmitter Then
-    Return "xmitter"
-  Else
-    Return "transmitter"
-  Endif
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' connect to the host:port
+' Easy helper for WriteDebugLog
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
+Private Sub WriteDebugLog(sLog As String)
 
-  ' try to close the connection
-  Try hRFXComTX.Close
-
-  ' get a new one
-  hRFXComTX = New Socket As "RFXComTX"
-  hRFXComTX.Connect($sTCPHost, $iTCPPort)
-
-  ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " (" & DisplayTransmitterType() & ") TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
-
-  ' Don't set IsRunning=True, this has to be done in _Ready 
-
-  ' All went ok
-  Return True
-
-Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " (" & DisplayTransmitterType() & ") TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  IsRunning = False
-  ErrorText = Error.Text
-  ErrorWhere = Error.Where
-
-  Return False
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' connect to the serial port
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectSerial() As Boolean
-
-  ' try to close the connection
-  Try hRFXComTXSer.Close
-
-  ' get a new one
-  hRFXComTXSer = New Serialport As "RFXComTXSer"
-  With hRFXComTXSer
-    .PortName = $sSerPort
-    .Speed = $sBaud
-    .Parity = 0
-    .DataBits = 8
-    .StopBits = 2
-    .FlowControl = 0
-    .Open()
-  End With
-
-  ' define timer for interface busy
-  tRFXComTXBusy = New Timer As "tRFXComTXBusy"
-  tRFXComTXBusy.Stop
-
-  DoInit()
-
-  ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " (" & DisplayTransmitterType() & ") interface connected to Port " & $sSerPort)
-  IsRunning = True
-
-  ' All went ok
-  Return True
-
-Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " (" & DisplayTransmitterType() & ") interface FAILED to connect to Port " & $sSerPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  IsRunning = False
-  ErrorText = Error.Text
-  ErrorWhere = Error.Where
-
-  Return False
-
-End
-
-Public Sub RFXComTX_Read()
-
-  Dim sData As Byte
-
-  Try sData = Read #hRFXComTX As Byte
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
-  ProcessReceivedChar(sData)
-
-End
-
-Private Sub ProcessReceivedChar(bTemp As Byte)
-
-  ' relay incoming data to relay port
-  If $bRelayEnabled Then Try Write #hRelayTXSocket, bTemp As Byte
-
-  If bFirstByte = True Then
-    bFirstByte = False
-    iByteCount = 0
-  Endif
-
-  Main.ControlLed("RFXCom", "On")
-  If bTemp = bProtocol Then
-    If $bRFXComTXDebug Then Main.WriteDebugLog(LogLabel & "ACK=>", True)
-  Else If bTemp = &H5A Then
-    If $bRFXComTXDebug Then Main.WriteDebugLog(LogLabel & "NAK=>", True)
-  Endif
-  Inc iBytecount
-  If $bRFXComTXDebug Then Main.WriteRFXDebugLog(Hex(bTemp, 2), True)
-
-  If iByteCount = 1 Then
-     If $bRFXComTXDebug Then Main.WriteRFXDebugLog("\n", True)
-     bFirstByte = True
-  Endif
-
-  Main.ControlLed("RFXCom", "Off")
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
 
 End
 
@@ -270,14 +162,13 @@ End
 Public Function Disconnect() As Boolean
 
   ' try to close the connection
+  Try hMySocket.Close
+  Try hMySerial.Close
   Try tRFXComTXBusy.Stop
-  Try hRFXComTX.Close
-  Try hRFXComTXSer.Close
-  Try tRFXComTXConnect.Stop
   Try hRFXComTXRelay.Close
 
   If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
   Else
     Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
   Endif
@@ -297,33 +188,113 @@ Catch
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
+' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tRFXComTXConnect_Timer()
+Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
 
-  If Not ConnectTCP(False) Then
-    Inc iConnectRetry
-    iConnectDelay *= iConnectRetry
-    tRFXComTXConnect.Delay = iConnectDelay
-  Endif
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " (" & DisplayTransmitterType() & ") TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " (" & DisplayTransmitterType() & ") TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
 
 End
 
-Public Sub RFXComTX_Closed()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectSerial() As Boolean
 
-  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  If iConnectRetry < 6 Then
-    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
-    tRFXComTXConnect.Start
-  Endif
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the port
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
+
+  ' get a new one - but store the retry counter between new instances
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = &HFF + gb.Byte ' Byte[]
+    .PortName = $sSerPort
+    .Speed = $sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 2
+    .FlowControl = 0
+    .Open()
+  End With
+
+  ' define timer for interface busy
+  tRFXComTXBusy = New Timer As "tRFXComTXBusy"
+  tRFXComTXBusy.Stop
+
+  DoInit()
+
+  ' Write to main logfile we connected successfully
+  Main.WriteLog(LogLabel & PluginFriendlyName & " (" & DisplayTransmitterType() & ") serial interface connected to port " & $sSerPort)
+  IsRunning = True
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " (" & DisplayTransmitterType() & ") serial interface FAILED to connect to port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
 
 End
 
-Public Sub RFXComTX_Error()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Socket closed by remote
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
 
-  Dim sMsg As String
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
 
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
   Main.WriteLog(LogLabel & "ERROR: " & sMsg)
 
   IsRunning = False
@@ -331,22 +302,114 @@ Public Sub RFXComTX_Error()
 
 End
 
-Public Sub RFXComTX_Ready()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
 
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
-  'Main.WriteLog(LogLabel & sInterfaceType & " TCP socket connected.")
-
-  ' define timer for RFXComTX reconnect
-  tRFXComTXConnect = New Timer As "tRFXComTXConnect"
-  tRFXComTXConnect.Delay = iConnectRetry
-  tRFXComTXConnect.Stop
 
   ' define timer for Interface busy
   tRFXComTXBusy = New Timer As "tRFXComTXBusy"
   tRFXComTXBusy.Stop
 
   DoInit()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  Main.WriteDebugLog(LogLabel & "ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got data from serialport
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return "transmitter" or "xmitter"
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DisplayTransmitterType() As String
+
+  If $bRFXmitter Then
+    Return "xmitter"
+  Else
+    Return "transmitter"
+  Endif
+
+End
+
+Private Sub ProcessReceivedChar(bTemp As Byte)
+
+  ' relay incoming data to relay port
+  If $bRelayEnabled Then Try Write #hRelayTXSocket, bTemp As Byte
+
+  If bFirstByte = True Then
+    bFirstByte = False
+    iByteCount = 0
+  Endif
+
+  Main.ControlLed("RFXCom", "On")
+  If bTemp = bProtocol Then
+    If $bDebug Then WriteDebugLog("< ACK " & Hex(bTemp, 2))
+  Else If bTemp = &H5A Then
+    If $bDebug Then WriteDebugLog("< NAK " & Hex(bTemp, 2))
+  Endif
+  Inc iBytecount
+
+  If iByteCount = 1 Then bFirstByte = True
+
+  Main.ControlLed("RFXCom", "Off")
 
 End
 
@@ -359,7 +422,7 @@ Public Sub tRFXComTXBusy_Timer()
   tRFXComTXBusy.Stop
 
   If cQueue.Count Then ' if there are more commands left in queue, send next one
-    If $bRFXComTXDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
+    If $bDebug Then WriteDebugLog("Sending command from Queue (count = " & cQueue.Count & ")")
     DoQueue()
   Endif
 
@@ -402,11 +465,11 @@ Public Sub RFXComTXRelay_Connection(sHost As String)
   hRelayTXSocket = New Socket As "RelayTXSocket"
   ' accept client
   If hRFXComTXRelay.Status <= Net.Inactive Then Return
-  If $bRFXComTXDebug Then Main.WriteDebugLog(LogLabel & "Relay connection request from " & sHost)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Relay connection request from " & sHost)
 
   hRelayTXSocket = hRFXComTXRelay.Accept()
   hRelayTXClient.Add(hRelayTXSocket)
-  If $bRFXComTXDebug Then
+  If $bDebug Then
     If hRelayTXSocket.Status = Net.Connected Then Main.WriteLog(LogLabel & $sInterfaceType & " Relay client connection from ip address " & hRelayTXSocket.RemoteHost & " " & DNS.ResolveHost(hRelayTXSocket.RemoteHost) & " ) accepted.")
   Endif
 
@@ -438,12 +501,12 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
   Dim iDeviceId As Integer
   Dim sType As String
 
-  If $sInterface = "serial" And If hRFXComTXSer.Status <> Net.Active Then
+  If $sInterface = "serial" And If hMySerial.Status <> Net.Active Then
     Main.WriteDebugLog(LogLabel & "Serial port not opened, unable to control device!")
     Return
   Endif
 
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transmitter"))
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId)
   If Not iDeviceId Then Return
 
   sType = Devices.FindTypeForDevice(iDeviceId)
@@ -470,6 +533,12 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
           AC(sAddress, sCmd, False)
         Else
           Main.WriteDebugLog(LogLabel & "Invalid AC or HE address '" & sAddress & "' given!")
+        Endif
+      Case "Harrison" ' Harrison
+        If Left$(sAddress, 1) Like "[A-Z]" And Right$(sAddress, 1) Like "[0-9]" Then
+          Harrison(sAddress, sCmd)
+        Else
+          Main.WriteDebugLog(LogLabel & "Invalid Harrison address '" & sAddress & "' given!")
         Endif
       Default
         Main.WriteDebugLog(LogLabel & "" & sType & " protocol is not supported by RFXtransmitter code!")
@@ -551,26 +620,13 @@ Private Sub WriteCommand(bBuffer As Byte[], sKey As String)
   For Each sByte In bBuffer
     sMessage &= Hex(sByte, 2)
   Next
-  If $bRFXComTXDebug Then Main.WriteDebugLog(LogLabel & "> " & sMessage)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sMessage)
 
+  ' Write the complete string - not byte-for-byte
   If $sInterface = "tcp" Then
-    ' send the message to the tcp stream
-    Try bBuffer.Write(hRFXComTX, 0, bBuffer.Length)
-    If Error Then
-      Main.WriteRFXDebugLog(LogLabel & "Unable to write to TCP port!")
-      If bFailedWriteRetry Then
-        bFailedWriteRetry = False
-        Main.WriteDebugLog(LogLabel & "Trying to reconnect once.")
-        If ConnectTCP(False) Then
-          Try bBuffer.Write(hRFXComTX, 0, bBuffer.Length)
-          If Error Then Main.WriteRFXDebugLog(LogLabel & "Unable to write to TCP port again!")
-        Endif
-      Endif
-    Endif
+    hMySocket.Write(bBuffer)
   Else
-    ' send the message to the serial port
-    Try bBuffer.Write(hRFXComTXSer, 0, bBuffer.Length)
-    If Error Then Main.WriteRFXDebugLog(LogLabel & "Unable to write to serial port!")
+    hMySerial.Write(bBuffer)
   Endif
 
   ' remove sent command from queue
@@ -629,11 +685,11 @@ Public Function SetInitMode()
   Dim bBuf2 As Byte[] = [CByte(&HF0), CByte(MODERFXCOMNOREC), &HF0, MODERFXCOMNOREC] ' no handshake
 
   If $bHandshake Then
-    If $bRFXComTXDebug Then Main.WriteRFXDebugLog(("Initialized ") & $sInterfaceType & (" for Handshake usage with => ") & Hex(bBuf1[0]) & Hex(bBuf1[1]) & Hex(bBuf1[2]) & Hex(bBuf1[3]) & "\n")
+    If $bDebug Then WriteDebugLog("Initialized " & $sInterfaceType & " for Handshake usage with => " & Hex(bBuf1[0], 2) & Hex(bBuf1[1], 2) & Hex(bBuf1[2], 2) & Hex(bBuf1[3], 2))
     bProtocol = MODERFXCOM
     QueueCommand(bBuf1)
   Else
-    If $bRFXComTXDebug Then Main.WriteRFXDebugLog(("Initialized ") & $sInterfaceType & (" for No Handshake usage with => ") & Hex(bBuf2[0]) & Hex(bBuf2[1]) & Hex(bBuf2[2]) & Hex(bBuf2[3]) & "\n")
+    If $bDebug Then WriteDebugLog("Initialized " & $sInterfaceType & " for No Handshake usage with => " & Hex(bBuf2[0], 2) & Hex(bBuf2[1], 2) & Hex(bBuf2[2], 2) & Hex(bBuf2[3], 2))
     bProtocol = MODERFXCOMNOREC
     QueueCommand(bBuf2)
   Endif
@@ -643,11 +699,11 @@ End
 ' disable X10 protocol
 Public Sub DisableX10TX()
 
-  Dim bBuf As Byte[] = [CByte(&HF0), CByte(&H3F), &HF0, &H3F]
+  Dim bBuf As Byte[] = [&HF0, &H3F, &HF0, &H3F]
 
-  If $bRFXComTXDebug Then
-    Main.WriteRFXDebugLog(("Cmd to ") & $sInterfaceType & (" => F03FF03F\n"), False)
-    Main.WriteRFXDebugLog(("Disable X10 RF\n"), False)
+  If $bDebug Then
+    WriteDebugLog("Cmd to " & $sInterfaceType & " => " & Util.ByteToHex(bBuf))
+    WriteDebugLog("Disable X10 RF")
   Endif
   QueueCommand(bBuf)
 
@@ -656,11 +712,11 @@ End Sub
 ' enable ARC aka KAKU
 Public Function EnableARCTX()
 
-  Dim bBuf As Byte[] = [CByte(&HF0), CByte(&H3D), &HF0, &H3D]
+  Dim bBuf As Byte[] = [&HF0, &H3D, &HF0, &H3D]
 
-  If $bRFXComTXDebug Then
-    Main.WriteRFXDebugLog(("Cmd to ") & $sInterfaceType & (" => F03DF03D\n"), False)
-    Main.WriteRFXDebugLog(("Enable KlikAan-KlikUit RF\n"), False)
+  If $bDebug Then
+    WriteDebugLog("Cmd to " & $sInterfaceType & " => " & Util.ByteToHex(bBuf))
+    WriteDebugLog("Enable KlikAan-KlikUit RF")
   Endif
   QueueCommand(bBuf)
 
@@ -671,9 +727,9 @@ Public Sub EnableHarrisonTX()
 
   Dim bBuf As Byte[] = [CByte(&HF0), CByte(&H3C), &HF0, &H3C]
 
-  If $bRFXComTXDebug Then
-    Main.WriteRFXDebugLog(("Cmd to ") & $sInterfaceType & (" => F03CF03C\n"), False)
-    Main.WriteRFXDebugLog(("Enable Harrison RF\n"), False)
+  If $bDebug Then
+    WriteDebugLog("Cmd to " & $sInterfaceType & " => " & Util.ByteToHex(bBuf))
+    WriteDebugLog("Enable Harrison RF")
   Endif
   QueueCommand(bBuf)
 
@@ -684,9 +740,9 @@ Public Sub EnableKopplaTX()
 
   Dim bBuf As Byte[] = [CByte(&HF0), CByte(&H3E), &HF0, &H3E]
 
-  If $bRFXComTXDebug Then
-    Main.WriteRFXDebugLog(("Cmd to ") & $sInterfaceType & (" => F03EF03E\n"), False)
-    Main.WriteRFXDebugLog(("Enable Flamingo / Koppla RF\n"), False)
+  If $bDebug Then
+    WriteDebugLog("Cmd to " & $sInterfaceType & " => " & Util.ByteToHex(bBuf))
+    WriteDebugLog("Enable Flamingo / Koppla RF")
   Endif
   QueueCommand(bBuf)
 
@@ -695,12 +751,12 @@ End
 ' ask for firmware version
 Public Function GetVersion()
 
-  Dim bBuf As Byte[] = [CByte(&HF0), CByte(GETSW), &HF0, GETSW]
+  Dim bBuf As Byte[] = [&HF0, GETSW, &HF0, GETSW]
 
-  If $bRFXComTXDebug Then
-    Main.WriteRFXDebugLog(("Version request to ") & $sInterfaceType & (" => F030F030\n"), False)
-    If Not $bRFXmitter Then Main.WriteRFXDebugLog(("RF Modes are reset to: X10 enabled and all other modes are disabled\n"), False)
-    Main.WriteRFXDebugLog($sInterfaceType & (" has Firmware Version: "), False)
+  If $bDebug Then
+    WriteDebugLog("Cmd to " & $sInterfaceType & " => " & Util.ByteToHex(bBuf))
+    If Not $bRFXmitter Then WriteDebugLog("RF Modes are reset to: X10 enabled and all other modes are disabled")
+    WriteDebugLog($sInterfaceType & " has Firmware Version (next line): ")
   Endif
   QueueCommand(bBuf)
 
@@ -813,7 +869,7 @@ Public Sub Digimax(sAddress As String, sCmd As String)
       sData &= Chr(&H30 Or (&HF - (Lsr(iHouse, 4) + iHouse + Lsr(iDevice, 4) + iDevice + &H3) And &HF))
       sData &= Chr(&H21) & Chr(&H20) & Chr(&HFF - (Lsl(5, 4)) And &HF0)
   End Select
- ' TODO:
+
 End
 
 ' ARC/KAKU for RFXmitter
@@ -833,7 +889,7 @@ Public Sub ARC(sAddress As String, sCmd As String)
     Case "OFF"
       bBuf[1] = &H14
     Default
-      Main.WriteDebugLog(LogLabel & "Unknown command '" & UCase(sCmd) & "' given!")
+      WriteLog("ERROR: Unknown command '" & UCase(sCmd) & "' given!")
       Return
   End Select
 
@@ -875,7 +931,7 @@ Public Sub X10(sAddress As String, sCommand As String)
     Case "ALL_LIGHTS_OFF", "ALL_UNITS_OFF"
       iUnit = &H80
     Default
-      Main.WriteDebugLog(LogLabel & "Unknown command '" & UCase(sCmd) & "' given!")
+      WriteLog("ERROR: Unknown command '" & UCase(sCmd) & "' given!")
       Return
   End Select
 
@@ -936,14 +992,14 @@ Public Sub AC(sAddress As String, sCmd As String, bHEEU As Boolean, Optional bGr
       sUnit = 0
     Endif
   Else
-    Main.WriteDebugLog(LogLabel & "Address has wrong format, use '<Device> <Unit>'!")
+    WriteLog("ERROR: Address has wrong format, use '<Device> <Unit>'!")
     Return
   Endif
 
   If Len(sAddress) = 9 And If Left(sAddress, 2) = "0x" Then
     sAddress = Right(sAddress, 7)
   Else If Len(sAddress) <> 7 Then
-    Main.WriteDebugLog(LogLabel & "Device address length must be 7 characters!")
+    WriteLog("ERROR: Device address length must be 7 characters!")
     Return
   Endif
 
@@ -979,7 +1035,7 @@ Public Sub AC(sAddress As String, sCmd As String, bHEEU As Boolean, Optional bGr
     Endif
     If bGroup Then bBuf[4] = CByte(bBuf[4] Or &H20)
   Else
-    Main.WriteDebugLog(LogLabel & "Unknown command '" & UCase(sCmd) & "' given!")
+    WriteLog("ERROR: Unknown command '" & UCase(sCmd) & "' given!")
   Endif
   bBuf[0] = bLength
   QueueCommand(bBuf)
@@ -1162,7 +1218,7 @@ End
 Public Sub Waveman(sAddress As String, sCmd As String)
 
   Dim bBuf As New Byte[4]
-  Dim xLate As Byte[] = [CByte(&H0), CByte(&H1), &H4, &H5, &H10, &H11, &H14, &H15, &H40, &H41, &H44, &H45, &H50, &H51, &H54, &H55]
+  Dim xLate As Byte[] = [&H00, &H01, &H04, &H05, &H10, &H11, &H14, &H15, &H40, &H41, &H44, &H45, &H50, &H51, &H54, &H55]
   Dim sHouse, sDevice As String
 
   sHouse = Left$(sAddress, 1)
@@ -1174,7 +1230,9 @@ Public Sub Waveman(sAddress As String, sCmd As String)
     Case "ON"
       bBuf[1] = &H54
     Case "OFF"
-      bBuf[1] = &H0
+      bBuf[1] = &H00
+    Case Else
+      Return
   End Select
 
   bBuf[2] = xLate[CInt(sDevice) - 1]
@@ -1268,9 +1326,43 @@ Public Sub Harrison(sAddress As String, sCmd As String)
       bBuf[3] = &HF3
     Case "STOP" ' stop
       bBuf[3] = &HFC
+    Case Else
+      Return
   End Select
+
   bBuf[4] = &H80
   QueueCommand(bBuf)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Retrieves the RFXComTX instance information for JSON-RPC and RFXCom Commander
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub JsonRpc_Tools_RFXCom_Get(cData As JSONCollection) As JSONCollection
+
+  Dim cResult As New JSONCollection
+
+  If cData = Null Then Return Null
+
+  Select cData["command"]
+
+    ' Get controller information
+    Case "controller"
+      cResult.Add(Instance, "instance_id")
+      cResult.Add(IsRunning, "running")
+      If Not IsRunning Then
+        cResult.Add(ErrorText, "errortext")
+      Endif
+
+      cResult.Add("rfxcomtx", "rfxcom")
+      cResult.Add(IIf($bRFXmitter, "xmitter", "transmitter"), "txtype")
+
+    Case Else
+      Return Null
+
+  End Select
+
+  Return cResult
 
 End
 

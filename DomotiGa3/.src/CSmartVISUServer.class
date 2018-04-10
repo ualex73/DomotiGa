@@ -5,7 +5,7 @@
 ' Built-in SmartVISU server support.
 
 ' Development Status:
-' Just started, minimal tested, some SmartVISU options missing.
+' Working, minimal tested, some SmartVISU options missing.
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -16,15 +16,15 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "SmartVisuServer"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "SmartVISU Server"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "1.01"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[SmartVISU] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -35,7 +35,7 @@ Public ErrorWhere As String
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private $bEnabled As Boolean
 Private $iPort As String
-Private $bSmartVisuServerDebug As Boolean
+Private $bDebug As Boolean
 
 Public hWebSocketServer As ServerSocket
 Public client As CWebSocket
@@ -43,11 +43,10 @@ Public client As CWebSocket
 Private oClients As New CWebSocket[]
 Private cMonitors As New Collection
 
-Private hFetch As Process
-Private cOutput As New Collection
+Private sProtocolVersion As String = "0.4"
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -61,15 +60,23 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   ' Copy configuration items locally
   $bEnabled = cPl.Settings["enabled"]
   $iPort = cPl.Settings["tcpport"]
-  $bSmartVisuServerDebug = cPl.Settings["debug"]
- 
+  $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("SmartVISUServer")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
   ' Connect/Initialize connection
   Connect()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -90,14 +97,14 @@ Public Function Connect() As Boolean
     IsRunning = True
     Return True
   Else
-    Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " FAILED listen on  Port " & $iPort)
+    Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " FAILED listen on Port " & $iPort)
     IsRunning = False
     ErrorText = "Net Not Active"
     Return False
   Endif
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " FAILED listen on  Port " & $iPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " FAILED listen on Port " & $iPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -111,10 +118,10 @@ Public Sub WebSocketServer_Connection(sRemoteHost As String)
 
   client = New CWebSocket(hWebSocketServer.Accept()) As "VisuClient"
   oClients.Add(client)
-  If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "Got a connection from client with IP address '" & sRemoteHost & "'")
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Got a connection from client with IP address '" & sRemoteHost & "'")
 
 Catch
-  If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -137,7 +144,7 @@ Public Sub Disconnect() As Boolean
 
   hWebSocketServer.Close()
 
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
 
   ' all ok
   Return True
@@ -148,7 +155,7 @@ Finally
   ErrorWhere = ""
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   Return False
 
 End
@@ -162,11 +169,11 @@ Private Sub SendProtoVersion(iVersion As String, socks As Object)
   cCmd.Add("proto", "cmd")
   cCmd.Add(iVersion, "ver")
   sData = JSON.Encode(cCmd)
-  If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "> " & socks.sock.RemoteHost & ":" & socks.sock.RemotePort & " " & sData)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & socks.sock.RemoteHost & ":" & socks.sock.RemotePort & " " & sData)
   If socks Then socks.Send(sData)
 
 Catch
-  If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -183,12 +190,12 @@ Private Sub SendItemUpdate(cUpdate As String[])
 
   ' send cmd to each connected client
   For Each socks In oClients
-    If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "> " & socks.sock.RemoteHost & ":" & socks.sock.RemotePort & " " & sData)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & socks.sock.RemoteHost & ":" & socks.sock.RemotePort & " " & sData)
     If socks Then socks.Send(sData)
   Next
 
 Catch
-  If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -203,35 +210,39 @@ Public Sub UpdateItem(sItem As String, sValue As String)
 
 End
 
-Private Sub SendSeriesUpdate(cUpdate As Collection)
+Private Sub SendSeriesUpdate(cSeriesData As Collection)
 
+  Dim cCmd As New Collection
   Dim socks As CWebSocket
   Dim sData As String
 
   ' create json data
-  sData = JSON.Encode(cUpdate)
+  cCmd.Add("series", "cmd")
+  cCmd.Add(cSeriesData, "items")
+  sData = JSON.Encode(cCmd)
 
   ' send cmd to each connected client
   For Each socks In oClients
-    If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "> " & socks.sock.RemoteHost & ":" & socks.sock.RemotePort & " " & sData)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & socks.sock.RemoteHost & ":" & socks.sock.RemotePort & " " & sData)
     If socks Then socks.Send(sData)
   Next
 
 Catch
-  If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & " 'at '" & Error.Where & "'")
 
 End
 
-Public Sub UpdateSeries(sItem As String, cData As Collection)
+Private Sub UpdateSeries(sItem As String, sName As String, vValueData As Variant[][])
 
-  Dim cCmd As New Collection
+  Dim aCmd As New Collection
 
-  ' {"cmd":"series","sid":"bath_plot_value.avg.2h.0","series": [[t1, y1], [t2, y2]]}
-  cCmd.Add("series", "cmd")
-  cCmd.Add(Replace(sItem, " ", "_"), "sid")
-  cCmd.Add(JSON.Encode(cData), "series")
-  SendSeriesUpdate(cCmd)
-  cCmd.Clear
+  If vValueData Then
+    aCmd.Add(Replace(sItem, " ", "_") & sName, "id")
+    aCmd.Add(vValueData, "plotdata")
+    SendSeriesUpdate(aCmd)
+  Else
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "UpdateSeries: No data given!")
+  Endif
 
 End
 
@@ -249,22 +260,22 @@ Private Sub SendDialog(sHeader As String, sContent As String)
 
   ' send cmd to each connected client
   For Each socks In oClients
-    If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "> " & socks.sock.RemoteHost & ":" & socks.sock.RemotePort & " " & sData)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & socks.sock.RemoteHost & ":" & socks.sock.RemotePort & " " & sData)
     If socks Then socks.Send(sData)
   Next
 
 Catch
-  If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
-Public Sub SendUpdateDevice(sDevice As String, sValue As String, sType As String)
+Public Sub SendUpdateForDevice(sDevice As String, sValue As String, sType As String)
 
   Dim sItem, sMonitorDevice As String = Replace(sDevice & "_" & sType, " ", "_")
   Dim aItems As Variant[]
 
   If cMonitors.Count = 0 Then
-    If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "No clients connected, so aborting item updates.")
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "No clients connected, so aborting item updates.")
     Return ' no clients connected
   Endif
 
@@ -272,8 +283,9 @@ Public Sub SendUpdateDevice(sDevice As String, sValue As String, sType As String
   For Each aItems In cMonitors
     For Each sItem In aItems
       If sMonitorDevice == sItem Then ' send update
-        If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "Monitored item found, updating: " & sMonitorDevice)
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Monitored item found, updating: " & sMonitorDevice)
         Select LCase(sType)
+          ' TODO: support values > 4
           Case "value", "value1", "setpoint"
             UpdateItem(sMonitorDevice, sValue)
           Case "value2"
@@ -290,6 +302,8 @@ Public Sub SendUpdateDevice(sDevice As String, sValue As String, sType As String
             Else If LCase(sValue) = "on" Or If InStr(LCase(sValue), "dim") Then
               UpdateItem(sMonitorDevice, "1")
             Endif
+          Case "battery"
+            UpdateItem(sMonitorDevice, ConvertBatteryLevel(sValue))
           Case "dimmer", "dim"
             Select LCase(sValue)
               Case "on"
@@ -300,33 +314,35 @@ Public Sub SendUpdateDevice(sDevice As String, sValue As String, sType As String
                 UpdateItem(sMonitorDevice, Replace(sValue, "dim ", "", gb.IgnoreCase))
             End Select
         End Select
-        Break
+        Return
       Endif
     Next
   Next
   ' not found
-  If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "Device '" & sMonitorDevice & "' not found in monitored items.")
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sMonitorDevice & " is not a monitored item.")
 
 End
 
 Public Sub VisuClient_Ready()
 
-  SendProtoVersion("0.1", Last)
+  SendProtoVersion(sProtocolVersion, Last)
 
 End
 
 Public Sub VisuClient_Read(sMsg As String)
 
   Dim cData As New Collection
-  Dim sItem, sDevice, sValue, sVersion, sCmd, sType, sMonitorDevice, sSeries, sStart As String
-  Dim iUnder, iBrightness, iDim, iDeviceId As Integer
+  Dim vPlotData As New Variant[][]
+  Dim sItem, sDevice, sDeviceName, sValue, sVersion, sCmd, sType, sMonitorDevice, sVar, sVarValue, sMode, sTmin, sTmax, sCount, sValNum, sInterval, sLog, sMaxLines As String
+  Dim aTmin, aTmax As String[]
+  Dim iUnder, iBrightness, iDim, iDeviceId, iValueNum, iId As Integer
   Dim aMonitor As Variant[]
-  ' Dim sdat1 As String[] = ["12,20"]
-  ' Dim sdat2 As String[] = ["10,10"]
+  Dim dStart, dEnd As Date
 
-  If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "< " & sMsg)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sMsg)
 
   cData = JSON.Decode(sMsg)
+
   Select cData["cmd"]
     Case "item"
       sItem = cData["id"]
@@ -335,10 +351,27 @@ Public Sub VisuClient_Read(sMsg As String)
 
       If iUnder Then
         sDevice = Replace(Mid(sItem, 1, iUnder - 1), "_", " ")
-        ' TODO: deprecated 
+        ' TODO: deprecated
         iDeviceId = Devices.FindIdForDevice(sDevice)
         sType = Mid(sItem, iUnder + 1, Len(sItem) - iUnder)
         sCmd = sValue
+
+        ' extract valuenumber
+        If Left(LCase(sType), 5) = "value" Then
+          If Len(sType) = 5 Then
+            iValueNum = 1
+            sType = "value"
+          Else
+            Try iValueNum = Right(sType, Len(sType) - 5)
+            If Error Then
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid value given for '" & sDevice & "', must be in format 'value1-value99'!")
+              Return
+            Endif
+            sType = "value"
+          Endif
+        Endif
+
+        ' do action
         Select LCase(sType)
           Case "switch"
             ' convert 0/1 to Off/On
@@ -367,22 +400,10 @@ Public Sub VisuClient_Read(sMsg As String)
             ' update the other connected smartvisu clients
             UpdateItem(sItem, sValue)
             Devices.SetDevice(iDeviceId, sCmd)
-          Case "value", "value1"
+          Case "value"
             ' update the other connected smartvisu clients
             UpdateItem(sItem, sValue)
-            Devices.ValueUpdateExt(iDeviceId, 1, sCmd)
-          Case "value2"
-            ' update the other connected smartvisu clients
-            UpdateItem(sItem, sValue)
-           Devices.ValueUpdateExt(iDeviceId, 2, sCmd)
-          Case "value3"
-            ' update the other connected smartvisu clients
-            UpdateItem(sItem, sValue)
-            Devices.ValueUpdateExt(iDeviceId, 3, sCmd)
-          Case "value4"
-            ' update the other connected smartvisu clients
-            UpdateItem(sItem, sValue)
-            Devices.ValueUpdateExt(iDeviceId, 4, sCmd)
+            Devices.ValueUpdate(iDeviceId, iValueNum, sCmd)
           Case "shutter"
              ' convert 0/1 to Stop/Start
             sCmd = IIf(sCmd = 0, "Up", "Down")
@@ -390,150 +411,344 @@ Public Sub VisuClient_Read(sMsg As String)
             UpdateItem(sItem, sValue)
             Devices.SetDevice(iDeviceId, sCmd)
           Case Else
-            If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "Unknown device type or value '" & sType & "' specified after _ in device name!")
+            If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown device type or value '" & sType & "' specified after _ in device name!")
         End Select
       Else
-        If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "No Device type specified after _ in name!")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "No Device type specified after _ in name!")
       Endif
-      If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "Received Device Update: '" & sDevice & "' Value: '" & sCmd & "'")
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received Device Update: '" & sDevice & "' Value: '" & sCmd & "'")
 
     Case "monitor"
       aMonitor = cData["items"]
       ' save monitor items
       cMonitors.Add(aMonitor, Last.sock.RemoteHost & ":" & Last.sock.RemotePort)
-      If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "Monitor Count: " & aMonitor.Count)
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Monitor Count: " & aMonitor.Count)
 
       For Each sMonitorDevice In cData["items"]
         sItem = sMonitorDevice
         iUnder = RInStr(sItem, "_")
 
         If iUnder Then
-          sDevice = Replace(Mid(sItem, 1, iUnder - 1), "_", " ")
           sType = Mid(sItem, iUnder + 1, Len(sItem) - iUnder)
-          iDeviceId = Devices.FindIdForDevice(sDevice)
-          If iDeviceId Then
-            If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "Monitor Item: " & sDevice & " Type: " & sType)
-            Select LCase(sType)
-              Case "value", "value1", "setpoint"
-                UpdateItem(sMonitorDevice, Devices.GetCurrentValueForDevice(iDeviceId, 1))
-              Case "value2"
-                UpdateItem(sMonitorDevice, Devices.GetCurrentValueForDevice(iDeviceId, 2))
-              Case "value3"
-                UpdateItem(sMonitorDevice, Devices.GetCurrentValueForDevice(iDeviceId, 3))
-              Case "value4"
-                UpdateItem(sMonitorDevice, Devices.GetCurrentValueForDevice(iDeviceId, 4))
-              Case "motion"
-                UpdateItem(sMonitorDevice, IIf(Devices.GetCurrentValueForDevice(iDeviceId, 1) == "Motion", 1, 0))
-              Case "switch"
-                sValue = LCase(Devices.GetCurrentValueForDevice(iDeviceId, 1))
-                If sValue = "off" Then
-                  UpdateItem(sMonitorDevice, "0")
-                Else If sValue = "on" Or If InStr(sValue, "dim") Then
-                  UpdateItem(sMonitorDevice, "1")
+
+          If sType == "var" Then ' globalvar, not a device value
+            sVar = Mid(sItem, 1, iUnder - 1)
+            sVarValue = Main.GetGlobalVar(sVar)
+            If sVarValue Then UpdateItem(sMonitorDevice, sVarValue)
+          Else ' device value
+            sDevice = Replace(Mid(sItem, 1, iUnder - 1), "_", " ")
+
+            ' extract valuenumber
+            If Left(LCase(sType), 5) = "value" Then
+              If Len(sType) = 5 Then
+                iValueNum = 1
+                sType = "value"
+              Else
+                Try iValueNum = Right(sType, Len(sType) - 5)
+                If Error Then
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid value given for '" & sDevice & "', must be in format 'value1-value99'!")
+                  Return
                 Endif
-              Case "dimmer", "dim"
-                sValue = Devices.GetCurrentValueForDevice(iDeviceId, 1)
-                Select LCase(sValue)
-                  Case "on"
-                    UpdateItem(sMonitorDevice, "100")
-                  Case "off"
+                sType = "value"
+              Endif
+            Endif
+
+            iDeviceId = Devices.FindIdForDevice(sDevice)
+            If iDeviceId Then
+              If $bDebug Then Main.WriteDebugLog(LogLabel & "Monitor Item: '" & sDevice & "' Type: '" & sType & "'")
+              Select LCase(sType)
+                Case "value"
+                  UpdateItem(sMonitorDevice, Devices.GetCurrentValueForDevice(iDeviceId, iValueNum))
+                Case "setpoint"
+                  UpdateItem(sMonitorDevice, Devices.GetCurrentValueForDevice(iDeviceId, 1))
+                Case "motion"
+                  UpdateItem(sMonitorDevice, IIf(Devices.GetCurrentValueForDevice(iDeviceId, 1) == "Motion", 1, 0))
+                Case "battery"
+                  UpdateItem(sMonitorDevice, ConvertBatteryLevel(Devices.GetBatteryStatusForDevice(iDeviceId)))
+                Case "switch"
+                  sValue = LCase(Devices.GetCurrentValueForDevice(iDeviceId, 1))
+                  If sValue = "off" Then
                     UpdateItem(sMonitorDevice, "0")
-                  Case Else
-                    UpdateItem(sMonitorDevice, Replace(sValue, "dim ", "", gb.IgnoreCase))
-                End Select
-            End Select
+                  Else If sValue = "on" Or If InStr(sValue, "dim") Then
+                    UpdateItem(sMonitorDevice, "1")
+                  Endif
+                Case "dimmer", "dim"
+                  sValue = Devices.GetCurrentValueForDevice(iDeviceId, 1)
+                  Select LCase(sValue)
+                    Case "on"
+                      UpdateItem(sMonitorDevice, "100")
+                    Case "off"
+                      UpdateItem(sMonitorDevice, "0")
+                    Case Else
+                      UpdateItem(sMonitorDevice, Replace(sValue, "dim ", "", gb.IgnoreCase))
+                  End Select
+              End Select
+            Endif
+
           Endif
         Endif
       Next
-    Case "series"
-      ' sItem = cData["item"]
-      ' sSeries = cData["series"]
-      ' sStart = cData["start"]
-      ' Print sItem & "." & sSeries & "." & sStart
-      ' GetPlotData(333, "average")
-      ' UpdateSeries(sItem & "." & sSeries & "." & sStart & ".0", cPlot)
+    Case "series" ' plot
+      sDevice = cData["item"] ' name of plot sIte
+      sMode = cData["mode"] ' avg, sum
+      sTmin = cData["tmin"] ' start time calculated from now
+      sTmax = cData["tmax"] ' end time calculated from now (now or 0 means until now)
+      sCount = cData["count"] ' max number of records to fetch (default 100)
+
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Plot Item: " & sDevice & ", mode:" & sMode & ", tmin:" & sTmin & ", tmax:" & sTmax & ", count:" & sCount)
+      iUnder = RInStr(sDevice, "_")
+      If iUnder > 0 Then
+        sDeviceName = Replace(Mid(sDevice, 1, iUnder - 1), "_", " ")
+        sType = Mid(sDevice, iUnder + 1, Len(sDevice) - iUnder)
+
+        iDeviceId = Devices.FindIdForDevice(sDeviceName)
+        If iDeviceId Then
+
+          ' end
+          aTmax = Split(sTmax, " ")
+          If aTmax.Count > 1 Then
+            If $bDebug Then Main.WriteDebugLog(LogLabel & "tmax parameter can only contain one item: " & sTmax)
+            Return
+          Else
+            If sTmax == "now" Or If sTmax = "0" Then
+              dEnd = Now()
+            Else
+              dEnd = ConvertDuration(aTmax, Now())
+            Endif
+          Endif
+
+          ' start
+          aTmin = Split(sTmin, " ")
+          dStart = ConvertDuration(aTmin, dEnd)
+
+          ' interval
+          If DateDiff(dStart, dEnd, gb.Hour) <= 2 Then
+            sInterval = "MINUTE"
+          Else
+            If DateDiff(dStart, dEnd, gb.Day) <= 2 Then
+              sInterval = "HOUR"
+            Else
+              If DateDiff(dStart, dEnd, gb.Month) <= 2 Then
+                sInterval = "DAY"
+              Else
+                If DateDiff(dStart, dEnd, gb.Year) <= 1 Then
+                  sInterval = "WEEK"
+                Else
+                  sInterval = "MONTH"
+                Endif
+              Endif
+            Endif
+          Endif
+
+          ' device value
+          If sType == "value" Then
+            sValNum = 1
+          Else
+            sValNum = Right(sType, Len(sType) - IIf(InStr(sType, "value"), 5, 4))
+          Endif
+
+          If $bDebug Then
+            Main.WriteDebugLog(LogLabel & "Plot Parameters:")
+            Main.WriteDebugLog(LogLabel & " - Plot type = " & sMode)
+            Main.WriteDebugLog(LogLabel & " - Start time = " & dStart)
+            Main.WriteDebugLog(LogLabel & " - End time = " & dEnd)
+            Main.WriteDebugLog(LogLabel & " - Interval = " & sInterval)
+            Main.WriteDebugLog(LogLabel & " - Count = " & sCount)
+            Main.WriteDebugLog(LogLabel & " - Device id = " & iDeviceId)
+            Main.WriteDebugLog(LogLabel & " - Value number = " & sValNum)
+          Endif
+
+          If CInt(sValNum) > 0 Then
+            vPlotData = GetPlotData(iDeviceId, sMode, sInterval, sValNum, dStart, dEnd, sCount)
+            UpdateSeries(sDevice, "." & sMode & "." & sTmin & "." & sTmax & "." & sCount, vPlotData)
+          Else
+            If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid plot value: " & sValNum)
+          Endif
+
+        Else
+          If $bDebug Then main.WriteDebugLog(LogLabel & "Device not found for: " & sDevice)
+        Endif
+      Else
+        If $bDebug Then main.WriteDebugLog(LogLabel & "Invalid series item received: " & sDevice)
+      Endif
+
+    Case "trigger"
+      iId = cData["id"]
+      sType = cData["type"]
+      Select LCase(sType)
+        Case "event"
+          Events.RunActions(iId)
+        Case "action"
+          Events.RunAction(iId, 0, 0)
+      End Select
+
     Case "proto"
       sVersion = cData["ver"]
-      If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "Protocol Version: " & sVersion)
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Protocol Version: '" & sVersion & "'")
+
+    Case "log"
+      sLog = LCase(cData["name"])
+      sMaxLines = cData["max"]
+      If $bDebug Then 
+        Main.WriteDebugLog(LogLabel & "Status Log Parameters:")
+        Main.WriteDebugLog(LogLabel & " - Name: " & sLog)
+        Main.WriteDebugLog(LogLabel & " - Lines: " & sMaxLines)
+      Endif
+      Select sLog
+        Case "main_log", "debug_log", "speak_log", "razberry_log", "ozw_log"
+          ' TODO: implement log
+        Case Else
+          Main.WriteDebugLog(LogLabel & "Invalid logname: " & sLog)
+          Return
+      End Select
 
     Case Else
-      If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "Unknown Cmd received: " & cData["cmd"])
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown item type received: '" & cData["cmd"] & "'")
   End Select
 
 Catch
-  If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' get rrdtool fetch data
+' Convert dateformat
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub GetPlotData(iId As Integer, sType As String)
+Private Sub ConvertDuration(aRange As String[], dDate As Date) As Date
 
-  Dim sRRD As String = Main.sBaseDir &/ "rrd" &/ iId & ".rrd"
+  Dim sRange As String
+  Dim iValue As Integer
 
-  hFetch = Exec ["rrdtool", "fetch", sRRD, UCase(sType)] For Read As "Fetch"
-  hFetch.Tag = iId
-  cOutput.Add("", iId)
+  For Each sRange In aRange
+    iValue = CInt(Left(sRange, Len(sRange) - 1)) * -1
+    Select Case LCase(Right(sRange, 1))
+      Case "s" ' second
+        dDate = DateAdd(dDate, gb.Second, iValue)
+      Case "i" ' minute
+        dDate = DateAdd(dDate, gb.Minute, iValue)
+      Case "h" ' hour
+        dDate = DateAdd(dDate, gb.Hour, iValue)
+      Case "d" ' day
+        dDate = DateAdd(dDate, gb.Day, iValue)
+      Case "w" ' week
+        dDate = DateAdd(dDate, gb.Week, iValue)
+      Case "m" ' month
+        dDate = DateAdd(dDate, gb.Month, iValue)
+      Case "y" ' year
+        dDate = DateAdd(dDate, gb.Year, iValue)
+      Case Else
+        If $bDebug Then main.WriteDebugLog(LogLabel & "Invalid duration format: " & sRange)
+    End Select
+  Next
+  Return dDate
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' read rrdtool fetch output and store it in collection
+' Convert different notations to 0..100 values
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Fetch_Read()
+Private Sub ConvertBatteryLevel(sRaw As String) As Integer
 
-  Dim sBuffer As String
-  Dim iId As Integer
+  Select LCase(sRaw)
+    Case "ok"
+      Return 100
+    Case "low"
+      Return 10
+    Case ""
+      Return -1
+    Case Else
+      Return CInt(sRaw)
+  End Select
 
-  sBuffer = Read #Last, -256
-  iId = Last.Tag
-
-  If cOutput.Exist(iId) Then cOutput[iId] &= sBuffer
+Catch
+  Return -1
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' get id and return value, 0 means ok, anything else is not reached
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Fetch_Kill()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Report WebSocket error(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub VisuClient_Error(sMsg As String)
 
-  Dim iId, iRc As Integer
-  Dim sLine, sOutput As String
-  Dim aData As String[]
-  Dim cData As New Collection
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: " & sMsg)
 
-  iId = Last.Tag
-  iRc = Last.Value
+End
 
-  If iId Then
-    If iRc = 0 Then
-      ' save output
-      sOutput = cOutput[iId]
-      cOutput.Remove(iId)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get log values of device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function GetPlotData(iDeviceId As Integer, sType As String, sInterval As String, sValueNum As String, dStartTime As Date, dEndTime As Date, sCount As String) As Variant[][]
 
-      For Each sLine In Split(sOutput, "\n")
-        ' 1369479300: 2,2600000000e+01
-        If InStr(sLine, "-nan") Then Continue
+  Dim rDevice As Result
+  Dim vPlotData As New Variant[][]
+  Dim vRecord As Variant[]
+  Dim sSQL, sStartTime, sEndTime, sSQL_Pre, sSQL_Post As String
+  Dim bSkip As Boolean
 
-        aData = Scan(sLine, "*:*")
-        If aData.Count = 2 Then
-          Print aData[0]
-          Print aData[1]
-          cData.Add(Trim(aData[1]), aData[0])
-        Endif
+  sStartTime = Format(dStartTime, "yyyy-mm-dd hh:nn:ss")
+  sEndTime = Format(dEndTime, "yyyy-mm-dd hh:nn:ss")
 
-      Next
-      UpdateSeries("bath_plot3.avg.1h.0", cData)
-    Else
-      Print (("[Fetch] Returned error!"))
-    Endif
+  Select Case UCase(sType)
+    Case "AVG"
+      bSkip = False
+      sSQL = "SELECT * FROM (SELECT lastchanged, unix_timestamp(lastchanged) * 1000 AS unixtime, value FROM device_values_log "
+      sSQL &= "WHERE device_id='" & iDeviceId & "' AND valuenum = '" & sValueNum & "' AND lastchanged between '" & sStartTime & "' AND '" & sEndTime & "' "
+      sSQL &= "ORDER BY lastchanged DESC LIMIT " & sCount & ") AS tbl ORDER BY tbl.lastchanged ASC"
+    Case "SUM"
+      bSkip = True
+      sSQL = "SELECT * FROM (SELECT lastchanged, unix_timestamp("
+      Select Case sInterval
+        Case "MINUTE"
+          sSQL_Pre = "CONCAT(Date(lastchanged), ' ', maketime(HOUR(lastchanged), MINUTE(lastchanged), 0))) * 1000 AS unixtime, SUM(calc_value) AS 'value'from ( "
+          sSQL_Post = "GROUP BY EXTRACT(MONTH FROM lastchanged), EXTRACT(DAY FROM lastchanged), EXTRACT(HOUR FROM lastchanged), EXTRACT(MINUTE FROM lastchanged) "
+        Case "HOUR"
+          sSQL_Pre = "CONCAT(date(lastchanged), ' ', maketime(HOUR(lastchanged),0,0))) * 1000 AS unixtime, SUM(calc_value) AS 'value' FROM ( "
+          sSQL_Post = "GROUP BY EXTRACT(MONTH FROM lastchanged), EXTRACT(DAY FROM lastchanged), EXTRACT(HOUR FROM lastchanged) "
+        Case "DAY"
+          sSQL_Pre = "date(lastchanged)) * 1000 AS unixtime, SUM(calc_value) AS 'value' FROM ( "
+          sSQL_Post = "GROUP BY EXTRACT(MONTH FROM lastchanged), EXTRACT(DAY FROM lastchanged) "
+        Case "WEEK"
+          sSQL_Pre = "date(lastchanged)) * 1000 AS unixtime, WEEKOFYEAR(lastchanged) as weekofyear, SUM(calc_value) AS 'value' FROM ( "
+          sSQL_Post = "GROUP BY weekofyear "
+        Case "MONTH"
+          sSQL_Pre = "CONCAT(YEAR(lastchanged), '-', MONTH(lastchanged), '-', DAY(lastchanged))) * 1000 as unixtime, SUM(calc_value) AS 'value' FROM ( "
+          sSQL_Post = "GROUP BY EXTRACT(MONTH FROM lastchanged) "
+        Case Else
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid interval for plot query: " & sInterval)
+      End Select
+      sSQL &= sSQL_Pre
+      sSQL &= "SELECT lastchanged, value, round(value-@tempvalue, 3) as calc_value, @tempvalue:=value "
+      sSQL &= "FROM device_values_log, (select @tempvalue:=0) as dummytable "
+      sSQL &= "WHERE device_id='" & iDeviceId & "' AND valuenum='" & sValueNum & "' AND lastchanged between '" & sStartTime & "' AND '" & sEndTime & "' "
+      sSQL &= "ORDER by lastchanged "
+      sSQL &= ") AS TempTable "
+      sSQL &= sSQL_Post
+      sSQL &= "ORDER by unixtime DESC LIMIT " & sCount & ") AS tbl ORDER BY tbl.lastchanged ASC"
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported plot type '" & sType & "' in GetPlotData()!")
+      Return
+  End Select
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "GetPlotData query: " & sSQL)
+
+  Try rDevice = Main.hDB.Exec(sSQL)
+  If rDevice = Null Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Error occured executing SQL query!")
   Else
-    Print (("[Fetch] Returned invalid device id!"))
+    For Each rDevice
+      If bSkip Then
+        bSkip = False ' skip first record
+      Else
+        vRecord = [CLong(rDevice!unixtime), CFloat(rDevice!value)]
+        vPlotData.Push(vRecord)
+      Endif
+    Next
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Query returned " & vPlotData.Count & " records.")
+    Return vPlotData
   Endif
 
 Catch
-  Print (("ERROR: Parsing Fetch Result: ") & Error.Text & (" at ") & Error.Where)
+  If $bDebug Then main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -542,10 +757,9 @@ Public Sub VisuClient_Closed()
   ' remove client's socket and monitors array
   cMonitors.Remove(Last.sock.Host & ":" & Last.sock.Port)
   oClients.Remove(oClients.Find(Last))
-  If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "Client with IP address '" & Last.Sock.Host & ("' closed connection."))
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Client with IP address '" & Last.sock.Host & "' (" & Last.sock.Port & ") closed socket.")
 
 Catch
-  If $bSmartVisuServerDebug Then Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
-

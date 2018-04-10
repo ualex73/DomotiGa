@@ -26,8 +26,9 @@
     }
     { TextLabel1 TextLabel
       MoveScaled(2,0,24,5)
+      #Translate = False
       Font = Font["ClearlyU PUA,+6"]
-      Text = ("DomotiGa")
+      Text = "DomotiGa"
       Alignment = Align.Normal
     }
     { lblVersion Label
@@ -50,27 +51,28 @@
       Alignment = Align.Normal
     }
     { rbAgree RadioButton
-      MoveScaled(10,39,35,3)
+      MoveScaled(10,38,35,4)
       Text = ("I agree and want to use this program.")
     }
     Index = 1
     Text = ("Select Database")
     { TextLabel4 TextLabel
-      MoveScaled(8,4,40,4)
+      MoveScaled(8,2,40,4)
       Font = Font["Bold"]
       Text = ("Which database do you want to install?")
+      Alignment = Align.Normal
     }
     { rbEmpty RadioButton
-      MoveScaled(8,12,24,3)
+      MoveScaled(8,12,24,4)
       Text = ("Empty database")
     }
     { rbDemo RadioButton
-      MoveScaled(8,8,29,3)
+      MoveScaled(8,7,29,4)
       Text = ("Demo database (default)")
       Value = True
     }
     { TextLabel7 TextLabel
-      MoveScaled(8,26,41,11)
+      MoveScaled(8,32,41,7)
       Font = Font["-1"]
       Text = ("The demo database contains a few sample devices and events which can be removed later via the database admin tool.")
       Alignment = Align.Normal
@@ -78,44 +80,54 @@
     Index = 2
     Text = ("Database Parameters")
     { TextLblDBTitle TextLabel
-      MoveScaled(8,4,40,4)
+      MoveScaled(8,2,40,4)
       Font = Font["Bold"]
       Text = ("Enter MySQL root user and password")
+      Alignment = Align.Normal
     }
     { TextLblRootPassword TextLabel
-      MoveScaled(8,28,42,9)
+      MoveScaled(8,33,42,7)
       Font = Font["-1"]
       Text = ("The password is not stored anywhere, it's only used once for creation of the database and granting privileges to domouser.")
+      Alignment = Align.Normal
     }
     { txtHost TextBox
-      MoveScaled(18,9,23,3)
+      MoveScaled(18,7,23,4)
     }
     { LblHost Label
-      MoveScaled(8,9,9,3)
+      MoveScaled(8,7,9,4)
       Text = ("Host")
     }
     { LblDatabase Label
-      MoveScaled(8,13,9,3)
+      MoveScaled(8,17,9,4)
       Text = ("Database")
     }
     { txtDatabase TextBox
-      MoveScaled(18,13,23,3)
+      MoveScaled(18,17,23,4)
     }
     { LblUser Label
-      MoveScaled(8,17,9,3)
+      MoveScaled(8,22,9,4)
       Text = ("User")
     }
     { txtUser TextBox
-      MoveScaled(18,17,23,3)
+      MoveScaled(18,22,23,4)
       Text = ("root")
     }
     { LblPassword Label
-      MoveScaled(8,21,9,3)
+      MoveScaled(8,27,9,4)
       Text = ("Password")
     }
     { txtPassword TextBox
-      MoveScaled(18,21,23,3)
+      MoveScaled(18,27,23,4)
       Password = True
+    }
+    { vbPort ValueBox
+      MoveScaled(18,12,10,4)
+      Text = ("ValueBox1")
+    }
+    { LblHost2 Label
+      MoveScaled(8,12,9,4)
+      Text = ("Port")
     }
     Index = 3
     Text = ("Install Database")

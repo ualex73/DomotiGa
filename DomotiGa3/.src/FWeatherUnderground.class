@@ -2,32 +2,50 @@
 
 ' Description:
 ' FWeatherUnderground.class
-' Form for showing weather undergound info.
+' Form for showing weather underground info.
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
 
 ' Read file called COPYING for license details.
 
-Private tWeatherRefresh As New Timer
+Public SupportWeatherCitySearch As Boolean = False
 
+Private tWeatherRefresh As New Timer
+Private $Error As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Code to execute when WeatherUnderground form open
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Form_Open()
 
-  tWeatherRefresh = New Timer As "tWeatherRefresh"
-  tWeatherRefresh.Delay = Main.iWeatherUGRefresh * 1000
-  tWeatherRefresh.Start
-
-  If Main.bWeatherUGEnabled Then
-    PopulateButtons()
-    InitLiveWeather()
-    InitForeCast()
+  ' Check if we can/should show this form
+  If Not Plugin.IsPluginEnabled("WeatherUnderground", 0) Then
+    Message.Info(("WeatherUnderground is not enabled!"))
+    Try Me.Close
+    Return
   Endif
+
+  PopulateButtons()
+  GetWeatherUndergroundInfo()
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Always stop timer if we close the form
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Form_Close()
+
+  Try tWeatherRefresh.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Resize the tabpanel when the form is resized
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Form_Resize()
 
-  TabStrip1.Move(3, 32, Me.ClientWidth - 5, Me.ClientHeight - 32)
+  TabPanelWeatherUnderground.Move(3, 1, Me.ClientWidth - 5, Me.ClientHeight)
 
 End
 
@@ -78,145 +96,160 @@ Public Sub DisplayFeed(iFeed As Integer)
 
 End
 
-'--- when an URL is given, try to fetch the animated satellite image ---
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' when an URL is given, try to fetch the animated satellite image
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub InitSatelliteImage(sUrl As String)
 
-  Dim StrFile As String
+  Dim sFile As String
+  Dim picTemp As Picture
 
-  StrFile = XMLParser.GetFileFromInternet(sUrl)
-  If Len(StrFile) > 0 Then
-    MvSatImage.Path = StrFile
+  sFile = Util.DownloadFile(sUrl, True)
+  If Len(sFile) > 0 Then
+    picTemp = Picture.Load(sFile)
+    MvSatImage.Path = sFile
     MvSatImage.Playing = True
+    MvSatImage.Resize(picTemp.Width, picTemp.Height)
     MvSatImage.Refresh
     MvSatImage.Show
   Endif
 
 End
 
-'--- initialises the "Forecast" panel ---
-Private Sub InitForeCast()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Retrieves the WeatherUnderground information from the plugin and process it
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub GetWeatherUndergroundInfo()
 
+  Dim hWeatherUnderground As Object
+  Dim cWeatherData As New Collection
   Dim iCnt As Integer
-  Dim cJSONForecast As New Collection
 
-  cJSONForecast = WeatherUG.JSONWeatherForecast()
+  ' Reset to blank, we use this variable to detect if an internal error happened
+  $Error = ""
+
+  If Main.bServer Then
+
+    ' Check if the plugin is really enabled
+    If Not Plugin.IsPluginEnabled("WeatherUnderground", 1) Then
+      Error.Raise("WeatherUnderground is not enabled")
+    Endif
+
+    hWeatherUnderground = Plugin.GetPluginObject("WeatherUnderground", 1).Interface
+    cWeatherData = hWeatherUnderground.JsonRpc_WeatherUnderground_Get(Null)
+  Else
+    ' Not yet supported
+    Message.Info(("WeatherUnderground does not work yet in client/server mode!"))
+    Try Me.Close
+    Return
+    ' FIXME: Not yet supported
+    'cWeatherData = Client.WeatherGet(["weather": "weatherunderground", "instance_id": 1])
+  Endif
+
+  If cWeatherData = Null Then
+    Error.Raise("The WeatherUnderground Plugin didn't return data")
+  Else
+    If cWeatherData["error"] Then
+      Error.Raise("The WeatherUnderground Plugin error response: \n" & cWeatherData["error"])
+    Else
+      If cWeatherData.Count = 0 Then
+        Error.Raise("The WeatherUnderground Plugin didn't return data")
+      Endif
+    Endif
+  Endif
+
+  tWeatherRefresh = New Timer As "tWeatherRefresh"
+  Try tWeatherRefresh.Delay = Plugin.GetPluginObject("WeatherUnderground", 1).Settings["polltime"] * 1000
+  If Error Then tWeatherRefresh.Delay = 300 * 1000
+  tWeatherRefresh.Start
+
+  ' No Error up to here? Enable the WeatherUnderground Tab strip
+  TabPanelWeatherUnderground.Visible = True
+  TextAreaMsg.Visible = False
+
+  TxtTemp.Text = cWeatherData["current"]["temperature"] & " " & Main.sTemperature
+  TxtRelativeHumidity.Text = cWeatherData["current"]["humidity"] & " %"
+  TxtPressureMb.Text = cWeatherData["current"]["pressure"] & IIf(Main.sTemperature = "°C", " mb", " in")
+  TxtHeatIndex.Text = cWeatherData["current"]["heat_index"] & IIf(cWeatherData["current"]["heat_index"] <> "NA", " " & Main.sTemperature, "")
+  TxtWindchill.Text = cWeatherData["current"]["windchill"] & IIf(cWeatherData["current"]["windchill"] <> "NA", " " & Main.sTemperature, "")
+  TxtDewpoint.Text = cWeatherData["current"]["dewpoint"] & Main.sTemperature
+  TxtWindDegrees.Text = cWeatherData["current"]["wind_degrees"]
+  TxtStationLocation.Text = cWeatherData["current"]["weatherstation"]
+  TxtTimeUpdate.Text = cWeatherData["current"]["lastupdate"]
+
+  TxtWindDir.Text = cWeatherData["current"]["wind_dir_text"]
+  TxtWind.Text = cWeatherData["current"]["wind"] & IIf(Main.sTemperature = "°C", " km/h", " mph")
+  TxtWindMs.Text = cWeatherData["current"]["wind_ms"] & " m/sec"
+  TxtWindBeaufort.Text = cWeatherData["current"]["wind_beaufort"] & " Bft"
+  TxtWindGust.Text = cWeatherData["current"]["wind_gust"] & IIf(Main.sTemperature = "°C", " km/h", " mph")
+  TxtWindGustMs.Text = cWeatherData["current"]["wind_gust_ms"] & " m/sec"
+  TxtWindGustBeaufort.Text = cWeatherData["current"]["wind_gust_beaufort"] & " Bft"
+
+  TxtVisibilityKm.Text = cWeatherData["current"]["visibility"] & IIf(Main.sTemperature = "°C", " km", " mi")
+  TxtPrecip1hr.Text = cWeatherData["current"]["precip_1h"] & IIf(Main.sTemperature = "°C", " mm", " in")
+  TxtPrecipToday.Text = cWeatherData["current"]["precip_today"] & IIf(Main.sTemperature = "°C", " mm", " in")
+  TxtWeather.Text = cWeatherData["current"]["weatherdesc"]
+
+  TxtPercentIlluminated.Text = cWeatherData["current"]["illuminated"] & " %"
+  TxtAgeOfMoon.Text = cWeatherData["current"]["ageofmoon"] & (" days")
+
+  Try PicCurrentWeather.Picture = Picture.Load(Util.DownloadFile(cWeatherData["current"]["icon_url"]))
+  Try PicWindDir.Picture = Picture.Load(XMLParser.ReturnWindDirectionPic(cWeatherData["current"]["wind_dir"]))
 
   ' 2 day forecast detailed
-  If cJSONForecast["forecast"]["txt_forecast"]["forecastday"].Count >= 6
+  If cWeatherData["forecast_detail"].Count >= 6
     For iCnt = 0 To 5
       Select Case iCnt
         Case 0
-          PicFor0.Picture = Picture.Load(XMLParser.GetFileFromInternet("http://icons.wxug.com/i/c/i/" & cJSONForecast["forecast"]["txt_forecast"]["forecastday"][iCnt]["icon"] & ".gif"))
+          PicFor0.Picture = Picture.Load(Util.DownloadFile(cWeatherData["forecast_detail"][iCnt]["icon_url"]))
         Case 1
-          PicFor1.Picture = Picture.Load(XMLParser.GetFileFromInternet("http://icons.wxug.com/i/c/i/" & cJSONForecast["forecast"]["txt_forecast"]["forecastday"][iCnt]["icon"] & ".gif"))
+          PicFor1.Picture = Picture.Load(Util.DownloadFile(cWeatherData["forecast_detail"][iCnt]["icon_url"]))
         Case 2
-          PicFor2.Picture = Picture.Load(XMLParser.GetFileFromInternet("http://icons.wxug.com/i/c/i/" & cJSONForecast["forecast"]["txt_forecast"]["forecastday"][iCnt]["icon"] & ".gif"))
+          PicFor2.Picture = Picture.Load(Util.DownloadFile(cWeatherData["forecast_detail"][iCnt]["icon_url"]))
         Case 3
-          PicFor3.Picture = Picture.Load(XMLParser.GetFileFromInternet("http://icons.wxug.com/i/c/i/" & cJSONForecast["forecast"]["txt_forecast"]["forecastday"][iCnt]["icon"] & ".gif"))
+          PicFor3.Picture = Picture.Load(Util.DownloadFile(cWeatherData["forecast_detail"][iCnt]["icon_url"]))
         Case 4
-          PicFor4.Picture = Picture.Load(XMLParser.GetFileFromInternet("http://icons.wxug.com/i/c/i/" & cJSONForecast["forecast"]["txt_forecast"]["forecastday"][iCnt]["icon"] & ".gif"))
+          PicFor4.Picture = Picture.Load(Util.DownloadFile(cWeatherData["forecast_detail"][iCnt]["icon_url"]))
       End Select
-      If Main.sTemperature = "°C" Then
-        Main.SetTextProperty("TextArea" & CStr(iCnt), cJSONForecast["forecast"]["txt_forecast"]["forecastday"][iCnt]["fcttext_metric"], FWeatherUnderground.Frame3)
-      Else
-        Main.SetTextProperty("TextArea" & CStr(iCnt), cJSONForecast["forecast"]["txt_forecast"]["forecastday"][iCnt]["fcttext"], FWeatherUnderground.Frame3)
-      Endif
+
+      Main.SetTextProperty("TextArea" & CStr(iCnt), cWeatherData["forecast_detail"][iCnt]["text"], Me.Frame3)
     Next
   Endif
 
   ' 3 day forecast
-  If cJSONForecast["forecast"]["simpleforecast"]["forecastday"].Count = 4
+  If cWeatherData["forecast_simple"].Count = 4
     For iCnt = 0 To 3
-      Main.SetTextProperty("TextDay" & CStr(iCnt), cJSONForecast["forecast"]["simpleforecast"]["forecastday"][iCnt]["date"]["weekday"], FWeatherUnderground.Frame5)
-      Main.SetTextProperty("LblCondition" & CStr(iCnt), cJSONForecast["forecast"]["simpleforecast"]["forecastday"][iCnt]["conditions"], FWeatherUnderground.Frame5)
+      Main.SetTextProperty("TextDay" & CStr(iCnt), cWeatherData["forecast_simple"][iCnt]["weekday"], Me.Frame5)
+      Main.SetTextProperty("LblCondition" & CStr(iCnt), cWeatherData["forecast_simple"][iCnt]["condition"], Me.Frame5)
       Select Case iCnt
         Case 0
-          Pic1.Picture = Picture.Load(XMLParser.GetFileFromInternet("http://icons.wxug.com/i/c/i/" & cJSONForecast["forecast"]["simpleforecast"]["forecastday"][iCnt]["icon"] & ".gif"))
+          PicFC0.Picture = Picture.Load(Util.DownloadFile(cWeatherData["forecast_simple"][iCnt]["icon_url"]))
         Case 1
-          Pic2.Picture = Picture.Load(XMLParser.GetFileFromInternet("http://icons.wxug.com/i/c/i/" & cJSONForecast["forecast"]["simpleforecast"]["forecastday"][iCnt]["icon"] & ".gif"))
+          PicFC1.Picture = Picture.Load(Util.DownloadFile(cWeatherData["forecast_simple"][iCnt]["icon_url"]))
         Case 2
-          Pic3.Picture = Picture.Load(XMLParser.GetFileFromInternet("http://icons.wxug.com/i/c/i/" & cJSONForecast["forecast"]["simpleforecast"]["forecastday"][iCnt]["icon"] & ".gif"))
+          PicFC2.Picture = Picture.Load(Util.DownloadFile(cWeatherData["forecast_simple"][iCnt]["icon_url"]))
         Case 3
-          Pic4.Picture = Picture.Load(XMLParser.GetFileFromInternet("http://icons.wxug.com/i/c/i/" & cJSONForecast["forecast"]["simpleforecast"]["forecastday"][iCnt]["icon"] & ".gif"))
-       End Select
-      If Main.sTemperature = "°C" Then
-        Main.SetTextProperty("LblTempHigh" & CStr(iCnt), ("High:") & " " & cJSONForecast["forecast"]["simpleforecast"]["forecastday"][iCnt]["high"]["celsius"] & "°C", FWeatherUnderground.Frame5)
-        Main.SetTextProperty("LblTempLow" & CStr(iCnt), ("Low:") & " " & cJSONForecast["forecast"]["simpleforecast"]["forecastday"][iCnt]["low"]["celsius"] & " °C", FWeatherUnderground.Frame5)
-      Else
-        Main.SetTextProperty("LblTempHigh" & CStr(iCnt), ("High:") & " " & cJSONForecast["forecast"]["simpleforecast"]["forecastday"][iCnt]["high"]["fahrenheit"] & "°F", FWeatherUnderground.Frame5)
-        Main.SetTextProperty("LblTempLow" & CStr(iCnt), ("Low:") & " " & cJSONForecast["forecast"]["simpleforecast"]["forecastday"][iCnt]["low"]["fahrenheit"] & " °F", FWeatherUnderground.Frame5) 'Main.SetTextProperty("TextArea" & CStr(iCnt), cJSONForecast["forecast"]["txt_forecast"]["forecastday"][iCnt]["fcttext"], FWeatherUnderground.Frame3)
-      Endif
+          PicFC3.Picture = Picture.Load(Util.DownloadFile(cWeatherData["forecast_simple"][iCnt]["icon_url"]))
+      End Select
+
+      Main.SetTextProperty("LblTempHigh" & CStr(iCnt), ("High:") & " " & cWeatherData["forecast_simple"][iCnt]["temperature_high"] & " " & Main.sTemperature, Me.Frame5)
+      Main.SetTextProperty("LblTempLow" & CStr(iCnt), ("Low:") & " " & cWeatherData["forecast_simple"][iCnt]["temperature_low"] & " " & Main.sTemperature, Me.Frame5)
     Next
   Endif
 
 Catch
-  Main.WriteLog("[WUnderground] ERROR: InitForeCast: " & Error.Text & " at " & Error.Where)
-  
-End
-
-'--- initialises the "live weather" panel ---
-Private Sub InitLiveWeather()
-
-  Dim aWind As String[]
-  Dim bError As Boolean
-  Dim rResult As Result
-
-  If bError = False Then
-    rResult = Main.hDB.Exec("SELECT * FROM weather ORDER BY id DESC limit 1")
-    If Not rResult Then
-      Main.WriteLog(("Error: table 'Weather' not found!"))
-      Return
-    Endif
-
-    If rResult.Available Then
-      If rResult.Count = 1 Then
-        TxtWindDir.Text = WeatherUG.WindDirString(rResult!wind_dir)
-        TxtTemp.Text = rResult!temp & Main.sTemperature
-
-        aWind = Split(rResult!wind, ";")
-        If aWind.Count = 4 Then
-          TxtWindMph.Text = IIf(Main.sTemperature = "°C", aWind[0] & " km/u", aWind[3] & " mph")
-          TxtWindMs.Text = aWind[1] & " m/sec"
-          TxtWindBeaufort.Text = aWind[2] & " Bft"
-        Endif
-
-        TxtRelativeHumidity.Text = rResult!relative_humidity
-        TxtPressureMb.Text = rResult!pressure & IIf(Main.sTemperature = "°C", " mb", " in")
-        TxtHeatIndexC.Text = rResult!heat_index & Main.sTemperature
-        TxtWindchill.Text = rResult!windchill & Main.sTemperature
-        TxtDewpoint.Text = rResult!dewpoint & Main.sTemperature
-        TxtWindDegrees.Text = rResult!wind_degrees
-
-        Try PicCurrentWeather.Picture = Picture.Load(XMLParser.GetFileFromInternet("http://icons.wxug.com/i/c/i/" & rResult!icon & ".gif"))
-
-        aWind = Split(rResult!wind_gust, ";")
-        If aWind.Count = 4 Then
-          TxtWindGustMph.Text = IIf(Main.sTemperature = "°C", aWind[0] & " km/u", aWind[3] & " mph")
-          TxtWindGustMs.Text = aWind[1] & " m/sec"
-          TxtWindGustBeaufort.Text = aWind[2] & " Bft"
-        Endif
-
-        Try PicWindDir.Picture = Picture.Load(XMLParser.ReturnWindDirectionPic(rResult!wind_dir))
-
-        TxtVisibilityKm.Text = rResult!visibility & IIf(Main.sTemperature = "°C", " km", " mi")
-        TxtPrecip1hrMetric.Text = Trim(rResult!precip_1hr) & IIf(Main.sTemperature = "°C", " mm", " in")
-        TxtPrecipTodayMetric.Text = rResult!precip_today & IIf(Main.sTemperature = "°C", " mm", " in")
-        TxtWeather.Text = rResult!weather
-        TxtStationLocation.Text = rResult!city & ", " & rResult!country
-        TxtTimeUpdate.Text = rResult!time
-        TxtPercentIlluminated.Text = rResult!percentilluminated & "%"
-        TxtAgeOfMoon.Text = rResult!ageofmoon & " " & ("days")
-      Endif
-    Endif
-  Else
-    Balloon(("No weatherdata found!"))
-  Endif
+  TabPanelWeatherUnderground.Visible = False
+  TextAreaMsg.Visible = True
+  TextAreaMsg.Text = "ERROR: " & Error.Text
+  Main.WriteLog("[WeatherUG] ERROR: " & Error.Text & " at '" & Error.Where & "'")
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Refresh Timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tWeatherRefresh_Timer()
 
-  InitLiveWeather()
-  InitForeCast()
+  GetWeatherUndergroundInfo()
 
 End

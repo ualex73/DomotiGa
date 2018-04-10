@@ -1,3 +1,48 @@
+*.DS_Store
+*.swp
+*~
+*.bak
+*.back
+
+# ignore Gambas IDE files
+# note, DomotiGa3 has also a gitignore
+DomotiGa3/.action
+DomotiGa3/.public
+DomotiGa3/.settings
+DomotiGa3/.list
+DomotiGa3/.info
+DomotiGa3/.startup
+
+
+# ignore Gambas IDE files
+# note, DomotiGaServer3 has also a gitignore
+DomotiGaServer3/.action
+DomotiGaServer3/.public
+DomotiGaServer3/.settings
+DomotiGaServer3/.list
+DomotiGaServer3/.info
+DomotiGaServer3/.startup
+
+# ignore DomotiGa conf files
 domotiga.conf
 server-domotiga.conf
+
+# ignore domozwave wrapper build files
+wrappers/domozwave/DomoZWave.o
+wrappers/domozwave/OZW_Log.txt
+wrappers/domozwave/libdomozwave.so
+wrappers/domozwave/open-zwave
+wrappers/domozwave/zwcfg_*.xml
+wrappers/domozwave/zwscene.xml
+
+# ignore log files, but keep directory
+logs/*
+!logs/.gitkeep
+
+# ignore rrd database and png files
+rrd/*.rrd
+rrd/graphs/*.png
+
+# ignore development json-rpc files
+development/json-rpc/*.json.txt
 

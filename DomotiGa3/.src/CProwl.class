@@ -5,7 +5,7 @@
 ' Contains code for sending Prowl messages
 
 ' Development Status:
-' Works.
+' Finished
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -16,7 +16,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Prowl"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "Prowl"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Alexander Kuiper"
@@ -31,6 +30,11 @@ Public ErrorText As String
 Public ErrorWhere As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Priority and Sound definitions
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Priority_List As String[] = [("Normal (0)"), ("Very Low (-2)"), ("Low (-1)"), ("High (1)"), ("Emergency(2)")]
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private $bEnabled As Boolean
@@ -43,7 +47,7 @@ Public hProwlMessage As HttpClient
 Public cProwlData As New Collection
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -67,7 +71,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -246,7 +250,7 @@ End
 ' Post the Prowl message
 ' The Application/Event can be left blank, then it takes the default
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub PostProwl(sApplication As String, sEvent As String, sDescription As String) As Boolean
+Public Sub PostProwl(sApplication As String, sEvent As String, sDescription As String, sPriority As String) As Boolean
 
   Dim sUrl As String = "https://api.prowlapp.com/publicapi/add?"
   Dim Bucle As Byte
@@ -258,7 +262,6 @@ Public Sub PostProwl(sApplication As String, sEvent As String, sDescription As S
 
   ' Find free tag, between 1 and 99. Normally we should never go over 1 thread
   For Bucle = 1 To 100
-    If Bucle = 100 Then Break
     If Not cProwlData.Exist(Bucle) Then Break
   Next
 
@@ -269,7 +272,7 @@ Public Sub PostProwl(sApplication As String, sEvent As String, sDescription As S
 
   If sApplication = "" Then sApplication = $sApplication
   If sEvent = "" Then sEvent = $sEvent
-  sUrl &= "apikey=" & URL.Encode($sApiKey) & "&" & "application=" & URL.Encode(sApplication) & "&" & "event=" & URL.Encode(sEvent) & "&" & "description=" & URL.Encode(sDescription)
+  sUrl &= "apikey=" & URL.Encode($sApiKey) & "&" & "application=" & URL.Encode(sApplication) & "&" & "event=" & URL.Encode(sEvent) & "&" & "description=" & URL.Encode(sDescription) & IIf(sPriority, "&priority=" & URL.Encode(sPriority), "")
 
   hProwlMessage = New HttpClient As "hProwlMessage"
   hProwlMessage.URL = sUrl

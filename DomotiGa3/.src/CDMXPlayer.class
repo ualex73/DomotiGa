@@ -15,7 +15,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "DMXPlayer"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "DMXPlayer"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ronald Kelleners"
@@ -35,13 +34,13 @@ Public ErrorWhere As String
 Private $bEnabled As Boolean
 Private $sSerPort As String
 Private $sBaud As String
-Private $bDMXPlayerDebug As Boolean
+Private $bDebug As Boolean
 
 Public hDMXPlayer As New SerialPort
 Public sBuffer As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -56,15 +55,15 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bEnabled = cPl.Settings["enabled"]
   $sSerport = cPl.Settings["serialport"]
   $sBaud = cPl.Settings["baudrate"]
-  $bDMXPlayerDebug = cPl.Settings["debug"]
- 
+  $bDebug = cPl.Settings["debug"]
+
   ' Connect/Initialize connection
   Connect()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -93,14 +92,14 @@ Public Function Connect() As Boolean
   End With
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -145,12 +144,18 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
     iLevel = Val(Replace(sCmd, "DIM ", ""))
     iLevel = (iLevel * 254) / 100
     sValue = Format$(iLevel, "000")
-
-    If $bDMXPlayerDebug Then Main.WriteDebugLog(LogLabel & "> C" & sAddress & "L" & sValue)
-    Try Print #hDMXPlayer, ("C" & sAddress & "L" & sValue)
+  Else If
+    InStr(sCmd, "OFF") Then
+    sValue = Format$(000, "000")
+  Else If
+    InStr(sCmd, "ON") Then
+    sValue = Format$(255, "000")
   Else
     Main.WriteDebugLog(LogLabel & "Unknown command '" & sCmd & "' given!")
+    Return
   Endif
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> C" & sAddress & "L" & sValue)
+  Try Print #hDMXPlayer, ("C" & sAddress & "L" & sValue)
 
 End
 
@@ -171,15 +176,9 @@ End
 
 Public Sub ParseLine(sStr As String)
 
-  Dim iDeviceId As Integer
-  Dim aScan As String[]
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sStr)
 
-  If $bDMXPlayerDebug Then Main.WriteDebugLog(LogLabel & "< " & sStr)
-
-  ' ' try to find device with address, and correct interface type.
-  ' iDeviceId = Devices.Find(Instance, "<address>", Devices.FindInterface("DMX"))
-  ' ' if found then update it's value
-  ' If iDeviceId Then Devices.Update(iDeviceId, "<value>")
+  ' TODO: parse answers
 
 End
 

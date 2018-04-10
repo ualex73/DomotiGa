@@ -1,7 +1,7 @@
 # Gambas Form File 3.0
 
 { Form Form
-  MoveScaled(25,6.125,148,86)
+  MoveScaled(25,6.125,148,87)
   Background = Color.TextBackground
   Icon = Picture["icons/domotiga.png"]
   AutoResize = True
@@ -25,17 +25,6 @@
   }
   { MenuSetup Menu
     Text = ("Setup")
-    { MenuClient Menu
-      Text = ("Client")
-      { MenuClientSettingsGUI Menu
-        Text = ("GUI")
-        Picture = Picture["icons/gui.png"]
-      }
-      { MenuClientSettingsMySQL Menu
-        Text = ("Database")
-        Picture = Picture["icons/database.png"]
-      }
-    }
     { MenuSettingsMain Menu
       Text = ("Main")
       Picture = Picture["icons/settings.png"]
@@ -67,16 +56,16 @@
   }
   { MenuModules Menu
     Text = ("Modules")
+    { MenuSettingsDeviceDiscover Menu
+      Text = ("Device Discover")
+    }
     { MenuSettingsEmail Menu
       Text = ("E-mail")
       Picture = Picture["icons/email.png"]
     }
-    { MenuGoogle Menu
-      Text = ("Google")
-      { MenuSettingsGMail Menu
-        Text = ("GMail")
-        Picture = Picture["icons/gmail.png"]
-      }
+    { MenuSettingsGMail Menu
+      Text = ("GMail")
+      Picture = Picture["icons/gmail.png"]
     }
     { MenuPublishData Menu
       Text = ("Publish Data")
@@ -88,16 +77,16 @@
         Text = ("MQTT")
         Picture = Picture["icons/vars.png"]
       }
-      { MenuSettingsPachube Menu
-        Text = ("Pachube")
-        Picture = Picture["icons/vars.png"]
-      }
       { MenuSettingsPVoutput Menu
         Text = ("PVoutput")
         Picture = Picture["icons/vars.png"]
       }
       { MenuSettingsTemperaturNu Menu
         Text = ("TemperaturNu")
+        Picture = Picture["icons/vars.png"]
+      }
+      { MenuSettingsXively Menu
+        Text = ("Xively")
         Picture = Picture["icons/vars.png"]
       }
     }
@@ -113,7 +102,11 @@
       }
       { MenuSettingsPushover Menu
         Text = ("Pushover")
-        Picture = Picture["icons/pushover.png"]
+        Picture = Picture["icons/pushover.jpg"]
+      }
+      { MenuSettingsPushbullet Menu
+        Text = ("Pushbullet")
+        Picture = Picture["icons/pushbullet.jpg"]
       }
     }
     { MenuSettingsP2000 Menu
@@ -125,6 +118,9 @@
     }
     { MenuServers Menu
       Text = ("Servers")
+      { MenuSettingsBroadcastUDP Menu
+        Text = ("Broadcast UDP")
+      }
       { MenuSettingsJSONRPC Menu
         Text = ("JSON-RPC")
         Picture = Picture["icons/xml.png"]
@@ -149,9 +145,16 @@
       Text = ("Sound")
       Picture = Picture["icons/sound.png"]
     }
-    { MenuThermostat Menu
-      Text = ("Thermostat")
-      Picture = Picture["icons/thermostat.png"]
+    { Thermostats Menu
+      Text = ("Thermostats")
+      { MenuThermostat Menu
+        Text = ("Native Thermostat")
+        Picture = Picture["icons/thermostat.png"]
+      }
+      { MenuSettingsToon Menu
+        Text = ("Eneco Toon")
+        Picture = Picture["icons/thermostat.png"]
+      }
     }
     { MenuTVGuide Menu
       Text = ("TV Guide")
@@ -178,8 +181,16 @@
     }
     { MenuWeather Menu
       Text = ("Weather")
-      { MenuSettingsWeatherBug Menu
-        Text = ("WeatherBug")
+      { MenuSettingsBuienradar Menu
+        Text = ("Buienradar")
+        Picture = Picture["icons/weather.png"]
+      }
+      { MenuSettingsForecastIo Menu
+        Text = ("forecast.io")
+        Picture = Picture["icons/weather.png"]
+      }
+      { MenuSettingsOpenWeatherMap Menu
+        Text = ("OpenWeatherMap")
         Picture = Picture["icons/weather.png"]
       }
       { MenuSettingsWeatherUnderground Menu
@@ -231,6 +242,10 @@
       { MenuSettingsOnkyo Menu
         Text = ("Onkyo/Integra AV")
         Picture = Picture["icons/control.png"]
+      }
+      { MenuSettingsViera Menu
+        Text = ("Panasonic Viera TV")
+        Picture = Picture["icons/bus.png"]
       }
       { MenuSettingsSharpTV Menu
         Text = ("Sharp TV")
@@ -303,6 +318,13 @@
         Text = ("Current Cost")
         Picture = Picture["icons/current-cost.jpg"]
       }
+      { MenuSettingsOmniksol Menu
+        Text = ("Omniksol Solar")
+      }
+      { MenuSettingsPlugwise Menu
+        Text = ("Plugwise")
+        Picture = Picture["icons/plugwise.jpg"]
+      }
       { MenuSettingsSmartMeter Menu
         Text = ("SmartMeter")
       }
@@ -327,17 +349,29 @@
     }
     { MenuInputOutput Menu
       Text = ("Input/Output")
-      { MenuSettingsDomotica Menu
-        Text = ("Domotica")
-        Picture = Picture["icons/modules.png"]
+      { MenuSettingsConrad8Relay Menu
+        Text = ("Conrad 8-Relay Board")
+        Picture = Picture["icons/labs.png"]
       }
       { MenuSettingsGenericIO Menu
         Text = ("GenericIO")
         Picture = Picture["icons/wire.png"]
       }
+      { Ipx800 Menu
+        Text = ("IPX800")
+        Picture = Picture["icons/ipx800.jpg"]
+      }
+      { MenuSettingsJerome Menu
+        Text = ("Jerome Ethernet")
+        Picture = Picture["icons/jerome.jpg"]
+      }
       { MenuSettingsKMTronicUDP Menu
         Text = ("KMTronicUDP")
         Picture = Picture["icons/weeder.png"]
+      }
+      { UniPi Menu
+        Text = ("UniPi")
+        Picture = Picture["icons/webserver.png"]
       }
       { MenuSettingsK8055 Menu
         Text = ("Velleman K8055")
@@ -346,6 +380,10 @@
       { MenuSettingsWeeder Menu
         Text = ("Weeder I/O")
         Picture = Picture["icons/weeder.png"]
+      }
+      { MenuSettingsWiringPi Menu
+        Text = ("WiringPi")
+        Picture = Picture["icons/wire.png"]
       }
     }
     { MenuRemoteControl Menu
@@ -371,8 +409,8 @@
       Text = ("JeeLabs")
       Picture = Picture["icons/labs.png"]
     }
-    { MenuSettingsEIB Menu
-      Text = ("KNX/EIB")
+    { MenuSettingsKNX Menu
+      Text = ("KNX")
       Picture = Picture["icons/knx.png"]
     }
     { MenuSettingsLEDMatrix Menu
@@ -381,10 +419,19 @@
     }
     { MenuSettingsMeteohub Menu
       Text = ("Meteohub")
+      Picture = Picture["icons/weather.png"]
     }
-    { MenuSettingsPing Menu
-      Text = ("Network Ping")
-      Picture = Picture["icons/aibo.gif"]
+    { MenuSettingsModbus Menu
+      Text = ("Modbus")
+      Picture = Picture["icons/bus.png"]
+    }
+    { MenuSettingsMySensors Menu
+      Text = ("MySensors")
+      Picture = Picture["icons/mysensors.png"]
+    }
+    { MenuSettingsNetworkDetect Menu
+      Text = ("Network Detect")
+      Picture = Picture["icons/gps.png"]
     }
     { MenuSettingsGPS Menu
       Text = ("NMEA GPS")
@@ -394,27 +441,32 @@
       Text = ("OpenTherm")
       Picture = Picture["icons/hvac.gif"]
     }
+    { MenuSettingsPhilipsHue Menu
+      Text = ("Philips Hue")
+      Picture = Picture["icons/hue.gif"]
+    }
     { MenuSettingsPLCBUS Menu
       Text = ("PLCBUS")
       Picture = Picture["icons/bus.png"]
     }
-    { MenuSettingsPlugwise Menu
-      Text = ("Plugwise")
-      Picture = Picture["icons/plugwise.jpg"]
+    { MenuSettingsRFLink Menu
+      Text = ("RFLink")
+      Picture = Picture["icons/wire.png"]
     }
     { MenuRFXCom Menu
       Text = ("RFXCom")
+      Picture = Picture["icons/rfxcom.gif"]
       { MenuSettingsRFXComRX Menu
         Text = ("Receiver")
-        Picture = Picture["icons/wire.png"]
+        Picture = Picture["icons/rfxcom.gif"]
       }
       { MenuSettingsRFXComTX Menu
         Text = ("Transmitter")
-        Picture = Picture["icons/wire.png"]
+        Picture = Picture["icons/rfxcom.gif"]
       }
       { MenuSettingsRFXComTRX Menu
         Text = ("Transceiver RFXTrx")
-        Picture = Picture["icons/wire.png"]
+        Picture = Picture["icons/rfxcom.gif"]
       }
       { MenuSettingsRFXComxPL Menu
         Text = ("xPL")
@@ -432,6 +484,14 @@
     { MenuSettingsUPS Menu
       Text = ("UPS Monitor")
       Picture = Picture["icons/ups.gif"]
+    }
+    { MenuSettingsVelbus Menu
+      Text = ("Velbus")
+      Picture = Picture["icons/bus.png"]
+    }
+    { MenuSettingsWirelesstags Menu
+      Text = ("Wirelesstags")
+      Picture = Picture["icons/bus.png"]
     }
     { MenuX10 Menu
       Text = ("X10")
@@ -475,12 +535,12 @@
       Picture = Picture["icons/list.png"]
       Shortcut = "Alt+D"
     }
-    { MenuDeviceModules Menu
-      Text = ("Modules, Groups ...")
-      Picture = Picture["icons/modules.png"]
-    }
     { MenuDeviceValuesList Menu
-      Text = ("List Device Values")
+      Text = ("List DeviceValues")
+    }
+    { MenuDeviceTypesGroups Menu
+      Text = ("DeviceTypes, Groups ") & "..."
+      Picture = Picture["icons/modules.png"]
     }
   }
   { MenuEvents Menu
@@ -572,12 +632,15 @@
       Picture = Picture["icons/menus.png"]
     }
     { MenuEditNewsWeather Menu
-      Text = ("News, Weather ...")
+      Text = ("News, Weather ") & "..."
       Picture = Picture["icons/rss.png"]
     }
     { MenuEditNotify Menu
       Text = ("Notify")
       Picture = Picture["icons/notify.png"]
+    }
+    { MenuSSLCertificates Menu
+      Text = ("SSL Certificates")
     }
     { MenuEditUsers Menu
       Text = ("Users")
@@ -596,7 +659,7 @@
       Picture = Picture["icon:/16/clear"]
     }
     { MenuToolsDSCPanel Menu
-      Text = ("DCS Security Panel")
+      Text = ("DSC Security Panel")
       Picture = Picture["icons/security.png"]
     }
     { MenuToolsSerialports Menu
@@ -606,6 +669,13 @@
     { MenuToolsSerialMonitor Menu
       Text = ("Serial Monitor")
       Picture = Picture["icons/serialterm.png"]
+    }
+    { MenuToolsToonCmdr Menu
+      Text = ("Toon Commander")
+    }
+    { MenuToolsKNXCmdr Menu
+      Text = ("KNX Commander")
+      Picture = Picture["icons/knx.png"]
     }
     { MenuToolsCULCmdr Menu
       Text = ("CUL Commander")
@@ -619,12 +689,8 @@
       Text = ("X10 Commander")
       Picture = Picture["icons/x10.gif"]
     }
-    { MenuToolsDomoCmdr Menu
-      Text = ("Domotica Commander")
-      Picture = Picture["icons/modules.png"]
-    }
-    { MenuToolsZWaveCmdr Menu
-      Text = ("Z-Wave Commander")
+    { MenuToolsOpenZWaveCmdr Menu
+      Text = ("Open Z-Wave Commander")
       Picture = Picture["icons/zwave.png"]
     }
     { MenuToolsPLCBUSCmdr Menu
@@ -637,14 +703,20 @@
     }
   }
   { MenuHelp Menu
-    Text = ("?")
-    { MenuSupport Menu
-      Text = ("Support Website")
+    Text = ("About")
+    { MenuProject Menu
+      Text = ("Visit Project Website")
       Picture = Picture["icons/webserver.png"]
     }
-    { MenuDonate Menu
-      Text = ("Send a Donation")
+    { MenuDonateProject Menu
+      Text = ("Donate to Project")
       Picture = Picture["icons/donate.png"]
+    }
+    { MenuGooglePlus Menu
+      Text = ("Google+ Community")
+    }
+    { MenuGitHub Menu
+      Text = ("DomotiGa on GitHub")
     }
     { MenuAbout Menu
       Text = ("About DomotiGa")
@@ -656,16 +728,16 @@
     Background = Color.TextBackground
   }
   { pnlStatus Panel
-    MoveScaled(0,79,147,3)
+    MoveScaled(0,79,147,4)
     Border = Border.Sunken
     { hbStatus HBox
-      MoveScaled(0,0,147,3)
+      MoveScaled(0,0,147,4)
       Expand = True
       Spacing = True
       Margin = True
       Padding = 2
       { tbMode TextBox
-        MoveScaled(1,0.125,5,3)
+        MoveScaled(1,0.125,5,4)
         Font = Font["-1"]
         Text = ("Mode:")
         ReadOnly = True
@@ -677,31 +749,31 @@
         Alignment = Align.Center
       }
       { txtMode TextBox
-        MoveScaled(8,0,7,3)
+        MoveScaled(8,0,7,4)
         Font = Font["-1"]
         Background = Color.TextBackground
         ReadOnly = True
         Border = False
       }
       { pbSunRise PictureBox
-        MoveScaled(15,0,3.625,3.625)
+        MoveScaled(15,0,4,4)
         Picture = Picture["icons/sun.png"]
         Alignment = Align.Center
       }
       { txtSunRise TextBox
-        MoveScaled(18,0,6,3)
+        MoveScaled(18,0,6,4)
         Font = Font["-1"]
         Background = Color.TextBackground
         ReadOnly = True
         Border = False
       }
       { pbSunSet PictureBox
-        MoveScaled(24,0.125,3.125,3.125)
+        MoveScaled(24,0.125,3,4)
         Picture = Picture["icons/sunset.jpg"]
         Alignment = Align.Center
       }
       { txtSunSet TextBox
-        MoveScaled(27,0,7,3)
+        MoveScaled(27,0,7,4)
         Font = Font["-1"]
         Background = Color.TextBackground
         Alignment = Align.Left
@@ -709,27 +781,28 @@
         Border = False
       }
       { txtEmailIn TextBox
-        MoveScaled(34,0,8,3)
+        MoveScaled(34,0,8,4)
         Font = Font["-1"]
         Border = False
       }
       { txtCallsIn TextBox
-        MoveScaled(43,0,7,3)
+        MoveScaled(43,0,7,4)
         Font = Font["-1"]
         Border = False
       }
       { txtVoiceIn TextBox
-        MoveScaled(51,0,10,3)
+        MoveScaled(51,0,10,4)
         Font = Font["-1"]
         Border = False
       }
       { pbUser PictureBox
-        MoveScaled(61,0,3.125,3.125)
+        MoveScaled(61,0,3,4)
         Visible = False
         Picture = Picture["icons/key.png"]
+        Alignment = Align.Center
       }
       { txtUser TextLabel
-        MoveScaled(63,0,6,3)
+        MoveScaled(63,0,6,4)
         Font = Font["-1"]
         Padding = 2
         Alignment = Align.Normal
@@ -738,125 +811,169 @@
         MoveScaled(68,0,2,3)
         Expand = True
       }
-      { pbHM PictureBox
-        MoveScaled(69,0,3,3)
-        Picture = Picture["icons/led-off.png"]
-        Alignment = Align.Center
-      }
-      { tbHM TextBox
-        MoveScaled(71,0,4,3)
-        Font = Font["-1"]
-        Text = ("HM")
-        Alignment = Align.Left
-        ReadOnly = True
-        Border = False
-      }
-      { pbZWave PictureBox
-        MoveScaled(74,0,3,3)
-        Picture = Picture["icons/led-off.png"]
-        Alignment = Align.Center
-      }
-      { tbZWave TextBox
-        MoveScaled(76,0,6,3)
-        Font = Font["-1"]
-        Text = ("Z-Wave")
-        Alignment = Align.Left
-        ReadOnly = True
-        Border = False
-      }
-      { pbDSC PictureBox
-        MoveScaled(82,0,3,3)
-        Picture = Picture["icons/led-off.png"]
-        Alignment = Align.Center
-      }
-      { tbDSC TextBox
-        MoveScaled(84,0,4,3)
-        Font = Font["-1"]
-        Text = ("DSC")
-        Alignment = Align.Left
-        ReadOnly = True
-        Border = False
-      }
-      { pbOneWire PictureBox
-        MoveScaled(87,0,3,3)
-        Picture = Picture["icons/led-off.png"]
-        Alignment = Align.Center
-      }
-      { tbOneWire TextBox
-        MoveScaled(89,0,6,3)
-        Font = Font["-1"]
-        Text = ("1-Wire")
-        Alignment = Align.Left
-        ReadOnly = True
-        Border = False
-      }
-      { pbRFXCom PictureBox
-        MoveScaled(95,0,3,3)
-        Picture = Picture["icons/led-off.png"]
-        Alignment = Align.Center
-      }
-      { tbRFXCom TextBox
-        MoveScaled(97,0,7,3)
-        Font = Font["-1"]
-        Text = ("RFXCom")
-        Alignment = Align.Left
-        ReadOnly = True
-        Border = False
-      }
-      { pbX10 PictureBox
-        MoveScaled(104,0,3,3)
-        Picture = Picture["icons/led-off.png"]
-        Alignment = Align.Center
-      }
-      { tbX10 TextBox
-        MoveScaled(106,0,4,3)
-        Font = Font["-1"]
-        Text = ("X10")
-        Alignment = Align.Left
-        ReadOnly = True
-        Border = False
-      }
-      { pbEIB PictureBox
-        MoveScaled(110,0,3,3)
-        Picture = Picture["icons/led-off.png"]
-        Alignment = Align.Center
-      }
-      { tbEIB TextBox
-        MoveScaled(112,0,4,3)
-        Font = Font["-1"]
-        Text = ("EIB")
-        Alignment = Align.Left
-        ReadOnly = True
-        Border = False
-      }
-      { pbPLCBUS PictureBox
-        MoveScaled(116,0,3,3)
-        Picture = Picture["icons/led-off.png"]
-        Alignment = Align.Center
-      }
-      { tbPLCBUS TextBox
-        MoveScaled(118,0,7,3)
-        Font = Font["-1"]
-        Text = ("PLCBUS")
-        Alignment = Align.Left
-        ReadOnly = True
-        Border = False
-      }
-      { pbCUL PictureBox
-        MoveScaled(124,0,3,3)
-        Picture = Picture["icons/led-off.png"]
-        Alignment = Align.Center
-      }
-      { tbCUL TextBox
-        MoveScaled(127,0,4,3)
-        Font = Font["-1"]
-        Text = ("CUL")
-        Alignment = Align.Left
-        ReadOnly = True
-        Border = False
+      { HBox1 HBox
+        MoveScaled(70,0,68,4)
+        AutoResize = True
+        { pbHM PictureBox grpHM
+          Name = "pbHM"
+          MoveScaled(0,0,3,4)
+          Picture = Picture["icons/led-off.png"]
+          Alignment = Align.Center
+        }
+        { tbHM TextBox grpHM
+          Name = "tbHM"
+          MoveScaled(2,0,4,4)
+          Font = Font["-1"]
+          Text = ("HM")
+          Alignment = Align.Left
+          ReadOnly = True
+          Border = False
+        }
+        { pbZWave PictureBox
+          MoveScaled(5,0,3,4)
+          Picture = Picture["icons/led-off.png"]
+          Alignment = Align.Center
+        }
+        { tbZWave TextBox grpZWave
+          Name = "tbZWave"
+          MoveScaled(8,0,6,4)
+          Font = Font["-1"]
+          Text = ("Z-Wave")
+          Alignment = Align.Left
+          ReadOnly = True
+          Border = False
+        }
+        { pbDSC PictureBox
+          MoveScaled(13,0,3,4)
+          Picture = Picture["icons/led-off.png"]
+          Alignment = Align.Center
+        }
+        { tbDSC TextBox frpDSC
+          Name = "tbDSC"
+          MoveScaled(15,0,4,4)
+          Font = Font["-1"]
+          Text = ("DSC")
+          Alignment = Align.Left
+          ReadOnly = True
+          Border = False
+        }
+        { pbOneWire PictureBox
+          MoveScaled(18,0,3,4)
+          Picture = Picture["icons/led-off.png"]
+          Alignment = Align.Center
+        }
+        { tbOneWire TextBox grp1Wire
+          Name = "tbOneWire"
+          MoveScaled(20,0,6,4)
+          Font = Font["-1"]
+          Text = ("1-Wire")
+          Alignment = Align.Left
+          ReadOnly = True
+          Border = False
+        }
+        { pbRFXCom PictureBox grpRfxcom
+          Name = "pbRFXCom"
+          MoveScaled(25,0,3,4)
+          Picture = Picture["icons/led-off.png"]
+          Alignment = Align.Center
+        }
+        { tbRFXCom TextBox
+          MoveScaled(27,0,7,4)
+          Font = Font["-1"]
+          Text = ("RFXCom")
+          Alignment = Align.Left
+          ReadOnly = True
+          Border = False
+        }
+        { pbX10 PictureBox
+          MoveScaled(33,0,3,4)
+          Picture = Picture["icons/led-off.png"]
+          Alignment = Align.Center
+        }
+        { tbX10 TextBox grpX10
+          Name = "tbX10"
+          MoveScaled(35,0,4,4)
+          Font = Font["-1"]
+          Text = ("X10")
+          Alignment = Align.Left
+          ReadOnly = True
+          Border = False
+        }
+        { pbKNX PictureBox grpKNX
+          Name = "pbKNX"
+          MoveScaled(38,0,3,4)
+          Picture = Picture["icons/led-off.png"]
+          Alignment = Align.Center
+        }
+        { tbKNX TextBox
+          MoveScaled(40,0,4,4)
+          Font = Font["-1"]
+          Text = ("KNX")
+          Alignment = Align.Left
+          ReadOnly = True
+          Border = False
+        }
+        { pbPLCBUS PictureBox grpPlcbus
+          Name = "pbPLCBUS"
+          MoveScaled(43,0,3,4)
+          Picture = Picture["icons/led-off.png"]
+          Alignment = Align.Center
+        }
+        { tbPLCBUS TextBox
+          MoveScaled(45,0,7,4)
+          Font = Font["-1"]
+          Text = ("PLCBUS")
+          Alignment = Align.Left
+          ReadOnly = True
+          Border = False
+        }
+        { pbCUL PictureBox grpCul
+          Name = "pbCUL"
+          MoveScaled(51,0,3,4)
+          Picture = Picture["icons/led-off.png"]
+          Alignment = Align.Center
+        }
+        { tbCUL TextBox
+          MoveScaled(53,0,4,4)
+          Font = Font["-1"]
+          Text = ("CUL")
+          Alignment = Align.Left
+          ReadOnly = True
+          Border = False
+        }
+        { pbOT PictureBox grpOt
+          Name = "pbOT"
+          MoveScaled(56,0,3,4)
+          Picture = Picture["icons/led-off.png"]
+          Alignment = Align.Center
+        }
+        { tbOT TextBox grpOt
+          Name = "tbOT"
+          MoveScaled(58,0,4,4)
+          Font = Font["-1"]
+          Text = ("OT")
+          Alignment = Align.Left
+          ReadOnly = True
+          Border = False
+        }
+        { pbVelbus PictureBox grpVelbus
+          Name = "pbVelbus"
+          MoveScaled(60,0,3,4)
+          Picture = Picture["icons/led-off.png"]
+          Alignment = Align.Center
+        }
+        { tbVelbus TextBox grpVelbus
+          Name = "tbVelbus"
+          MoveScaled(63,0,5.25,4)
+          Font = Font["-1"]
+          Text = ("Velbus")
+          Alignment = Align.Left
+          ReadOnly = True
+          Border = False
+        }
       }
       { txtTime TextBox
-        MoveScaled(131,0,16,3)
+        MoveScaled(131,0,16,4)
         Font = Font["-1"]
         Alignment = Align.Right
         ReadOnly = True

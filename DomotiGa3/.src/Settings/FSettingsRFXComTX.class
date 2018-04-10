@@ -35,7 +35,7 @@ Public Sub btnSave_Click()
   If Main.bServer Then
     Plugin.Restart("RFXComTX")
   Else
-    Client.ModuleRestart("RFXComTX")
+    Client.Plugin_Restart("RFXComTX")
   Endif
 
   FMain.UpdateStatusPanel()
@@ -199,6 +199,7 @@ Private Sub EnableDisableSettings()
   chkEnableHarrison.Enabled = chkEnabled.Value
   chkEnableKoppla.Enabled = chkEnabled.Value
   chkRFXmitter.Enabled = chkEnabled.Value
+  btnSerial.Enabled = chkEnabled.Value
 
   If chkEnabled.Value Then
     SetButtons()
@@ -248,3 +249,12 @@ Private Sub SetProtocols()
 
 End
 
+Public Sub btnSerial_Click()
+
+  Dim sSerialPort As String
+
+  sSerialPort = FToolsSerialPorts.Run()
+  If sSerialPort Then txtSerialPort.Text = sSerialPort
+  btnSave.Enabled = True
+
+End

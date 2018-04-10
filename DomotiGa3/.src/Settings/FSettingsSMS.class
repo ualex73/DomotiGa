@@ -66,7 +66,7 @@ Public Sub btnSave_Click()
   If Main.bServer Then
     Plugin.Restart("SMS", 1)
   Else
-    Client.ModuleRestart("SMS")
+    Client.Plugin_Restart("SMS")
   Endif
 
   Me.Close
@@ -153,6 +153,16 @@ Private Sub EnableDisableSettings()
   txtServiceCentre.Enabled = chkEnabled.Value
   txtContact.Enabled = chkEnabled.Value
   btnTest.Enabled = chkEnabled.Value
+  btnSerial.Enabled = chkEnabled.Value
 
 End
 
+Public Sub btnSerial_Click()
+
+  Dim sSerialPort As String
+
+  sSerialPort = FToolsSerialPorts.Run()
+  If sSerialPort Then txtSerialPort.Text = sSerialPort
+  btnSave.Enabled = True
+
+End

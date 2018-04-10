@@ -23,7 +23,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "VISCA"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "Sony VISCA"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -42,13 +41,13 @@ Public ErrorWhere As String
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private $bEnabled As Boolean
 Private $sSerPort As String
-Private $bVISCADebug As Boolean
+Private $bDebug As Boolean
 Private $bCamNum As Byte
 
 Public hVISCA As New SerialPort
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -62,7 +61,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   ' Copy configuration items locally
   $bEnabled = cPl.Settings["enabled"]
   $sSerPort = cPl.Settings["serialport"]
-  $bVISCADebug = cPl.Settings["debug"]
+  $bDebug = cPl.Settings["debug"]
   $bCamNum = &H80 + Hex(cPl.Settings["cameraaddress"])
  
   ' Connect/Initialize connection
@@ -71,7 +70,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -100,14 +99,14 @@ Public Function Connect() As Boolean
   End With
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -144,16 +143,10 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send a command to the camera
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function SendCommand(aCommand As Array)
+Public Function SendCommand(aCommand As Byte[])
 
-  Dim iCmd As Byte
-
-  If $bVISCADebug Then Main.WriteDebugLog(LogLabel & "> ", True)
-  For Each iCmd In aCommand
-    If $bVISCADebug Then Main.WriteRFXDebugLog(Hex$(iCmd, 2) & " ", True)
-    Try Write #hVISCA, iCmd As Byte
-  Next
-  If $bVISCADebug Then Main.WriteRFXDebugLog("\n", True)
+  If $bDebug Then Main.WriteDebugLog("> " & Util.ByteToHex(aCommand))
+  Try aCommand.Write(hVISCA)
 
 End
 
@@ -166,7 +159,7 @@ Public Sub VISCA_Read()
 
   Try sData = Read #hVISCA As Byte
   If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! ->" & ERROR.Text)
-  If $bVISCADebug Then Main.WriteDebugLog(LogLabel & "< " & Hex$(sData, 2))
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & Hex$(sData, 2))
 
 End
 
@@ -175,7 +168,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub AddressSet()
 
-  Dim b As Byte[] = [CByte(&H88), CByte(&H30), &H1, &HFF]
+  Dim b As Byte[] = [&H88, &H30, &H01, &HFF]
 
   SendCommand(b)
 
@@ -186,7 +179,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub IfClear()
 
-  Dim b As Byte[] = [CByte(&H88), CByte(&H1), &H0, &H1, &HFF]
+  Dim b As Byte[] = [&H88, &H01, &H00, &H01, &HFF]
 
   SendCommand(b)
 
@@ -197,7 +190,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Power(sMode As String)
 
-  Dim b As Byte[] = [CByte($bCamNum), CByte(&h1), &H4, &H0, IIf(sMode = "on", &H2, &H3), &HFF]
+  Dim b As Byte[] = [CByte($bCamNum), &H1, &H04, &H00, IIf(sMode = "on", &H02, &H03), &HFF]
 
   SendCommand(b)
 
@@ -304,7 +297,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub BackLight(sMode As String)
 
-  Dim b As Byte[] = [CByte($bCamNum), CByte(&H1), &H4, &H33, IIf(sMode = "on", &H2, &H3), &HFF]
+  Dim b As Byte[] = [CByte($bCamNum), &H01, &H04, &H33, IIf(sMode = "on", &H02, &H03), &HFF]
 
   SendCommand(b)
 
@@ -385,7 +378,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Home()
 
-  Dim b As Byte[] = [CByte($bCamNum), CByte(&H1), &H6, &H4, &HFF]
+  Dim b As Byte[] = [CByte($bCamNum), &H01, &H06, &H04, &HFF]
 
   SendCommand(b)
 
@@ -422,7 +415,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub PowerInq()
 
-  Dim b As Byte[] = [CByte($bCamNum), CByte(&H9), &H4, &H0, &HFF]
+  Dim b As Byte[] = [CByte($bCamNum), &H09, &H04, &H00, &HFF]
 
   SendCommand(b)
 

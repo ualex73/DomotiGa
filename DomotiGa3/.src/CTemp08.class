@@ -16,7 +16,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Temp08"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "Midon Temp08"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -25,6 +24,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[Temp08] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -36,15 +36,18 @@ Public ErrorWhere As String
 Private $bEnabled As Boolean
 Private $sSerPort As String
 Private $sBaud As String
-Private $bTemp08Debug As Boolean
+Private $bDebug As Boolean
 
 Public hTemp08 As New SerialPort
 Public tTemp08 As New Timer
+Public tTemp08Busy As Timer
 
 Public sBuffer As String
+Private cQueue As New Collection  ' command buffer
+Private bTemp08Busy As Boolean    ' waiting for command to finish
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory Sub for EACH Module/Class to initialize:
+' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -59,15 +62,23 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bEnabled = cPl.Settings["enabled"]
   $sSerPort = cPl.Settings["serialport"]
   $sBaud = cPl.Settings["baudrate"]
-  $bTemp08Debug = cPl.Settings["debug"]
- 
+  $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("Midon TEMP08")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
   ' Connect/Initialize connection
   Connect()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for EACH Module/Class to stop
+' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
@@ -100,15 +111,19 @@ Public Function Connect() As Boolean
   tTemp08.Delay = 250
   tTemp08.Stop
 
+  ' define timer for port busy
+  tTemp08Busy = New Timer As "tTemp08Busy"
+  tTemp08Busy.Stop
+
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -149,15 +164,14 @@ Public Sub ParseLine(sStr As String)
   ' Temp #02[150008013A024910]=22.43C
   ' Temp #03[7A0008014A6BC310]=22.68C
 
-  If $bTemp08Debug Then Main.WriteDebugLog(LogLabel & sStr)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sStr)
 
   ' Temp08 temp sensor support
   If Mid$(sStr, 1, 4) = "Temp" Then
-    If $bTemp08Debug Then Main.WriteDebugLog(LogLabel & "We got DS1820 temperature data.")
     aScan = Scan(sStr, "*[[]*]=*")
     If aScan.Count = 3 Then
-      iDeviceId = Devices.Find(Instance, aScan[1], Devices.FindInterface("Midon TEMP08"), "DS18B20")
-      If iDeviceId Then Devices.ValueUpdateExt(iDeviceId, 1, LTrim(Left(aScan[2], -2)), Devices.ValueType_Temperature)
+      iDeviceId = Devices.Find(Instance, aScan[1], InterfaceId, "DS18B20")
+      If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, LTrim(Left(aScan[2], -2)), Devices.ValueType_Temperature)
     Endif
   Endif
   ' put support for other sensortypes here
@@ -177,6 +191,8 @@ End
 Public Function Disconnect() As Boolean
 
   ' try to close the connection
+  Try tTemp08.Stop
+  Try tTemp08Busy.Stop
   Try hTemp08.Close
 
   Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
@@ -195,3 +211,89 @@ Catch
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send a command
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Dim sCommand As String
+
+  Select UCase(sCmd)
+    Case "ON", "OFF"
+      If sAddress == "all" Then
+        sCommand = "rlya " & LCase(sCmd)
+      Else
+        sCommand = "rly " & Format(sAddress, "0#") & " " & LCase(sCmd)
+      Endif
+    Case Else
+      Main.WriteDebugLog(LogLabel & "Invalid command '" & sCmd & "'")
+      Return
+  End Select
+  QueueCommand(sCommand)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueueCommand(sCmd As String)
+
+  ' add command to queue
+  cQueue.Add(sCmd, Rnd)
+
+  ' if interface is not busy process it
+  If bTemp08Busy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DoQueue()
+
+  Dim sCmd As String
+
+  For Each sCmd In cQueue
+    WriteCommand(sCmd, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send cmd to interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub WriteCommand(sCmd As String, sKey As String)
+
+  Main.ControlLed("OneWire", "On")
+  If Main.bServer Then tTemp08.Start
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sCmd)
+  Print #hTemp08, sCmd
+
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  tTemp08Busy.Delay = 150
+  tTemp08Busy.Start
+  If bTemp08Busy = False Then bTemp08Busy = True
+
+Catch
+  Main.WriteDebugLog(LogLabel & "'" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' controller busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tTemp08Busy_Timer()
+
+  bTemp08Busy = False
+  tTemp08Busy.Stop
+
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending next command from Queue (count = " & cQueue.Count & ")")
+    DoQueue()
+  Endif
+
+End

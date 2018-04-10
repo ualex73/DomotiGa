@@ -1,54 +1,62 @@
 # Gambas Form File 3.0
 
 { Form Form
-  MoveScaled(0,0,56,60)
+  MoveScaled(0,0,57,59)
   Background = Color.TextBackground
   Text = ("Macro Editor")
   Resizable = False
   { HBox1 HBox
-    MoveScaled(1,55,54,4)
+    MoveScaled(1,53,54,4)
     Spacing = True
     { Panel1 Panel
       MoveScaled(1,0,4,3)
       Expand = True
     }
     { btnOK Button
-      MoveScaled(24,0,14,4)
+      MoveScaled(28,0,12,4)
       Text = ("Save")
       Default = True
     }
     { btnCancel Button
-      MoveScaled(39,0,14,4)
+      MoveScaled(41,0,12,4)
       Text = ("Cancel")
       Cancel = True
     }
   }
-  { lvMacro ListView
-    MoveScaled(1,1,38,29)
-    Editable = True
+  { Frame1 Frame
+    MoveScaled(1,1,56,29)
+    Text = ("Macros")
+    { lvMacro ListView
+      MoveScaled(1,3,39,25)
+      Editable = True
+    }
+    { btAdd Button
+      MoveScaled(42,3,12,4)
+      Text = ("Add")
+    }
+    { btDelete Button
+      MoveScaled(42,8,12,4)
+      Text = ("Delete")
+    }
+    { btEdit Button
+      MoveScaled(42,13,12,4)
+      Text = ("Edit")
+    }
   }
-  { taMacro TextArea
-    MoveScaled(1,31,54,19)
-    Ignore = True
-    ReadOnly = True
-  }
-  { tbEval TextBox
-    MoveScaled(1,51,43,3)
-  }
-  { btEval Button
-    MoveScaled(45,51,10,3)
-    Text = ("Eval")
-  }
-  { btAdd Button
-    MoveScaled(40,1,14,4)
-    Text = ("Add")
-  }
-  { btDelete Button
-    MoveScaled(40,6,14,4)
-    Text = ("Delete")
-  }
-  { btEdit Button
-    MoveScaled(40,11,14,4)
-    Text = ("Edit")
+  { Frame2 Frame
+    MoveScaled(1,31,56,21)
+    Text = ("Code")
+    { taMacro TextArea
+      MoveScaled(1,3,53,11)
+      Ignore = True
+      ReadOnly = True
+    }
+    { tbEval TextBox
+      MoveScaled(1,15,40,4)
+    }
+    { btEval Button
+      MoveScaled(42,15,12,4)
+      Text = ("Eval")
+    }
   }
 }

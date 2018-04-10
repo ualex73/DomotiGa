@@ -2,26 +2,26 @@
 
 ' Description:
 ' Plugin.module
-' This module stores all the interface information
+' Functionality to work with Plugins
 '
 ' Development Status:
-' Initial testing build
+' Finished
 
 ' Credits:
-' Based on an idea of Teun Hagen, coded by Alexander Kuiper
+' Based on an idea of Teus Hagen, coded by Alexander Kuiper
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
 
 ' Read file called COPYING for license details.
 
-' TODO:
-' Main, Astro, etc - special settings_* aren't supported YET
+' TODO: Main, Astro, etc - special settings_* aren't supported YET
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public $bDebug As Boolean
+Public $tRestartDelayTimer As CTimerGeneric
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' cPluginList contain all the modules/interfaces available on the system
@@ -48,108 +48,116 @@ Public cPluginRunTask As New Collection
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Constants
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Const Type_Unknown As Integer = 0
-Public Const Type_Module As Integer = 1
-Public Const Type_Class As Integer = 2
-Public Const SubType_OpenZWave As Integer = 1
+Public Const Type_None As Integer = 0
+Public Const Type_OpenZWave As Integer = 1
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Init - Register all known plugins
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Init()
 
-  Register("Asterisk", "CAsterisk")
-  Register("Bluetooth", "CBluetooth")
-  Register("BwiredMap", "CBwiredMap")
-  Register("CTX35", "CCTX35")
-  Register("CUL", "CCUL")
-  Register("CurrentCost", "CCurrentCost")
-  Register("Denon", "CDenon")
-  Register("Digitemp", "CDigitemp")
-  Register("DMXPlayer", "CDMXPlayer")
-  Register("Domotica", "CDomotica")
-  Register("DSC", "CDSC")
-  Register("EIB", "CEIB")
-  Register("ELVMAX", "CELVMAX")
-  Register("EZcontrol", "CEZcontrol")
-  Register("FritzBox", "CFritzBox")
-  Register("GenericIO", "CGenericIO")
-  Register("GMail", "CGMail")
-  Register("GPS", "CGPS")
-  Register("HDDTemp", "CHDDTemp")
-  Register("HomeMatic", "CHomeMatic")
-  Register("IPort", "CIPort")
-  Register("IRMan", "CIRMan")
-  Register("IRTrans", "CIRTrans")
-  Register("IViewer", "CIViewer")
-  Register("JeeLabs", "CJeeLabs")
-  Register("JSONRPC", "CJSONRPC")
-  Register("K8055", "CK8055")
-  Register("KMTronicUDP", "CKMTronicUDP")
-  Register("LEDMatrix", "CLEDMatrix")
-  Register("LGTV", "CLGTV")
-  Register("LIRC", "CLIRC")
-  Register("Meteohub", "CMeteohub")
-  Register("Mochad", "CMochad")
-  Register("MQTT", "CMQTT")
-  Register("Ncid", "CNcid")
-  Register("NMA", "CNMA")
-  Register("Onkyo", "COnkyo")
-  Register("OpenTherm", "COpenTherm")
-  Register("OpenZWave", "COpenZWave", SubType_OpenZWave)
-  Register("OWFS", "COWFS")
-  Register("OWW", "COWW")
-  Register("P2000", "CP2000")
-  Register("Pachube", "CPachube")
-  Register("Ping", "CPing")
-  Register("Pioneer", "CPioneer")
-  Register("PLCBUS", "CPLCBUS")
-  Register("Plugwise", "CPlugwise")
-  Register("Prowl", "CProwl")
-  Register("PVoutput", "CPVoutput")
-  Register("Pushover", "CPushover")
-  Register("PwrCtrl", "CPwrCtrl")
-  Register("RaZberry", "CRaZberry")
-  'Register("RRDTool", "RRDTool", RRDTool)
-  Register("RFXComRX", "CRFXComRX")
-  Register("RFXComTRX", "CRFXComTRX")
-  Register("RFXComTX", "CRFXComTX")
-  'Register("RFXComxPL", "CRFXComxPL")
-  'Register("ServerStats", "ServerStats", ServerStats)
-  Register("SharpTV", "CSharpTV")
-  'Register("Shell", "Shell", Shell)
-  Register("SmartMeter", "CSmartMeter")
-  Register("SmartVISUServer", "CSmartVISUServer")
-  Register("SMS", "CSMS")
-  'Register("Sounds", "Sounds", Sounds)
-  Register("SqueezeServer", "CSqueezeServer")
-  Register("TelnetServer", "CTelnetServer")
-  Register("Temp08", "CTemp08")
-  'Register("TemperaturNu", "TemperaturNu", TemperaturNu)
-  'Register("Thermostat", "Thermostat", Thermostat)
-  'Register("TVGuide", "TVGuide", TVGuide)
-  Register("Twitter", "CTwitter")
-  Register("UPS", "CUPS")
-  'Register("VideoServer", "VideoServer", VideoServer)
-  Register("VISCA", "CVISCA")
-  Register("Visonic", "CVisonic")
-  'Register("VoiceText", "VoiceText", VoiceText)
-  'Register("WeatherUG", "WeatherUG", WeatherUG)
-  Register("Weeder", "CWeeder")
-  Register("X10Cmd", "CX10Cmd")
-  'Register("XBMCxPL", "CXBMCxPL")
-  'Register("XMLRPC", "CXMLRPC")
-  'Register("xPL", "CxPL")
-  Register("YouLess", "CYouLess")
+  Dim rPlugins As Result
+  Dim sPluginName, sPlugintype As String
+
+  ' find all plugins
+  Try rPlugins = Devices.FindPlugins()
+  If rPlugins Then
+    For Each rPlugins
+      sPluginName = rPlugins!name
+      sPluginType = rPlugins!type
+      Select Case LCase(sPluginType)
+        Case "class"
+          If Main.bDebugPlugin Then Main.WriteDebugLog("[Plugin] Plugin named '" & sPluginName & "' of type '" & sPluginType & "' found.")
+
+          If Main.bServer Then
+            Register(sPluginName)
+          Else
+            Register_Client(sPluginName)
+          Endif
+
+        Case "module", "virtual"
+          If Main.bDebugPlugin Then Main.WriteDebugLog("[Plugin] Plugin named '" & sPluginName & "' of type '" & sPluginType & "' found, skipping.")
+        Case Else
+          Main.WriteDebugLog("[Plugin] Unknown Plugin type found '" & sPluginType & "'!")
+      End Select
+    Next
+  Else
+    Main.WriteDebugLog("[Plugin] No Plugins found in database, something is wrong!")
+    Return
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Register interfaces/module in Client mode
+' sPluginName = Displayname like UPS, Twitter, Visonic
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Register_Client(sPluginName As String)
+
+  Dim rResult As Result
+  Dim cPl, cPlZero As CPluginEntry
+  Dim hField As ResultField
+  Dim sTableName As String = "settings_" & LCase(sPluginName)
+  Dim sClassName As String = "C" & sPluginName
+
+    ' Get the first row of the settings_<sPluginName>
+    rResult = GetSettingsTable(sTableName, 0)
+
+    If rResult = Null Then
+      Main.WriteLog("[Plugin] ERROR: Table '" & sTableName & "' not found in database (id=0)")
+      Main.WriteLog("[Plugin] ERROR: Unable to initialize Plugin '" & sPluginName & "'")
+      Return
+    Endif
+
+  If rResult.Count = 0 Then
+    Main.WriteLog("[Plugin] ERROR: No data found, table '" & sTableName & "' is empty (id=0)")
+    Main.WriteLog("[Plugin] ERROR: Unable to initialize Plugin '" & sPluginName & "'")
+    Return
+  Endif
+
+  cPlZero = New CPluginEntry
+  cPlZero.Name = sPluginName
+  cPlZero.KeyName = LCase(sPluginName) & "#0"
+  cPlZero.Instance = 0
+  cPlZero.ClassName = sClassName
+
+  ' All initialized, put it in the collection
+  cPluginList[LCase(sPluginName) & "#0"] = cPlZero
+
+  rResult = GetSettingsTable(sTableName)
+
+  If rResult = Null Or rResult.Count = 0 Then
+    Return
+  Endif
+
+  For Each rResult
+    cPl = New CPluginEntry
+    cPl.Name = sPluginName
+    cPl.KeyName = LCase(sPluginName) & "#" & rResult!id
+    cPl.Instance = rResult!id
+    cPl.ClassName = sClassName
+
+    For Each hField In rResult.Fields
+      cPl.Settings[LCase(hField.Name)] = rResult[hField.Name]
+    Next
+
+    If cPl.Settings["enabled"] Then
+      cPluginEnabled[LCase(sPluginName)] = "enabled"
+    Endif
+
+    ' All initialized, put it in the collection
+    cPluginList[LCase(sPluginName) & "#" & rResult!id] = cPl
+
+  Next
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Register interfaces/modules
 ' sPluginName = Displayname like UPS, Twitter, Visonic
-' sClassName = Class name, will loaded during Setup. Normally C<sPluginName>
+' bClient = Register also in client mode, normally only applicable for BroadcastUDP
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Register(sPluginName As String, sClassName As String, Optional iSubType As Integer = 0)
+Public Sub Register(sPluginName As String)
 
   Dim rResult As Result
   Dim cPl, cPlZero As CPluginEntry
@@ -157,83 +165,16 @@ Public Sub Register(sPluginName As String, sClassName As String, Optional iSubTy
   Dim oTemp As Object
   Dim sTemp As String
   Dim cTemp As String[]
-  Dim iTemp As Integer
   Dim sTableName As String = "settings_" & LCase(sPluginName)
-
-  ' --------------------------------------------------------------
-  ' This client mode is temporary until we switch over to JSON-RPC
-  ' --------------------------------------------------------------
-
-  ' In Client mode do basic stuff to register the plugin
-  If Not Main.bServer Then
-
-    ' Check if settings_<sPluginName> exists
-    If TableExists(sTableName) = False Then
-      Main.WriteLog("[Plugin] ERROR: Table '" & sTableName & "' doesn't exist in the database")
-      Return
-    Endif
-
-    ' Get the first row of the settings_<sPluginName>
-    rResult = GetSettingsTable(sTableName, 0)
-
-    If rResult = Null Then
-      Main.WriteLog("[Plugin] ERROR: Unable to retrieve data from the table '" & sTableName & "' (id=0)")
-      Main.WriteLog("[Plugin] ERROR: Unable to initialize Plugin '" & sPluginName & "'")
-      Return
-    Endif
-
-    If rResult.Count = 0 Then
-      Main.WriteLog("[Plugin] ERROR: No data retrieved from the table '" & sTableName & "' (id=0)")
-      Main.WriteLog("[Plugin] ERROR: Unable to initialize Plugin '" & sPluginName & "'")
-      Return
-    Endif
-
-    cPlZero = New CPluginEntry
-    cPlZero.Name = sPluginName
-    cPlZero.KeyName = LCase(sPluginName) & "#0"
-    cPlZero.Instance = 0
-    cPlZero.ClassName = sClassName
-
-    ' All initialized, put it in the collection
-    cPluginList[LCase(sPluginName) & "#0"] = cPlZero
-
-    rResult = GetSettingsTable(sTableName)
-
-    If rResult = Null Or rResult.Count = 0 Then
-      Return
-    Endif
-
-    For Each rResult
-      cPl = New CPluginEntry
-      cPl.Name = sPluginName
-      cPl.KeyName = LCase(sPluginName) & "#" & rResult!id
-      cPl.Instance = rResult!id
-      cPl.ClassName = sClassName
-
-      For Each hField In rResult.Fields
-        cPl.Settings[LCase(hField.Name)] = rResult[hField.Name]
-      Next
-
-      If cPl.Settings["enabled"] Then
-        cPluginEnabled[LCase(sPluginName)] = "enabled"
-      Endif
-
-      ' All initialized, put it in the collection
-      cPluginList[LCase(sPluginName) & "#" & rResult!id] = cPl
-
-    Next
-
-    Return
-
-  Endif
-
-  ' In Server mode do the real deal for registering the plugin 
+  Dim sClassName As String = "C" & sPluginName
+  Dim iType As Integer
+  Dim bAutoStart As Boolean
 
   If Main.bDebugPlugin Then Main.WriteDebugLog("[Plugin] Plugin=" & sPluginName & " Register - Started")
 
   ' Plugin name can't contain a "#" character
   If InStr(LCase(sPluginName), "#") Then
-    Main.WriteLog("[Plugin] ERROR: Plugin '" & sClassName & "' name can't contain a '#' character")
+    Main.WriteLog("[Plugin] ERROR: Plugin '" & sClassName & "' name can't contain a '#' character!")
     Return
   Endif
 
@@ -251,14 +192,14 @@ Public Sub Register(sPluginName As String, sClassName As String, Optional iSubTy
   ' Try to get the PluginName, don't continue if it fails. Most likely an invalid Module/Class
   Try sTemp = oTemp.PluginName
   If Error Then
-    Main.WriteLog("Plugin] ERROR: Plugin '" & sPluginName & "' looks to be invalid, the 'PluginName' is missing")
+    Main.WriteLog("[Plugin] ERROR: Plugin '" & sPluginName & "' looks to be invalid, the 'PluginName' is missing!")
     Return
   Endif
 
   ' Try to get the PluginFriendlyName, don't continue if it fails. Most likely an invalid Module/Class
   Try sTemp = oTemp.PluginFriendlyName
   If Error Then
-    Main.WriteLog("Plugin] ERROR: Plugin '" & sPluginName & "' looks to be invalid, the 'PluginFriendlyName' is missing")
+    Main.WriteLog("[Plugin] ERROR: Plugin '" & sPluginName & "' looks to be invalid, the 'PluginFriendlyName' is missing!")
     Return
   Endif
 
@@ -266,6 +207,18 @@ Public Sub Register(sPluginName As String, sClassName As String, Optional iSubTy
   If LCase(sPluginName) <> LCase(oTemp.PluginName) Then
     Main.WriteLog("[Plugin] ERROR: Plugin Mismatch Name='" & sPluginName & "', Plugin='" & oTemp.PluginName & "'")
     Return
+  Endif
+
+  ' Check for Plugin specific Type value
+  Try iType = oTemp.PluginType
+  If Error Then
+    iType = 0
+  Endif
+
+  ' Check for Plugin specific Type value
+  Try bAutoStart = oTemp.PluginAutoStart
+  If Error Then
+    bAutoStart = True
   Endif
 
   ' Report plugin information
@@ -276,45 +229,41 @@ Public Sub Register(sPluginName As String, sClassName As String, Optional iSubTy
     Try Main.WriteDebugLog("[Plugin]     Version=" & oTemp.PluginVersion)
     Try Main.WriteDebugLog("[Plugin]     Author=" & oTemp.PluginAuthor)
     Try Main.WriteDebugLog("[Plugin]     MaxInstances=" & oTemp.PluginMaxInstances)
+    Try Main.WriteDebugLog("[Plugin]     AutoStart=" & IIf(bAutoStart, "True", "False"))
     Try cTemp = oTemp.PluginProtocols
-    If cTemp Then 
+    If cTemp Then
       For Each sTemp In cTemp
         Main.WriteDebugLog("[Plugin]   Protocols=" & sTemp)
       Next
     Endif
   Endif
 
-  ' Check if settings_<sPluginName> exists
-  If TableExists(sTableName) = False Then
-    Main.WriteLog("[Plugin] ERROR: Table '" & sTableName & "' doesn't exist in the database")
-    Return
-  Endif
-
   ' Get the first row of the settings_<sPluginName>
   rResult = GetSettingsTable(sTableName, 0)
 
   If rResult = Null Then
-    Main.WriteLog("[Plugin] ERROR: Unable to retrieve data from the table '" & sTableName & "' (id=0)")
+    Main.WriteLog("[Plugin] ERROR: Table '" & sTableName & "' not found in database (id=0)")
     Main.WriteLog("[Plugin] ERROR: Unable to initialize Plugin '" & sPluginName & "'")
     Return
   Endif
 
   If rResult.Count = 0 Then
-    Main.WriteLog("[Plugin] ERROR: No data retrieved from the table '" & sTableName & "' (id=0)")
+    Main.WriteLog("[Plugin] ERROR: No data found, table '" & sTableName & "' is empty (id=0)")
     Main.WriteLog("[Plugin] ERROR: Unable to initialize Plugin '" & sPluginName & "'")
     Return
   Endif
 
   cPlZero = New CPluginEntry
-  cPlZero.SubType = iSubType
+  cPlZero.Type = iType
   cPlZero.Name = sPluginName
   cPlZero.KeyName = LCase(sPluginName) & "#0"
   cPlZero.Instance = 0
   cPlZero.ClassName = sClassName
+  cPlZero.AutoStart = bAutoStart
 
   Try cPlZero.MaxInstances = oTemp.PluginMaxInstances
   If Error Then
-    Main.WriteLog("[Plugin] ERROR: Plugin '" & sPluginName & "' looks to be invalid, the 'PluginMaxInstances' is missing")
+    Main.WriteLog("[Plugin] ERROR: Plugin '" & sPluginName & "' looks to be invalid, the 'PluginMaxInstances' is missing!")
     Return
   Endif
 
@@ -329,12 +278,13 @@ Public Sub Register(sPluginName As String, sClassName As String, Optional iSubTy
 
   For Each rResult
     cPl = New CPluginEntry
-    cPl.SubType = iSubType
+    cPl.Type = iType
     cPl.Name = sPluginName
     cPl.KeyName = LCase(sPluginName) & "#" & rResult!id
     cPl.Instance = rResult!id
     cPl.MaxInstances = oTemp.PluginMaxInstances
     cPl.ClassName = sClassName
+    cPl.AutoStart = bAutoStart
 
     For Each hField In rResult.Fields
       cPl.Settings[LCase(hField.Name)] = rResult[hField.Name]
@@ -346,8 +296,8 @@ Public Sub Register(sPluginName As String, sClassName As String, Optional iSubTy
     cPluginList[LCase(sPluginName) & "#" & rResult!id] = cPl
 
     ' Do special things for e.g. OpenZWave
-    Select iSubType
-      Case SubType_OpenZWave
+    Select iType
+      Case Type_OpenZWave
         If cPlZero.Settings.Exist("debug") Then
           If cPl.Settings["debug"] Then
             cPlZero.Settings["debug"] = True
@@ -378,11 +328,11 @@ Public Sub StartAll()
 
   If Main.bDebugPlugin Then Main.WriteDebugLog("[Plugin] Plugin StartAll - Started")
 
-  ' Loop through all inteface and start them
+  ' Loop through all plugins and start them
   For Each cPl In cPluginList
 
     ' Skip the #0 entries, these can't be started
-    If InStr(cPl.KeyName, "#0") = 0 Then
+    If InStr(cPl.KeyName, "#0") = 0 And If cPl.AutoStart Then
 
       ' Also only start enabled modules/classes
       If cPl.Settings["enabled"] Then
@@ -397,23 +347,25 @@ Public Sub StartAll()
 
         ' Print module enabled information - only once
         ' We don't do it in the module/class, because that isn't reliable enough
-        If cReported.Exist(cPl.Name) = False Then 
+        If cReported.Exist(cPl.Name) = False Then
           Main.WriteLog("[Plugin] " & cPl.Interface.PluginFriendlyName & " enabled.")
           cReported[cPl.Name] = True
         Endif
 
-        ' Do special things for SubTypes. Normally we store it in Settings, gives us most flexiblity
-        Select cPl.SubType
-          Case SubType_OpenZWave
+        ' Do special things for Types. Normally we store it in Settings, gives us most flexiblity
+        Select cPl.Type
+          Case Type_OpenZWave
             Try cPl.Settings["libdebug"] = cPluginList[Mid$(cPl.KeyName, 1, InStr(cPl.KeyName, "#")) & "0"].Settings["debug"]
             If Error Then
               cPl.Settings["libdebug"] = False
             Endif
         End Select
 
+        If cPl.Settings["debug"] Then LogSettings(cPl)
+
         Try Object.Call(cPl.Interface, "StartPlugin", [cPl])
         If Error Then
-          Main.WriteLog("[Plugin] ERROR: Plugin '" & cPl.Name & "' doesn't have a StartPlugin Function. ERROR: '" & Error.Text & "' at " & Error.Where)
+          Main.WriteLog("[Plugin] ERROR: Plugin '" & cPl.Name & "' doesn't have a StartPlugin Function. ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
           Continue
         Endif
 
@@ -432,6 +384,9 @@ Public Sub StartAll()
 
   If Main.bDebugPlugin Then Main.WriteDebugLog("[Plugin] Plugin StartAll - Finished")
 
+Catch
+  Main.WriteLog("[Plugin] ERROR: '" & Error.Text & "' while starting Plugin at '" & Error.Where & "'")
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -440,19 +395,17 @@ End
 Public Sub StopAll()
 
   Dim cPl As CPluginEntry
-  Dim cReported As New Collection
 
   If Main.bDebugPlugin Then Main.WriteDebugLog("[Plugin] Plugin StopAll - Started")
 
   ' Destroy all objects
   For Each cPl In cPluginList
 
-    ' Skip the #0 entries, these can't be stopped
+    ' Skip the #0 entries, these can't be stopped - we try to stop the AutoStart plugins too
     If InStr(cPl.KeyName, "#0") = 0 Then
 
-      If cPl.Settings["enabled"] Then
-        If Main.bDebugPlugin Then Main.WriteDebugLog("[Plugin] Plugin=" & cPl.Name & ", Instance=" & cPl.Instance & " - STOPPING")
-      Endif
+      If Not cPl.Settings["enabled"] Then Continue
+      If Main.bDebugPlugin Then Main.WriteDebugLog("[Plugin] Plugin=" & cPl.Name & ", Instance=" & cPl.Instance & " - STOPPING")
 
       Try Object.Call(cPl.Interface, "StopPlugin")
 
@@ -472,7 +425,51 @@ Public Sub StopAll()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Restart Interface & Instance after FSettings
+' Restart Interface & Instance after FSettings in Client mode
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Restart_Client(sPluginName As String, Optional iInstance As Integer = 1)
+
+  Dim rResult As Result
+  Dim cPl As CPluginEntry
+  Dim hField As ResultField
+  Dim sTableName As String = "settings_" & LCase(sPluginName)
+
+  ' Try to load settings_<sPluginName>
+  rResult = GetSettingsTable(sTableName, iInstance)
+
+  ' Row doesn't exist anymore, stop interface/instance and remove from list
+  If rResult = Null Or rResult.Count = 0 Then
+    cPluginList.Remove(LCase(sPluginName) & "#" & iInstance)
+    Return
+  Else
+    ' Get a local copy
+    cPl = cPluginList[LCase(sPluginName) & "#" & iInstance]
+
+    ' Empty the collection and fill it again
+    cPl.Settings.Clear()
+    For Each hField In rResult.Fields
+      cPl.Settings[LCase(hField.Name)] = rResult[hField.Name]
+    Next
+  Endif
+
+  ' Update the cPluginEnabled list now
+  If cPluginEnabled.Exist(LCase(sPluginName)) Then
+    cPluginEnabled.Remove(LCase(sPluginName))
+  Endif
+
+  ' Loop through all plugins and tag enabled modules/classes
+  For Each cPl In cPluginList
+    If LCase(cPl.Name) = LCase(sPluginName) Then
+      If cPl.Instance >= 1 Then
+        If cPl.Settings["enabled"] Then cPluginEnabled[LCase(sPluginName)] = "enabled"
+      Endif
+    Endif
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Restart Interface & Instance in Server Mode
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
 
@@ -483,48 +480,6 @@ Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
   Dim bRunTask As Boolean
   Dim sTableName As String = "settings_" & LCase(sPluginName)
 
-  If Not Main.bServer Then
-
-    ' Check if settings_<sPluginName> exists
-    If TableExists(sTableName) = False Then
-      Main.WriteLog("[Plugin] ERROR: Table '" & sTableName & "' doesn't exist in the database")
-      Return
-    Endif
-
-    rResult = GetSettingsTable(sTableName, iInstance)
-
-    ' Row doesn't exist anymore, stop interface/instance and remove from list
-    If rResult = Null Or rResult.Count = 0 Then
-      cPluginList.Remove(LCase(sPluginName) & "#" & iInstance)
-      Return
-    Else
-      ' Get a local copy
-      cPl = cPluginList[LCase(sPluginName) & "#" & iInstance]
-
-      ' Empty the collection and fill it again
-      cPl.Settings.Clear()
-      For Each hField In rResult.Fields
-        cPl.Settings[LCase(hField.Name)] = rResult[hField.Name]
-      Next
-    Endif
-
-    ' Update the cPluginEnabled list now
-    If cPluginEnabled.Exist(LCase(sPluginName)) Then
-      cPluginEnabled.Remove(LCase(sPluginName))
-    Endif
-
-    ' Loop through all plugins and tag enabled modules/classes
-    For Each cPl In cPluginList
-      If LCase(cPl.Name) = LCase(sPluginName) Then
-        If cPl.Instance >= 1 Then
-          If cPl.Settings["enabled"] Then cPluginEnabled[LCase(sPluginName)] = "enabled"
-        Endif
-      Endif
-    Next
-
-    Return
-  Endif
-
   ' First instance *has* to exist
   If cPluginList.Exist(LCase(sPluginName) & "#0") = False Then
     ' Load settings from database first
@@ -532,18 +487,13 @@ Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
     ' Temporary workaround to allow restart of none managed modules
     Try Object.Call(Main, "Restart_" & sPluginName)
     If Error Then
-      Main.WriteLog("[Plugin] ERROR: Plugin '" & sPluginName & "' isn't properly initialized")
+      Main.WriteLog("[Plugin] ERROR: Plugin '" & sPluginName & "' isn't properly initialized!")
     Endif
 
     Return
-  Endif 
-
-  ' Check if settings_<sPluginName> exists
-  If TableExists(sTableName) = False Then
-    Main.WriteLog("[Plugin] ERROR: Table '" & sTableName & "' doesn't exist in the database")
-    Return
   Endif
 
+  ' try to load settings_<sPluginName>
   rResult = GetSettingsTable(sTableName, iInstance)
 
   ' Remove possible RunTask
@@ -562,13 +512,13 @@ Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
     If cPl.Interface <> Null Then
       Try Object.Call(cPl.Interface, "StopPlugin")
       If Error Then
-        Main.WriteLog("[Plugin] ERROR: Plugin '" & sPluginName & "' doesn't have a StopPlugin Function. ERROR: '" & Error.Text & "' at " & Error.Where)
+        Main.WriteLog("[Plugin] ERROR: Plugin '" & sPluginName & "' doesn't have a StopPlugin Function. ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
       Endif
     Endif
 
     ' Report for enabled ones, that it is disabled now
-    If cPl.Settings["enabled"] Then
-      Main.WriteLog("[Plugin] " & cPl.Interface.PluginFriendlyName & ", Instance #" & iInstance & " disabled.")
+    If cPl.Settings["enabled"] And If cPl.Interface Then
+      Main.WriteLog("[Plugin] " & cPl.Interface.PluginFriendlyName & IIf(cPl.Interface.PluginMaxInstances > 1, ", Instance #" & iInstance, "") & " disabled.")
     Endif
 
     ' Destroy the object
@@ -593,11 +543,13 @@ Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
         cPl.Interface = Object.New(cPl.ClassName)
 
         ' Report that it is enabled
-        Main.WriteLog("[Plugin] " & cPl.Interface.PluginFriendlyName & ", Instance #" & iInstance & " enabled.")
+        Main.WriteLog("[Plugin] " & cPl.Interface.PluginFriendlyName & IIf(cPl.Interface.PluginMaxInstances > 1, ", Instance #" & iInstance, "") & " enabled.")
+
+        If cPl.Settings["debug"] Then LogSettings(cPl)
 
         Try Object.Call(cPl.Interface, "StartPlugin", [cPl])
         If Error Then
-          Main.WriteLog("[Plugin] ERROR: Plugin '" & sPluginName & "' doesn't have a StartPlugin Function. ERROR: '" & Error.Text & "' at " & Error.Where)
+          Main.WriteLog("[Plugin] ERROR: Plugin '" & sPluginName & "' doesn't have a StartPlugin Function. ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
         Else
           ' Check if the PluginRunTask exist, then we need to call it every minute
           Try bRunTask = cPl.Interface.PluginRunTask
@@ -619,11 +571,10 @@ Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
 
     ' Copy information from instance 0
     cPlNew = New CPluginEntry
-    cPlNew.Type = cPl.Type
     cPlNew.Name = cPl.Name
     cPlNew.KeyName = LCase(sPluginName) & "#" & iInstance
     cPlNew.Instance = iInstance
-    cPlNew.ClassName = cPl.sClassName
+    cPlNew.ClassName = cPl.ClassName
     cPlNew.Interface = Null
     For Each hField In rResult.Fields
       cPlNew.Settings[LCase(hField.Name)] = rResult[hField.Name]
@@ -639,7 +590,7 @@ Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
 
       Try Object.Call(cPlNew.Interface, "StartPlugin", [cPlNew])
       If Error Then
-        Main.WriteLog("[Plugin] ERROR: Plugin '" & sPluginName & "' doesn't have a StartPlugin Function. ERROR: '" & Error.Text & "' at " & Error.Where)
+        Main.WriteLog("[Plugin] ERROR: Plugin '" & sPluginName & "' doesn't have a StartPlugin Function. ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
       Endif
 
       ' Check if the PluginRunTask exist, then we need to call it every minute
@@ -671,6 +622,31 @@ Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Restart a plugin with delay (timer), mainly used for JSON-RPC with client/server mode
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub RestartDelay(sPluginName As String, Optional iInstance As Integer = 1)
+
+  If Not $tRestartDelayTimer Then
+    $tRestartDelayTimer = New CTimerGeneric As "tRestartDelayTimer"
+  Endif
+
+  $tRestartDelayTimer.Tag = sPluginName & "|" & iInstance
+  $tRestartDelayTimer.Trigger
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' We got the delayed Restart of a plugin
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tRestartDelayTimer_Timer()
+
+  If InStr(Last.Tag, "|") Then
+    Restart(Mid(Last.Tag, 1, InStr(Last.Tag, "|") - 1), CInt(Mid(Last.Tag, InStr(Last.Tag, "|") + 1)))
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' return if plugin is registered
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub IsPluginRegistered(sPluginName As String, Optional iInstance As Integer = 1) As Boolean
@@ -680,7 +656,7 @@ Public Sub IsPluginRegistered(sPluginName As String, Optional iInstance As Integ
   Else
     ' If the Instance doesn't exist, check for #0 and error if not existing
     If cPluginList.Exist(LCase(sPluginName) & "#0") = False Then
-      Main.WriteLog("[Plugin] ERROR: Module/Class '" & sPluginName & "' isn't properly initialized")
+      Main.WriteLog("[Plugin] ERROR: Module/Class '" & sPluginName & "' isn't properly initialized!")
     Endif
 
     Return False
@@ -707,7 +683,7 @@ Public Sub IsPluginEnabled(sPluginName As String, Optional iInstance As Integer 
 
       ' Check for errors, it is possible the Object doesn't have a valid "Settings[enabled]" (faulty module/interface)
       If Error Then
-        Main.WriteLog("[Plugin] ERROR: Module/Class '" & sPluginName & "' looks to be invalid, the 'Settings[enabled]' is missing")
+        Main.WriteLog("[Plugin] ERROR: Module/Class '" & sPluginName & "' looks to be invalid, the 'Settings[enabled]' is missing!")
         bEnabled = False
       Endif
     Else
@@ -734,7 +710,7 @@ Public Sub IsPluginRunning(sPluginName As String, Optional iInstance As Integer 
 
     ' Check for errors, it is possible the Object doesn't have an "IsRunning" (faulty module/interface)
     If Error Then
-      Main.WriteLog("[Plugin] ERROR: Module/Class '" & sPluginName & "' looks to be invalid, the 'IsRunning' is missing")
+      Main.WriteLog("[Plugin] ERROR: Module/Class '" & sPluginName & "' looks to be invalid, the 'IsRunning' is missing!")
       bRunning = False
     Endif
   Else
@@ -743,17 +719,38 @@ Public Sub IsPluginRunning(sPluginName As String, Optional iInstance As Integer 
 
   Return bRunning
 
-End 
+End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Retrieve the list of enabled instances of a certain plugin 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Retrieve max number of instances for a certain plugin
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetPluginMaxInstances(sPluginName As String) As Integer
+
+  Dim cPl As CPluginEntry
+
+  ' Loop through all plugins
+  For Each cPl In cPluginList
+
+   ' Now match the requested plugin
+    If InStr(cPl.KeyName, LCase(sPluginName) & "#") >= 1 Then
+      Return cPl.MaxInstances
+    Endif
+  Next
+
+  ' Plugin not found
+  Return 0
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Retrieve the list of enabled instances of a certain plugin
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetPluginEnabledList(sPluginName As String) As Integer[]
 
   Dim cPl As CPluginEntry
   Dim AValue As New Integer[]
 
-  ' Loop through all inteface and start them
+  ' Loop through all plugins
   For Each cPl In cPluginList
 
     ' Skip #0 entries
@@ -784,13 +781,14 @@ Public Sub GetPluginObject(sPluginName As String, Optional iInstance As Integer 
   Else
     Return Null
   Endif
-End 
+
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Send command to plugin. The "SendCommand" routine is a
 ' fixed name, but doesn't have to exist
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SendCommand(sPluginName As String, iInstance As Integer, sAddress As String, sCmd As String) As Boolean
+Public Sub SendCommand(sPluginName As String, iInstance As Integer, sAddress As String, sCmd As String, Optional sDeviceName As String) As Boolean
 
   ' The Plugin needs to be enabled
   If isPluginEnabled(sPluginName, iInstance) Then
@@ -805,43 +803,22 @@ Public Sub SendCommand(sPluginName As String, iInstance As Integer, sAddress As 
       If Not Error Then
         Return True
       Else
-        Main.WriteDebugLog("[Plugin] ERROR: Module/Class '" & sPluginName & "' doesn't have a 'SendCommand' function, most likely you are trying to control a ReadOnly interface")
+        Main.WriteDebugLog("[Plugin] ERROR: '" & sPluginName & "' doesn't have a 'SendCommand' function, most likely you are trying to control a ReadOnly interface!")
         Return False
       Endif
     Else
-      Main.WriteLog("[Plugin] ERROR: Can't control device because '" & sPluginName & "' is error state!")
+      If Len(sDeviceName) Then
+        Main.WriteLog("[Plugin] ERROR: Can't control device '" & sDeviceName & "' with address '" & sAddress & "' because plugin '" & sPluginName & "' is in error state!")
+      Else
+        Main.WriteLog("[Plugin] ERROR: Can't control device with address '" & sAddress & "' because plugin '" & sPluginName & "' is in error state!")
+      Endif
       Return False 
     Endif
 
   Else
-    Main.WriteLog("[Plugin] ERROR: Can't control device because '" & sPluginName & "' is disabled!")
+    Main.WriteLog("[Plugin] ERROR: Can't control device because plugin '" & sPluginName & "' is not enabled!")
     Return False 
   Endif
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Check if settings_* table exists in the database
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub TableExists(sTableName As String) As Boolean
-
-  Dim rResult As Result
-
-  If Not sTableName Then Return False
-  sTableName = LCase(sTableName)
-
-  Try rResult = Main.hDB.Exec("SHOW TABLES")
-  If Error Or rResult = Null Then
-    Main.WriteLog("[Plugin] ERROR: Can't retrieve table list from the database")
-    Return False
-  Endif
-
-  If rResult.Count Then
-    For Each rResult
-      If rResult["Tables_in_" & Main.sSQLDatabase] = sTableName Then Return True
-    Next
-  Endif
-
-  Return False
 
 End
 
@@ -852,12 +829,18 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetSettingsTable(sTableName As String, Optional iRow As Integer = -1) As Result
 
+  Dim rResult As Result
+
   sTableName = LCase(sTableName)
 
   If iRow >= 0 Then
-    Try Return Main.hDB.Exec("SELECT * FROM " & sTableName & " WHERE id = &1", iRow)
+    Try rResult = Main.hDB.Exec("SELECT * FROM " & sTableName & " WHERE id = &1", iRow)
+    If Error Then Main.WriteLog("[Plugin] Read failed on table '" & sTableName & "'. Error=" & Error.Text)
+    Return rResult
   Else
-    Try Return Main.hDB.Exec("SELECT * FROM " & sTableName & " WHERE id >= 1 ORDER BY id")
+    Try rResult = Main.hDB.Exec("SELECT * FROM " & sTableName & " WHERE id >= 1 ORDER BY id")
+    If Error Then Main.WriteLog("[Plugin] Read failed on table '" & sTableName & "'. Error=" & Error.Text)
+    Return rResult
   Endif
 
 End
@@ -876,9 +859,9 @@ Public Sub RunTask()
       Try Object.Call(cPluginList[cPluginRunTask.Key].Interface, "RunTask")
 
       If Error Then
-        Main.WriteLog("[Plugin] ERROR: Module/Class '" & cPluginRunTask.Key & "' doesn't have a RunTask Function, but it has the 'PluginRunTask=True'. ERROR: '" & Error.Text & "' at " & Error.Where)
+        Main.WriteLog("[Plugin] ERROR: Module/Class '" & cPluginRunTask.Key & "' doesn't have a RunTask Function, but it has the 'PluginRunTask=True'. ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
-        ' Remove the entry, because it isn't usefull to run it in the next minute
+        ' Remove the entry, because it isn't useful to run it in the next minute
         ' NOTE: After a restart it will show up again, this is per design
         cPluginRunTask.Remove(cPluginRunTask.Key)
       Endif
@@ -887,3 +870,20 @@ Public Sub RunTask()
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Log plugin settings in debug mode
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub LogSettings(oSettings As Object)
+
+  Dim sStr As String
+  Dim sLogLabel As String
+
+  sLogLabel = oSettings.Interface.LogLabel
+  If oSettings.Instance <> 1 Then sLogLabel = Replace(sLogLabel, "] ", "#" & oSettings.Instance & "] ")
+
+  Main.WriteDebugLog(sLogLabel & "*** Start Plugin: " & oSettings.Interface.PluginFriendlyName & " " & " Version: " & oSettings.Interface.PluginVersion & " *** ")
+  For Each sStr In oSettings.Settings
+    Main.WriteDebugLog(sLogLabel & "  [Settings] " & oSettings.Settings.Key & ": " & sStr)
+  Next
+
+End

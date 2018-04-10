@@ -23,11 +23,11 @@ End
 Public Sub Form_Open()
 
   lblVersion.Text = "version " & Main.sProgramVersion
-  Me.Height = 180
-  Panel1.Height = 165
+  Me.Height = 200
+  Panel1.Height = 188
   prbStatus.Y = 120
-  lblStatus.Y = 135
-  txtCopyright.Text = "Copyright (C) 2008-" & Year(Now) & " Ron Klinkien"
+  lblStatus.Y = 152
+  txtCopyright.Text = "Copyright (C) 2008-" & Year(Now) & " by Ron Klinkien"
 
 End
 
@@ -39,7 +39,7 @@ Public Sub tStartup_Timer()
   Else
     StartProgram()
 
-    ' Don't continue if we click on close/abort during database setup
+    ' don't continue if clicked on close/abort during database setup
     If Not Main.ConnectedDatabase() Then
       bAuthOk = True
       Me.Close
@@ -51,36 +51,37 @@ End
 
 Private Sub StartProgram()
 
-  SetProgressValue(0)
+  SetProgressValue(0, ("Init ..."))
+  Wait 0.01
 
-  lblStatus.Text = ("Checking directory structure ...")
-  SetProgressValue(20)
+  SetProgressValue(20, ("Checking logfiles and directory structure ..."))
   Wait 0.05
-  Main.Setup_BroadcastAddrs()
+
   Main.Setup_Logfiles()
-  Main.DisplayProgramInfo()
+
+  ' Check directory structure and create if required
   Main.CreateDirectoryTree()
 
-  lblStatus.Text = ("Loading configuration ...")
-  SetProgressValue(40)
-  lblStatus.Text = ("Connecting to database ...")
+  Main.DisplayProgramInfo()
+
+  'lblStatus.Text = ("Loading configuration ...")
+
+  SetProgressValue(40, ("Connecting to database ..."))
   Wait 0.05
+
   If Not Main.ConnectDatabase(True) Then
     FInstallDBWizard.ShowModal
-
     ' Exit if the database connection is not available
     If Not Main.ConnectedDatabase() Then Return
   Endif
-  
-  ' update database
-  SetProgressValue(50)
-  lblStatus.Text = ("Updating database ...")
-  Wait 0.05
-  Main.UpdateDatabase()
 
-  SetProgressValue(60)
-  lblStatus.Text = ("Loading plugins ...")
+  ' update database
+  SetProgressValue(50, ("Updating database ..."))
   Wait 0.05
+
+  SetProgressValue(60, ("Loading plugins ..."))
+  Wait 0.05
+
   Main.Setup()
 
   SetProgressValue(80, ("Starting main program ..."))
@@ -97,6 +98,7 @@ Private Sub StartProgram()
   If Main.GetGlobalVar("VoiceMailCount") Then Main.iNewVoicemails = Main.GetGlobalVar("VoiceMailCount")
 
   Main.WriteLog("[Main] Entering main program loop.")
+
   SetProgressValue(100, "Entering main program loop ...")
   Wait 0.05
 
@@ -133,6 +135,7 @@ Public Sub Login()
   prbStatus.Visible = False
   btnLogin.Enabled = True
   iCountLogin = 0
+  txtUser.SetFocus
   lblStatus.Text = ("Please authenticate yourself.")
 
   If Main.GetGlobalVar("Last_User") Then
@@ -142,13 +145,13 @@ Public Sub Login()
 
 End
 
-Public Sub SetProgressValue(iValue As Integer, Optional sStatus As String)
+Public Sub SetProgressValue(iValue As Integer, sStatus As String)
 
   If iValue > 100 Then iValue = 100
   If iValue < 0 Then iValue = 0
 
   prbStatus.Value = iValue / 100
-  If sStatus Then lblStatus.Text = sStatus
+  lblStatus.Text = sStatus
 
 End
 
@@ -161,13 +164,14 @@ End
 Private Sub Enter()
 
   If Not txtUser.Text Then
-    lblStatus.Text = ("Please specify a Username.")
+    lblStatus.Text = ("Please specify your username.")
   Else
     If CheckAuth() Then
       bAuthOk = True
       Me.Close
     Else
-      lblStatus.Text = ("Sorry wrong Username and/or Password!")
+      lblStatus.Text = ("Sorry wrong username and/or password!")
+      txtPassword.Text = ""
       ' and only allow three failures to login
     Endif
   Endif
@@ -177,37 +181,110 @@ End
 Private Sub CheckAuth() As Boolean
 
   Dim rResult As Result
-  Dim sSalt, sHash, sType As String
+  Dim sStr As String
 
-  ' add column cookie if DB table has not got it
-  Try rResult = Main.hDB.Exec("SELECT cookie FROM users")
-  If Not rResult Then Try Main.hDB.Exec("ALTER TABLE users ADD COLUMN cookie VARCHAR(64) DEFAULT ''")
+  ' All password should have a valid MD5/SHA256/SHA512 encryption
+  Try rResult = Main.hDB.Exec("SELECT * FROM users WHERE username = &1", txtUser.Text)
+  If rResult And If rResult.Available Then
 
-  Try rResult = Main.hDB.Exec("SELECT username, password, id, admin, cookie FROM users WHERE username = &1", txtUser.Text)
-  If rResult.Count Then
-    If (Len(rResult!password) = 33) And (Left$(rResult!password, 3) = "MD5") Then
-      sSalt = Left$(rResult!password, 11)
-      sType = "MD5" ' Left$(sSalt, 3)
-      sSalt = Right$(sSalt, 8)
-      sHash = Right$(Crypt.MD5(txtPassword.Text, sSalt), 22)
-    Else
-      sHash = rResult!password
-    Endif
-    If rResult!password = (sType & sSalt & sHash) Then
+    If Util.PasswordVerify(txtPassword.Text, rResult!password) Then
+      If rResult!tfaenabled Then
+        ''check tfa setup
+          If Not (rResult!tfasecret = Null) Then
+            ''verify tfa code
+
+              'Dim sStr As String
+              If Len(vbTFCode.Text) = 6 Then
+                sStr = Util.TFAVerify(rResult!tfasecret, CInt(vbTFCode.Text))
+                'sStr = "True"
+                If sStr = "True" Then
+                  AuthOk()
+                  Return True
+                Else If sStr = "False" Then
+                Else 'should never happen
+                  'tbd catch the error'
+                Endif
+              Endif 'length tbtfacode = 6
+
+          Else 'setup TFA
+            '' setup tfa
+            FEditUsers.btTFA.Text = "Setup TFA"
+            FEditUsers.sUsersName = rResult!username
+            If (Ftfasetup.Showmodal()) Then
+             'btTFA.Text = "Delete secret"
+
+            '' verfiy tfa code
+              'Dim sStr As String
+              If Len(vbTFCode.Text) = 6 Then
+                '' reload secret
+                rResult = Main.hDB.Exec("SELECT * FROM users WHERE username = &1", txtUser.Text)
+
+                sStr = Util.TFAVerify(rResult!tfasecret, CInt(vbTFCode.Value))
+                If sStr = "True" Then
+                  AuthOk()
+                  Return True
+                Else If sStr = "False" Then
+                  iCountLogin = iCountLogin - 1
+                Else 'should never happen
+                  'tbd catch the error'
+                Endif
+              Endif 'length tbtfacode = 6
+               iCountLogin = iCountLogin - 1
+            Else 'setup tfa
+              ' No setup of tfa completed succesfully
+              Balloon("TFA not setup correctly", vbTFCode)
+
+            Endif
+          Endif 'rResult.tfasecret
+      Else ' TFA not enabled
+        AuthOk()
+        Return True
+      Endif ' TFA enabled/disabled
+      'Return True
+    Endif 'pwd ok
+  Endif 'result.count
+
+  Inc iCountLogin
+  If iCountLogin > 3 Then
+     Main.WriteLog("[Main] User '" & txtUser.Text & "' entered invalid password too many times, exiting program.")
+     Message(("Invalid username and/or password, too many retries, exiting program!"))
+
+     Main.CloseAll()
+
+     Quit
+  Endif
+
+  Return False
+
+End
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'if authentication (pwd and or tfa) is ok, authok is executed to set coockie, admin/user settings,...
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Private Sub AuthOk()
+
+  Dim rResult As Result
+
+  ' All password should have a valid MD5/SHA256/SHA512 encryption
+  Try rResult = Main.hDB.Exec("SELECT * FROM users WHERE username = &1", txtUser.Text)
+  If rResult And If rResult.Available Then
+
+    If Util.PasswordVerify(txtPassword.Text, rResult!password) Then
       Main.SetGlobalVar("Last_User", txtUser.Text)
       Main.sActiveUser = txtUser.Text
       Main.sActiveUserID = rResult!id
-      If Len(rResult!cookie) < 1 Then ' we have to init the cookie; the decrypted cookie will never change
-      ' in DB the cookie is encrypted with MD5 (MD5 hash seed) hash of current password
-      ' we avoid sending user password over to DB, but the crypt key is however communicated in clear!
-      ' the cookie will protect private user info within the DB
-      Try Main.hDB.Exec("UPDATE users SET cookie = AES_ENCRYPT(&1,&2) WHERE username = &3", Crypt.MD5(txtPassword.Text), Crypt.MD5(txtPassword.Text, Right(sHash, 8)), txtUser.Text)
+      If Len(rResult!cookie) < 1 Then
+        ' we have to init the cookie; the decrypted cookie will never change
+        ' in DB the cookie is encrypted with MD5 (MD5 hash seed) hash of current password
+        ' we avoid sending user password over to DB, but the crypt key is however communicated in clear!
+        ' the cookie will protect private user info within the DB
+        Try Main.hDB.Exec("UPDATE users SET cookie = AES_ENCRYPT(&1,&2) WHERE username = &3", rResult!password, Right(rResult!password, 8), txtUser.Text)
       Endif
-      Try rResult = Main.hDB.Exec("SELECT AES_DECRYPT(cookie,&1) AS cookie, admin FROM users WHERE username = &2", Crypt.MD5(txtPassword.Text, Right(sHash, 8)), txtUser.Text)
+      Try rResult = Main.hDB.Exec("SELECT AES_DECRYPT(cookie,&1) AS cookie, admin FROM users WHERE username = &2", Right(rResult!password, 8), txtUser.Text)
       Main.sActiveUserCookie = rResult!cookie ' the crypt key for private user info in the DB
 
       If rResult!admin Then
-        Main.WriteLog(("Logged in as '") & txtUser.Text & ("' (Administrator)."))
+        Main.WriteLog("[Main] " & ("Logged in as '") & txtUser.Text & ("' (Administrator)."))
         Main.bUserisAdmin = True  ' hide non admin menu's
         FMain.MenuEdit.Visible = True
         FMain.MenuDevices.Visible = True
@@ -218,7 +295,7 @@ Private Sub CheckAuth() As Boolean
         FMain.MenuThermostats.Visible = True
         FMain.MenuEvents.Visible = True
       Else
-        Main.WriteLog(("Logged in as '") & txtUser.Text & ("' (User)."))
+        Main.WriteLog("[Main] " & ("Logged in as '") & txtUser.Text & ("' (User)."))
         Main.bUserisAdmin = False
         FMain.MenuEdit.Visible = False
         FMain.MenuDevices.Visible = False
@@ -234,18 +311,9 @@ Private Sub CheckAuth() As Boolean
       rResult = Main.hDB.Exec("UPDATE users SET lastlogin = &1 WHERE username = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), txtUser.Text)
       FMain.MenuLogout.Visible = True
       FMain.MenuEditUser.Visible = True
-      Return True
+      'Return True
     Endif
   Endif
-  Inc iCountLogin
-  If iCountLogin > 3 Then
-     Main.WriteLog("User &1 entered invalid password.", txtUser.Text)
-     Message(("Invalid password, too many tries, exit program!"))
-
-     Main.CloseAll()
-     FMain.Close
-  Endif
-  Return False
 
 End
 
@@ -254,3 +322,10 @@ Public Sub Form_Close()
   If bAuthOk = False Then Stop Event
 
 End
+
+Public Sub vbTFCode_GotFocus()
+
+  vbTFCode.Value = ""
+
+End
+
